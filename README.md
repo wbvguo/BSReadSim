@@ -1,2 +1,2 @@
-# BSSim
-Bisulfite Sequencing Simulator
+# BSReadSim
+Bisulfite Sequencing Read Simulator
