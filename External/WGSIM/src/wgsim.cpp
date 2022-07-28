@@ -1,27 +1,5 @@
-/* The MIT License
-   Copyright (c) 2008 Genome Research Ltd (GRL).
-                 2011 Heng Li <lh3@live.co.uk>
-   Permission is hereby granted, free of charge, to any person obtaining
-   a copy of this software and associated documentation files (the
-   "Software"), to deal in the Software without restriction, including
-   without limitation the rights to use, copy, modify, merge, publish,
-   distribute, sublicense, and/or sell copies of the Software, and to
-   permit persons to whom the Software is furnished to do so, subject to
-   the following conditions:
-   The above copyright notice and this permission notice shall be
-   included in all copies or substantial portions of the Software.
-   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-   NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
-   BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
-   ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-   CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-   SOFTWARE.
-*/
-
 /* This program is based on WGSIM(v0.3.1-r13)[https://github.com/lh3/wgsim.git]
- * with modifications to simulate WGS/WGBS reads */
+ * with modifications to simulate WGS or WGBS reads in BSReadSim for diploid organism */
 
 #include <stdlib.h>
 #include <math.h>
@@ -35,14 +13,12 @@
 #include <zlib.h>
 #include <random>
 #include <vector>
-//#include <iostream>
-//#include <string>
+#include <iostream>
 #include "kseq.h"
 #include "vcf.h"
-
 KSEQ_INIT(gzFile, gzread)
 
-#define PACKAGE_VERSION "0.0.2"
+#define PACKAGE_VERSION "1.0.1"
 
 const uint8_t nst_nt4_table[256] = {
 	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4, 
@@ -82,84 +58,134 @@ static double INDEL_EXTEND = 0.3;
 static double MAX_N_RATIO = 0.05;
 
 // to restore vcf information
-std::vector<int> positions;
-std::vector<std::string>  alt_vec;
-std::vector<std::string>  ref_vec;
-std::vector<int> h1_genotype;
-std::vector<int> h2_genotype;
+std::vector<int> pos_vec;
+std::vector<int> ref_vec;
+std::vector<int> alt_vec;
+std::vector<int> geno_vec;
 
-void parse_vcf_chr(char *fname, char *chr_id){
+void parse_vcf_chr(char *fname, char *chr_id)
+{
+	//clean the container
+    pos_vec.clear();
+	ref_vec.clear();
+	alt_vec.clear();
+    geno_vec.clear();
+
     //open vcf file
     htsFile *fp    = hts_open(fname,"rb");
-
-    //read header
     bcf_hdr_t *hdr = bcf_hdr_read(fp);
     bcf1_t *rec    = bcf_init();
-
-    int ngt_arr = 0;
+	
+	//collect control
+	int ngt_arr = 0;
     int ngt     = 0;
     int *gt     = NULL;
+
 	bool collect_present = false;
 	bool collect_previous= false;
 
-    fprintf(stderr, "VCF file contains %i samples\n", bcf_hdr_nsamples(hdr));
-    //save for each vcf record
-    while ( bcf_read(fp, hdr, rec)>=0)
-    {
+    while (bcf_read(fp, hdr, rec)>=0) {	
+		if (collect_present == false && collect_previous == true) { // finished collecting
+			fprintf(stderr, "Finish collecting %d SNP from %s\n", pos_vec.size(), chr_id);
+			break;
+		}
+		
+		// a new round, save last status
+		collect_previous = collect_present; 
+
     	//unpack for read REF,ALT,INFO,etc 
         bcf_unpack(rec, BCF_UN_STR);
         bcf_unpack(rec, BCF_UN_INFO);
 
         //read CHROM
-        collect_previous = collect_present;
 		std::string chr_current = bcf_hdr_id2name(hdr, rec->rid);
 
-		if (strcmp(chr_current.c_str(), chr_id)){
+		if (strcmp(chr_current.c_str(), chr_id) != 0){
 			collect_present = false;
 			continue;
 		} else {
 			collect_present = true;
-			//read POS
-			//printf("position: %lu\n", (unsigned long)rec->pos);
-			positions.push_back(rec->pos);
-
 			std::string ref = rec->d.allele[0];
 			std::string alt = rec->d.allele[1];
-			ref = ref.c_str();
-			alt = alt.c_str();
-			
-			alt_vec.push_back(alt);
-			ref_vec.push_back(ref);
-			
-			ngt=bcf_get_genotypes(hdr,rec,&gt,&ngt_arr);
-			int hap1 = bcf_gt_allele(gt[0]);
-			int hap2 = bcf_gt_allele(gt[1]);
+			int snp_pos = rec->pos;
 
-			h1_genotype.push_back(hap1);
-			h2_genotype.push_back(hap2);
+			int ref_len = ref.length();
+			int alt_len = alt.length();
+			int base_offset = ref_len - alt_len;
 
-		}
-		if (collect_present == false & collect_previous == true) {
-			break;
-		}
-    }
+			// check genotype
+			ngt = bcf_get_genotypes(hdr,rec,&gt,&ngt_arr);
+			int snp_hap1 = bcf_gt_allele(gt[0]);
+			int snp_hap2 = bcf_gt_allele(gt[1]);
 
+			//skip the following records: 
+			// 1. #insert/delete bases greater than 4
+			// 2. multi-allelic sites
+			// TODO: 
+			// 3. multi nucleotide polymorphism (MNP); 
+			// 4. contains Ns, or missing values; 
+			// 5. same POS; 
+			// 6. for unphased, swap snp_hap1 & snp_hap2
+			if (abs(base_offset) > 4 || ngt > 2) {continue;}
+			if ((snp_hap1 > 1 && snp_hap2 > 1) || (snp_hap1 == 0 && snp_hap2 == 0)) {
+				fprintf(stderr, "Skip unusual SNP: CHROM:%s; POS:%d; HAP1:%d; HAP2:%d\n", chr_id, snp_pos, snp_hap1, snp_hap2);
+				continue;
+			} 
+		
+
+			//pack info: encode SNP info into int
+			int ref_int, alt_int, c = 0;			
+			if (alt_len == 1 && ref_len == 1){
+				//substitution
+				ref_int = (mut_t)nst_nt4_table[(int)ref[0]];
+				alt_int = (mut_t)nst_nt4_table[(int)alt[0]];
+			} else {
+				if ( ref[0] != alt[0] ) { //check if the first base are the same if it's indel, if not skip
+					fprintf(stderr, "Skip unusual SNP: CHROM:%s; POS:%d; REF:%s; ALT %s\n", chr_id, snp_pos, ref.c_str(), alt.c_str());
+					continue;
+				}
+
+				if (alt_len > 1 && ref_len == 1) {
+					//insertion
+					ref_int = (mut_t)nst_nt4_table[(int)ref[0]];
+					for (int i = 0; i < alt_len; i++ ){ 
+						c = (mut_t)nst_nt4_table[(int)alt[i]];
+						alt_int = (alt_int << 2) | c;
+					}
+				} else if (ref_len > 1 && alt_len == 1){ 
+					//deletion
+					alt_int = (mut_t)nst_nt4_table[(int)alt[0]];
+					for (int i = 0; i < ref_len; i++ ){ 
+						c = (mut_t)nst_nt4_table[(int)ref[i]];
+						ref_int = (ref_int << 2) | c;
+					}
+				} else { // might be MNP, or sth else
+					fprintf(stderr, "Skip unusual SNP: CHROM:%s; POS:%d; REF:%s; ALT %s\n", chr_id, snp_pos, ref.c_str(), alt.c_str());
+					continue;
+				}
+			}
+
+			int geno_int = base_offset << 12 | ref_len << 8 | snp_hap2 << 4 | snp_hap1;
+			pos_vec.push_back(snp_pos);
+			ref_vec.push_back(ref_int);
+			alt_vec.push_back(alt_int);
+			geno_vec.push_back(geno_int);
+    	}
+	}
+	
     free(gt);
     bcf_destroy(rec);
     bcf_hdr_destroy(hdr);
-	int ret;
-    if ( ret=hts_close(fp)){
-        fprintf(stderr, "hts_close(%s): non-zero status %d\n", fname, ret);
+    int ret;
+    if ((ret=hts_close(fp))){
+        fprintf(stderr,"hts_close(%s): non-zero status %d\n",fname,ret);
         exit(ret);
-    }
+	}
 }
-void wgsim_mut_vcf(const kseq_t *ks, int is_hap, mutseq_t *hap1, mutseq_t *hap2, char * vcf_file){
-	int vector_position = 0;
-	//std::cout << positions.size();
-	char *chr_id = ks->name.s;
-	parse_vcf_chr(vcf_file, chr_id);
 
-	int i, deleting = 0;
+void wgsim_mut_vcf(const kseq_t *ks, int is_hap, mutseq_t *hap1, mutseq_t *hap2, char * vcf_file)
+{
+	// initiate
 	mutseq_t *ret[2];
 	ret[0] = hap1; 
 	ret[1] = hap2;
@@ -170,159 +196,84 @@ void wgsim_mut_vcf(const kseq_t *ks, int is_hap, mutseq_t *hap1, mutseq_t *hap2,
 	ret[0]-> s = (mut_t *)calloc(ks->seq.m, sizeof(mut_t));
 	ret[1]-> s = (mut_t *)calloc(ks->seq.m, sizeof(mut_t));
 
-	bool homo = false;
-	bool hap1_set = false;
-	bool hap2_set = false;
+	// parse VCF
+    parse_vcf_chr(vcf_file, ks->name.s);
 
-	int count  =0 ;
-
-	int deletion_count = 0;
-	for (i = 0; i != ks->seq.l; ++i) {
-
+	if (pos_vec.size() == 0) { // no valid snp in this chromosome
+		continue;
+	} else {
+		int vec_ptr = 0;
+		int i, deleting = 0;
+		int deletion_count = 0;
 		int c;
 
-		c = ret[0]->s[i] = ret[1]->s[i] = (mut_t)nst_nt4_table[(int)ks->seq.s[i]];
-			
-		if (deleting) {
+		for (i = 0; i != ks->seq.l; ++i){
+			c = ret[0]->s[i] = ret[1]->s[i] = (mut_t)nst_nt4_table[(int)ks->seq.s[i]];
 
-			if(deletion_count > 0){
-            	if (deleting & 1){
-					ret[0]->s[i] |= DELETE;
-				}
-            	if (deleting & 2){
-					ret[1]->s[i] |= DELETE;
-				}
-				deletion_count--;
-				continue;
-			}
-			else deleting = 0;
-        }
-
-		if(i == positions[vector_position] && c < 4){
-
-			homo = false;
-			hap1_set = false;
-			hap2_set = false;
-			int hap1 = h1_genotype[vector_position];
-			int hap2 = h2_genotype[vector_position];
-
-			if (hap1 == 0 && hap2 == 0){
-				vector_position++;
-				continue;
-			} else if (hap1 == 1 && hap2 == 1){
-				homo = true;
-			} else if (hap1 == 0){
-				hap2_set = true;
-			} else{
-				hap1_set = true;
-			}
-
-			//std::cout << ref_vec[vector_position].length();
-			//std::cout << alt_vec[vector_position].length();
-			// substitution
-			if(ref_vec[vector_position].length() == 1 && alt_vec[vector_position].length() == 1){
-				
-				count ++;
-
-				//std::cout << alt_vec[vector_position];
-				if(alt_vec[vector_position].compare("G")==0){
-					c = 2;
-				} else if (alt_vec[vector_position].compare("A")==0){
-					c = 0;
-				} else if (alt_vec[vector_position].compare("C")==0){
-					c = 1;
-				} else {
-					c = 3;
-				}
-
-				if(homo){
-				ret[0]->s[i] = ret[1]->s[i] = SUBSTITUTE|c;
-				vector_position++;
-				} else if(hap1_set){
-					//std::cout << "h1";
-					ret[0]->s[i] = SUBSTITUTE|c;
-					vector_position++;
-				} else {
-					ret[1]->s[i] = SUBSTITUTE|c;
-					//std::cout << c;
-					vector_position++;
-					//std::cout << vector_position;
-				}
-			
-			}  else{ // indel
-
-				// deletion
-				if(ref_vec[vector_position].length() > alt_vec[vector_position].length()){
-
-					if(alt_vec[vector_position].compare("G")==0){
-						c = 2;
-					} else if (alt_vec[vector_position].compare("A")==0){
-						c = 0;
-					} else if (alt_vec[vector_position].compare("C")==0){
-						c = 1;
-					} else {
-						c = 3;
+			if (deleting){
+				if(deletion_count > 0){
+					if (deleting & 1){
+						ret[0]->s[i] |= DELETE;
 					}
+					if (deleting & 2){
+						ret[1]->s[i] |= DELETE;
+					}
+					deletion_count--;
+					continue;
+				} else {deleting = 0};
+			}
 
-					if(homo){
+			if(vec_ptr < pos_vec.size() && i == pos_vec[vec_ptr] && c < 4){
+				int geno_int = geno_vec[vec_ptr];
+				int snp_hap1 = geno_int & 0x000f;
+				int snp_hap2 = (geno_int & 0x00ff) >> 4;
+				int ref_len  = (geno_int & 0x0fff) >> 8;
+				int base_offset = geno_int >> 12;
+
+				// SNP substitution
+				if(base_offset == 0 && ref_len == 1){
+					c = alt_vec[vec_ptr];
+
+					if (snp_hap1 == 1 && snp_hap2 == 1){
 						ret[0]->s[i] = ret[1]->s[i] = SUBSTITUTE|c;
-                    	deleting = 3;
-						deletion_count = ref_vec[vector_position].length()-1;
-						vector_position++;
-					} else if (hap1_set){
+					} else if (snp_hap1 == 1 && snp_hap2 == 0){
+						ret[0]->s[i] = SUBSTITUTE|c;
+					} else if (snp_hap1 == 0 && snp_hap2 == 1){
+						ret[1]->s[i] = SUBSTITUTE|c;
+					} else{continue;}
+				} else if (base_offset < 0 ) { // deletion
+					c = alt_vec[vec_ptr];
+					deletion_count = abs(base_offset);
+
+					if (snp_hap1 == 1 && snp_hap2 == 1){
+						ret[0]->s[i] = ret[1]->s[i] = SUBSTITUTE|c;
+						deleting = 3;
+					} else if (snp_hap1 == 1 && snp_hap2 == 0){
 						ret[0]->s[i] = SUBSTITUTE|c;
 						deleting = 1;
-						deletion_count = ref_vec[vector_position].length()-1;
-						vector_position++;
-					} else {
+					} else if (snp_hap1 == 0 && snp_hap2 == 1){
 						ret[1]->s[i] = SUBSTITUTE|c;
 						deleting = 2;
-						deletion_count = ref_vec[vector_position].length()-1;
-						vector_position++;
-					}
-				} else if (alt_vec[vector_position].length() > 4){
-				vector_position++;
-				continue;
-				} // inserstion
-				if(ref_vec[vector_position].length() < alt_vec[vector_position].length()){
-					int num_ins = 0, ins = 0, r = 0, counter = 1;
+					} else{continue;}
+				} else if (base_offset > 0){ // inserstion
+					int num_ins = base_offset;
+					int ins_msk = 1 << (num_ins*2+1) - 1;
+					int ins = ref_vec[vec_ptr] & ins_msk;
 
-					do {
-						if(alt_vec[vector_position][counter] == 'G'){
-						r = 2;
-						} else if (alt_vec[vector_position][counter] == 'A'){
-						r = 0;
-						} else if (alt_vec[vector_position][counter] == 'C'){
-						r = 1;
-						} else {
-						r = 3;
-						}
-                        counter++;
-						num_ins++;
-						ins = (ins << 2) | r;
-                    } while (num_ins < alt_vec[vector_position].length()-1);
-
-					if (homo) { // hom-ins
+					if (snp_hap1 == 1 && snp_hap2 == 1){
 						ret[0]->s[i] = ret[1]->s[i] = (num_ins << 12) | (ins << 4) | c;
-						vector_position++;
-
-					} else if (hap1_set){
+					} else if (snp_hap1 == 1 && snp_hap2 == 0){
 						ret[0]->s[i] = (num_ins << 12) | (ins << 4) | c;
-						vector_position++;
-
-					} else {
+					} else if (snp_hap1 == 0 && snp_hap2 == 1){
 						ret[1]->s[i] = (num_ins << 12) | (ins << 4) | c;
-						vector_position++;
-					}
+					} else{continue;}
 				}
 			}
+			vec_ptr++;
 		}
-
-		if(vector_position > positions.size()){
-			break;
-		}
-	}	
+	}
 }
+
 void wgsim_mut_diref(const kseq_t *ks, int is_hap, mutseq_t *hap1, mutseq_t *hap2)
 {
 	int i, deleting = 0;
@@ -378,6 +329,7 @@ void wgsim_mut_diref(const kseq_t *ks, int is_hap, mutseq_t *hap1, mutseq_t *hap
 		}
 	}
 }
+
 void wgsim_print_mutref(const char *name, const kseq_t *ks, mutseq_t *hap1, mutseq_t *hap2)
 {
 	int i, j = 0; // j keeps the end of the last deletion
@@ -708,9 +660,9 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 static int simu_usage()
 {
 	fprintf(stderr, "\n");
-	fprintf(stderr, "Forked wgsim (Heng Li) (short read simulator) for simulation of bisulfite treated reads\n");
+	fprintf(stderr, "Forked wgsim (short read simulator) for simulating WGS or WGBS reads\n");
 	fprintf(stderr, "Version: %s\n", PACKAGE_VERSION);
-	fprintf(stderr, "Contact: Wenbin Guo <wbguo@ucla.edu>;\n\n");
+	fprintf(stderr, "Contact: Wenbin Guo <wbguo@ucla.edu>; Hongxiang Fu； Junxi Feng;\n\n");
 	fprintf(stderr, "Usage:   wgsim [options] <in.ref.fa> \n\n");
 	fprintf(stderr, "Options: -e FLOAT      base error rate [%.3f]\n", ERR_RATE);
 	fprintf(stderr, "         -d INT        outer distance between the two ends [500]\n");
