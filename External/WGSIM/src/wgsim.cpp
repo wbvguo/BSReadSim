@@ -86,7 +86,6 @@ void parse_vcf_chr(char *fname, char *chr_id)
 
     while (bcf_read(fp, hdr, rec)>=0) {	
 		if (collect_present == false && collect_previous == true) { // finished collecting
-			fprintf(stderr, "Finish collecting %d SNP from %s\n", pos_vec.size(), chr_id);
 			break;
 		}
 		
@@ -107,11 +106,12 @@ void parse_vcf_chr(char *fname, char *chr_id)
 			collect_present = true;
 			std::string ref = rec->d.allele[0];
 			std::string alt = rec->d.allele[1];
-			int snp_pos = rec->pos;
+			int snp_pos = rec->pos; //it already the 0-based coordinates
+			int base_change_pos = snp_pos;
 
 			int ref_len = ref.length();
 			int alt_len = alt.length();
-			int base_offset = ref_len - alt_len;
+			int base_offset = alt_len - ref_len;
 
 			// check genotype
 			ngt = bcf_get_genotypes(hdr,rec,&gt,&ngt_arr);
@@ -126,13 +126,17 @@ void parse_vcf_chr(char *fname, char *chr_id)
 			// 4. contains Ns, or missing values; 
 			// 5. same POS; 
 			// 6. for unphased, swap snp_hap1 & snp_hap2
-			if (abs(base_offset) > 4 || ngt > 2) {continue;}
-			if ((snp_hap1 > 1 && snp_hap2 > 1) || (snp_hap1 == 0 && snp_hap2 == 0)) {
-				fprintf(stderr, "Skip unusual SNP: CHROM:%s; POS:%d; HAP1:%d; HAP2:%d\n", chr_id, snp_pos, snp_hap1, snp_hap2);
+			// 7. ngt doesn't work
+			if (abs(base_offset) > 4 || ngt > 2) {
+				fprintf(stderr, "[%s] Skip unusual SNP: CHROM:%s; POS:%d; REF:%s; ALT:%s\n", __func__, chr_id, snp_pos, ref.c_str(), alt.c_str());
 				continue;
-			} 
-		
-
+			}
+			if (snp_hap1 > 1 || snp_hap2 > 1 || (snp_hap1 == 0 && snp_hap2 == 0)) {
+				fprintf(stderr, "[%s] Skip unusual SNP: CHROM:%s; POS:%d; HAP1:%d; HAP2:%d\n", __func__, chr_id, snp_pos, snp_hap1, snp_hap2);
+				continue;
+			}
+			
+			
 			//pack info: encode SNP info into int
 			int ref_int, alt_int, c = 0;			
 			if (alt_len == 1 && ref_len == 1){
@@ -141,13 +145,14 @@ void parse_vcf_chr(char *fname, char *chr_id)
 				alt_int = (mut_t)nst_nt4_table[(int)alt[0]];
 			} else {
 				if ( ref[0] != alt[0] ) { //check if the first base are the same if it's indel, if not skip
-					fprintf(stderr, "Skip unusual SNP: CHROM:%s; POS:%d; REF:%s; ALT %s\n", chr_id, snp_pos, ref.c_str(), alt.c_str());
+					fprintf(stderr, "[%s] Skip unusual SNP: CHROM:%s; POS:%d; REF:%s; ALT %s\n", __func__, chr_id, snp_pos, ref.c_str(), alt.c_str());
 					continue;
 				}
 
 				if (alt_len > 1 && ref_len == 1) {
 					//insertion
 					ref_int = (mut_t)nst_nt4_table[(int)ref[0]];
+					base_change_pos = snp_pos + 1; // position +1, because the base change occurs after the first base
 					for (int i = 0; i < alt_len; i++ ){ 
 						c = (mut_t)nst_nt4_table[(int)alt[i]];
 						alt_int = (alt_int << 2) | c;
@@ -155,119 +160,115 @@ void parse_vcf_chr(char *fname, char *chr_id)
 				} else if (ref_len > 1 && alt_len == 1){ 
 					//deletion
 					alt_int = (mut_t)nst_nt4_table[(int)alt[0]];
+					base_change_pos = snp_pos + 1; // position +1, because the base change occurs after the first base
 					for (int i = 0; i < ref_len; i++ ){ 
 						c = (mut_t)nst_nt4_table[(int)ref[i]];
 						ref_int = (ref_int << 2) | c;
 					}
 				} else { // might be MNP, or sth else
-					fprintf(stderr, "Skip unusual SNP: CHROM:%s; POS:%d; REF:%s; ALT %s\n", chr_id, snp_pos, ref.c_str(), alt.c_str());
+					fprintf(stderr, "[%s] Skip unusual SNP: CHROM:%s; POS:%d; REF:%s; ALT %s\n", __func__, chr_id, snp_pos, ref.c_str(), alt.c_str());
 					continue;
 				}
 			}
 
 			int geno_int = base_offset << 12 | ref_len << 8 | snp_hap2 << 4 | snp_hap1;
-			pos_vec.push_back(snp_pos);
+			pos_vec.push_back(base_change_pos);
 			ref_vec.push_back(ref_int);
 			alt_vec.push_back(alt_int);
 			geno_vec.push_back(geno_int);
     	}
 	}
 	
+	fprintf(stderr, "[%s] Finish collecting %lu SNP from %s\n", __func__, pos_vec.size(), chr_id);
+
     free(gt);
     bcf_destroy(rec);
     bcf_hdr_destroy(hdr);
     int ret;
     if ((ret=hts_close(fp))){
-        fprintf(stderr,"hts_close(%s): non-zero status %d\n",fname,ret);
+        fprintf(stderr,"[%s] hts_close(%s): non-zero status %d\n", __func__, fname, ret);
         exit(ret);
 	}
 }
 
-void wgsim_mut_vcf(const kseq_t *ks, int is_hap, mutseq_t *hap1, mutseq_t *hap2, char * vcf_file)
+void wgsim_mut_vcf(const kseq_t *ks, char * vcf_file, mutseq_t *hap1, mutseq_t *hap2)
 {
 	// initiate
 	mutseq_t *ret[2];
-	ret[0] = hap1; 
-	ret[1] = hap2;
-	ret[0]-> l = ks->seq.l;
-	ret[1]-> l = ks->seq.l;
-	ret[0]-> m = ks->seq.m; 
-	ret[1]-> m = ks->seq.m;
-	ret[0]-> s = (mut_t *)calloc(ks->seq.m, sizeof(mut_t));
-	ret[1]-> s = (mut_t *)calloc(ks->seq.m, sizeof(mut_t));
 
+	ret[0] = hap1; ret[1] = hap2;
+	ret[0]->l = ks->seq.l; ret[1]->l = ks->seq.l;
+	ret[0]->m = ks->seq.m; ret[1]->m = ks->seq.m;
+	ret[0]->s = (mut_t *)calloc(ks->seq.m, sizeof(mut_t));
+	ret[1]->s = (mut_t *)calloc(ks->seq.m, sizeof(mut_t));
+	
 	// parse VCF
     parse_vcf_chr(vcf_file, ks->name.s);
 
-	if (pos_vec.size() == 0) { // no valid snp in this chromosome
-		continue;
-	} else {
-		int vec_ptr = 0;
-		int i, deleting = 0;
-		int deletion_count = 0;
-		int c;
+	int vec_ptr = 0;
+	int i, deleting = 0;
+	int deletion_count = 0;
+	int c;
 
-		for (i = 0; i != ks->seq.l; ++i){
-			c = ret[0]->s[i] = ret[1]->s[i] = (mut_t)nst_nt4_table[(int)ks->seq.s[i]];
+	for (i = 0; i != ks->seq.l; ++i){
+		c = ret[0]->s[i] = ret[1]->s[i] = (mut_t)nst_nt4_table[(int)ks->seq.s[i]];
+		if (pos_vec.size() == 0){ continue;} // ignore the rest if there is no SNP
 
-			if (deleting){
-				if(deletion_count > 0){
-					if (deleting & 1){
-						ret[0]->s[i] |= DELETE;
-					}
-					if (deleting & 2){
-						ret[1]->s[i] |= DELETE;
-					}
-					deletion_count--;
-					continue;
-				} else {deleting = 0};
-			}
+		if (deleting){
+			if(deletion_count > 0){
+				if (deleting & 1){ ret[0]->s[i] |= DELETE;}
+				if (deleting & 2){ ret[1]->s[i] |= DELETE;}
+				deletion_count--;
+				continue;
+			} else {deleting = 0;}
+		}
 
-			if(vec_ptr < pos_vec.size() && i == pos_vec[vec_ptr] && c < 4){
-				int geno_int = geno_vec[vec_ptr];
-				int snp_hap1 = geno_int & 0x000f;
-				int snp_hap2 = (geno_int & 0x00ff) >> 4;
-				int ref_len  = (geno_int & 0x0fff) >> 8;
-				int base_offset = geno_int >> 12;
+		if(vec_ptr < pos_vec.size() && i == pos_vec[vec_ptr] && c < 4){
+			int geno_int = geno_vec[vec_ptr];
+			int snp_hap1 = geno_int & 0x000f;
+			int snp_hap2 = (geno_int & 0x00ff) >> 4;
+			int ref_len  = (geno_int & 0x0fff) >> 8;
+			int base_offset = geno_int >> 12;
+			//fprintf(stderr, "%d,%d,%d,%d,%d\n", i, snp_hap1, snp_hap2, ref_len, base_offset);
 
-				// SNP substitution
-				if(base_offset == 0 && ref_len == 1){
-					c = alt_vec[vec_ptr];
+			// SNP substitution
+			if(base_offset == 0 && ref_len == 1){
+				c = alt_vec[vec_ptr];
 
-					if (snp_hap1 == 1 && snp_hap2 == 1){
-						ret[0]->s[i] = ret[1]->s[i] = SUBSTITUTE|c;
-					} else if (snp_hap1 == 1 && snp_hap2 == 0){
-						ret[0]->s[i] = SUBSTITUTE|c;
-					} else if (snp_hap1 == 0 && snp_hap2 == 1){
-						ret[1]->s[i] = SUBSTITUTE|c;
-					} else{continue;}
-				} else if (base_offset < 0 ) { // deletion
-					c = alt_vec[vec_ptr];
-					deletion_count = abs(base_offset);
+				if (snp_hap1 == 1 && snp_hap2 == 1){
+					ret[0]->s[i] = ret[1]->s[i] = SUBSTITUTE|c;
+				} else if (snp_hap1 == 1 && snp_hap2 == 0){
+					ret[0]->s[i] = SUBSTITUTE|c;
+				} else if (snp_hap1 == 0 && snp_hap2 == 1){
+					ret[1]->s[i] = SUBSTITUTE|c;
+				} else{continue;}
+			} else if (base_offset < 0 ) { // deletion
+				c = ref_vec[vec_ptr];
+				deletion_count = abs(base_offset) - 1; //minus one because here already delete one base
 
-					if (snp_hap1 == 1 && snp_hap2 == 1){
-						ret[0]->s[i] = ret[1]->s[i] = SUBSTITUTE|c;
-						deleting = 3;
-					} else if (snp_hap1 == 1 && snp_hap2 == 0){
-						ret[0]->s[i] = SUBSTITUTE|c;
-						deleting = 1;
-					} else if (snp_hap1 == 0 && snp_hap2 == 1){
-						ret[1]->s[i] = SUBSTITUTE|c;
-						deleting = 2;
-					} else{continue;}
-				} else if (base_offset > 0){ // inserstion
-					int num_ins = base_offset;
-					int ins_msk = 1 << (num_ins*2+1) - 1;
-					int ins = ref_vec[vec_ptr] & ins_msk;
+				if (snp_hap1 == 1 && snp_hap2 == 1){
+					ret[0]->s[i] = ret[1]->s[i] =  DELETE;
+					deleting = 3;
+				} else if (snp_hap1 == 1 && snp_hap2 == 0){
+					ret[0]->s[i] =  DELETE;
+					deleting = 1;
+				} else if (snp_hap1 == 0 && snp_hap2 == 1){
+					ret[1]->s[i] =  DELETE;
+					deleting = 2;
+				} else{continue;}
+			} else if (base_offset > 0){ // inserstion
+				int num_ins = base_offset;
+				int ins_msk = (1 << (num_ins*2)) - 1;
+				int ins = alt_vec[vec_ptr] & ins_msk;
+				//fprintf(stderr, "%d,%d,%d,%d\n", num_ins, ins_msk, alt_vec[vec_ptr], ins);
 
-					if (snp_hap1 == 1 && snp_hap2 == 1){
-						ret[0]->s[i] = ret[1]->s[i] = (num_ins << 12) | (ins << 4) | c;
-					} else if (snp_hap1 == 1 && snp_hap2 == 0){
-						ret[0]->s[i] = (num_ins << 12) | (ins << 4) | c;
-					} else if (snp_hap1 == 0 && snp_hap2 == 1){
-						ret[1]->s[i] = (num_ins << 12) | (ins << 4) | c;
-					} else{continue;}
-				}
+				if (snp_hap1 == 1 && snp_hap2 == 1){
+					ret[0]->s[i] = ret[1]->s[i] = (num_ins << 12) | (ins << 4) | c;
+				} else if (snp_hap1 == 1 && snp_hap2 == 0){
+					ret[0]->s[i] = (num_ins << 12) | (ins << 4) | c;
+				} else if (snp_hap1 == 0 && snp_hap2 == 1){
+					ret[1]->s[i] = (num_ins << 12) | (ins << 4) | c;
+				} else{continue;}
 			}
 			vec_ptr++;
 		}
@@ -337,6 +338,7 @@ void wgsim_print_mutref(const char *name, const kseq_t *ks, mutseq_t *hap1, muts
 		int c[3];
 		c[0] = nst_nt4_table[(int)ks->seq.s[i]];
 		c[1] = hap1->s[i]; c[2] = hap2->s[i];
+		//fprintf(stderr, "%s,%d,%d,%d,%d\n", ks->name.s,i,c[0],c[1],c[2]);
 		if (c[0] >= 4) continue;
 		if ((c[1] & mutmsk) != NOCHANGE || (c[2] & mutmsk) != NOCHANGE) {
 			if (c[1] == c[2]) { // hom
@@ -412,8 +414,6 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 	int size[2], Q, max_size;
 	uint8_t *tmp_seq[2];
     mut_t *target;
-	FILE *vcf;
-	bool bool_vcf = false;
 	
 	l = size_l > size_r? size_l : size_r;
 	qstr = (char*)calloc(l+1, 1);
@@ -438,14 +438,19 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 	kseq_destroy(ks);
 	gzclose(fp_fa);
 
+
+	// vcf check
+	FILE *vcf;
+	bool bool_vcf = false;
 	if (strcmp(vcf_file, "None") == 0 || strlen(vcf_file) == 0) {
-		fprintf(stderr, "No vcf input, will generate SNP randomly if needed\n");
+		fprintf(stderr, "No VCF input, will generate SNP randomly if needed\n");
 	} else if(vcf=fopen(vcf_file,"r")) {
-		fprintf(stderr, "VCF file exists, use it in read simulation\n");
+		fprintf(stderr, "VCF file exists, use it to simulate reads\n");
 		bool_vcf=true;
 		fclose(vcf);
-	} else{
+	} else {
 		fprintf(stderr, "The specified VCF file does not exist, please check\n");
+		exit(1);
 	}
 
 	fp_fa = gzopen(fn, "r");
@@ -468,14 +473,17 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 			continue;
 		}
 
-		// printf("%s\n", ks->name.s);  ks->name.s is the chrmosome
 		// generate mutations and print them out
 		fprintf(stdout, "Contig Variant Start\n");
-		if(MUT_RATE == 0.0){fprintf(stdout, "%s\n", ks->name.s);}
-		if(bool_vcf){wgsim_mut_vcf(ks, is_hap, rseq, rseq+1, vcf_file);}else{wgsim_mut_diref(ks, is_hap, rseq, rseq+1);}
+		if(bool_vcf){
+			wgsim_mut_vcf(ks, vcf_file, rseq, rseq+1);
+			if(pos_vec.size() == 0){fprintf(stdout, "%s\n", ks->name.s);}
+		} else {
+			wgsim_mut_diref(ks, is_hap, rseq, rseq+1);
+			if(MUT_RATE == 0.0){fprintf(stdout, "%s\n", ks->name.s);}
+		}
 		wgsim_print_mutref(ks->name.s, ks, rseq, rseq+1);
 		fprintf(stdout, "Contig Variant End\n");
-
 
 		for (ii = 0; ii != n_pairs; ++ii) { // the core loop
 			double ran;
@@ -662,7 +670,7 @@ static int simu_usage()
 	fprintf(stderr, "\n");
 	fprintf(stderr, "Forked wgsim (short read simulator) for simulating WGS or WGBS reads\n");
 	fprintf(stderr, "Version: %s\n", PACKAGE_VERSION);
-	fprintf(stderr, "Contact: Wenbin Guo <wbguo@ucla.edu>; Hongxiang Fu； Junxi Feng;\n\n");
+	fprintf(stderr, "Contact: Wenbin Guo <wbguo@ucla.edu>; Hongxiang Fu; Junxi Feng;\n\n");
 	fprintf(stderr, "Usage:   wgsim [options] <in.ref.fa> \n\n");
 	fprintf(stderr, "Options: -e FLOAT      base error rate [%.3f]\n", ERR_RATE);
 	fprintf(stderr, "         -d INT        outer distance between the two ends [500]\n");

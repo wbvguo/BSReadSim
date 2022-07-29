@@ -27,8 +27,8 @@
 ##Contacts: Vasimuddin Md <vasimuddin.md@intel.com>; Sanchit Misra <sanchit.misra@intel.com>;
 ##                                Heng Li <hli@jimmy.harvard.edu> 
 ##*****************************************************************************************/
-$(shell export LD_LIBRARY_PATH=$(LD_LIBRARY_PATH):../HTSLIB/)
-$(shell echo $(LD_LIBRARY_PATH))
+# $(shell export LD_LIBRARY_PATH=$(LD_LIBRARY_PATH):../HTSLIB/)
+# $(shell echo $(LD_LIBRARY_PATH))
 EXE=		wgsim
 LIBS=		-Bstatic -lz 
 HTSLIB=	-I../HTSLIB/htslib/ -L../HTSLIB/ -lhts
