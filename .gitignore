@@ -131,3 +131,5 @@ dmypy.json
 # test
 test/
 .vscode/
+TestData/
+*_copy/
