@@ -31,7 +31,7 @@
 # $(shell echo $(LD_LIBRARY_PATH))
 EXE=		wgsim
 LIBS=		-Bstatic -lz 
-HTSLIB=	-I../HTSLIB/htslib/ -L../HTSLIB/ -lhts
+HTSLIB=		-I../HTSLIB/htslib/ -L../HTSLIB/ -lhts -Wl,-rpath ../HTSLIB
 CXX=c++
 
 CXXFLAGS=	-g -O3 -fpermissive $(ARCH_FLAGS) #-Wall ##-xSSE2

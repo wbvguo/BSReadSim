@@ -1,88 +1,141 @@
+import os
+import pickle
 import subprocess
+
 from typing import Dict, Union
-from bsbolt.Utils.UtilityFunctions import retrieve_iupac
+from Utils.UtilityFunctions import retrieve_iupac
 
-
-class StreamSim:
-
-    def __init__(self, paired_end=False, sim_command=None):
-        self.paired_end = paired_end
+class StreamWGSIM:
+    '''
+    stream the WGSIM output for bisulfite conversion
+    :param str sim_command: WGSIM commands for simulation
+    :rtype None
+    '''
+    
+    def __init__(self, sim_command: str = None):
         self.sim_command = sim_command
-        self.contig_variants = {}
-        self.variant_contig = None
-
+    
+    
     def __iter__(self):
-        sim = subprocess.Popen(self.sim_command,
-                               stdout=subprocess.PIPE,
-                               universal_newlines=True)
-        variant_output = False
-        sim_output = iter(sim.stdout.readline, '')
-        read_pair = {1: None, 2: None}
-        paired_count = 0
+        sim = subprocess.Popen(self.sim_command, stdout=subprocess.PIPE, universal_newlines=True)
+        sim_iter = iter(sim.stdout.readline, b'')
+        
+        line, sim_iter = self.get_line(sim_iter) # line is None when EOF
+        while line:
+            if line == "Contig Variant Start":
+                # collect all the variant lines, after that sim_iter points to read lines
+                contig, variant_dict, sim_iter = self.collect_variants(sim_iter)
+                yield contig, variant_dict
+                collect_reads_flag = True
+            
+            # collect read pairs
+            while collect_reads_flag:
+                line, sim_iter = self.get_line(sim_iter)
+                
+                if not line or line == "Contig Variant Start":
+                    collect_reads_flag = False
+                    break
+                
+                read1 = self.collect_read(sim_iter, line)
+                read2 = self.collect_read(sim_iter)
+                assert read1[0]["read_id"] == read2[0]["read_id"]
+                yield False, {0: read1, 1: read2}
+                
+    
+    def collect_variants(self, sim_iter):
+        variant_dict = {}
+        
         while True:
-            try:
-                formatted_line = next(sim_output).strip()
-            except StopIteration:
-                break
-            else:
-                if formatted_line == 'Contig Variant Start':
-                    variant_output = True
-                elif variant_output:
-                    variant_output = self.collect_variant_info(formatted_line)
-                    if not variant_output and self.contig_variants:
-                        yield self.variant_contig, self.contig_variants
-                        self.contig_variants = {}
-                else:
-                    read_info = self.process_read_name(formatted_line)
-                    seq = next(sim_output).strip()
-                    comment = next(sim_output).strip()
-                    qual = self.modify_qual(next(sim_output).strip())
-                    read_info.update(dict(comment=comment, seq=seq, qual=qual))
-                    read_pair[read_info['pair']] = read_info
-                    paired_count += 1
-                    if paired_count == 2:
-                        assert read_pair[1]['read_id'] == read_pair[2]['read_id']
-                        yield False, read_pair
-                        read_pair = {1: None, 2: None}
-                        paired_count = 0
+            line = next(sim_iter).strip()
+            if line == 'Contig Variant End':
+                return contig, variant_dict, sim_iter
+            
+            contig, variant_info = self.process_variant_line(line)
+            if variant_info:
+                assert variant_info['pos'] not in variant_dict
+                variant_dict[variant_info['pos']] = variant_info
+    
+    
+    def collect_read(self, sim_iter, line = None):
+        if not line:
+            line = next(sim_iter).strip()
+        info= self.process_read_name(line)
+        seq = next(sim_iter).strip()
+        cmt = next(sim_iter).strip()
+        qual= next(sim_iter).strip()
+        return [info, seq, cmt, qual]
+    
 
     @staticmethod
-    def modify_qual(quality: str) -> str:
-        # modify start position to ensure proper qual handling downstream
-        quality_split = list(quality)
-        qual_start = int(ord(quality_split[0]) - 33)
-        quality_split[0] = chr(qual_start + 32)
-        return ''.join(quality_split)
-
-    def collect_variant_info(self, formatted_line):
-        if formatted_line == 'Contig Variant End':
-            return False
-        variant_info = self.process_variant_line(formatted_line)
-        assert variant_info['pos'] not in self.contig_variants
-        self.contig_variants[variant_info['pos']] = variant_info
-        self.variant_contig = variant_info['chrom']
-        return True
-
-    @staticmethod
-    def process_variant_line(formatted_line):
-        chrom, pos, reference, alt, heterozygous = formatted_line.split('\t')
-        het = True if heterozygous == '+' else False
-        pos = int(pos)
-        indel = 0
-        iupac = None
-        if reference == '-':
-            indel = 1
-        elif alt == '-':
-            indel = -1
+    def get_line(sim_iter):
+        try:
+            line = next(sim_iter).strip()
+        except StopIteration:
+            print("End of output\n")
+            return None, sim_iter
         else:
-            iupac = retrieve_iupac(alt)
-        return dict(chrom=chrom, pos=pos, reference=reference, alt=alt, heterozygous=het,
-                    indel=indel, iupac=iupac)
+            return line, sim_iter
+
 
     @staticmethod
-    def process_read_name(formatted_line: str) -> Dict[str, Union[str, int]]:
-        read_info = formatted_line.split(':')
+    def process_variant_line(line: str) -> Dict:
+        line_split = line.split('\t')
+        
+        try:
+            chrom, pos, ref, alt, heter_flag = line_split
+        except ValueError:
+            return line_split[0], None
+        else:
+            heter = True if heter_flag == '+' else False
+            indel = int(ref == '-') - int(alt == '-') # indel=1 for ref=='-', -1 for alt=='-', o.w. 0
+            iupac = retrieve_iupac(alt) if indel == 0 else None
+            return chrom, dict(chrom=chrom, pos=int(pos), ref=ref, alt=alt, 
+                               heter=heter, indel=indel, iupac=iupac)
+
+    @staticmethod
+    def process_read_name(line: str) -> Dict[str, Union[str, int]]:
+        read_info = line.split(':')
         chrom, start, end, insert_size, read_id, cigar, pair, c_base_info, g_base_info = read_info
         return dict(chrom=chrom.replace('@', ''), start=int(start), end=int(end),
                     insert_size=insert_size, read_id=read_id, cigar=cigar, pair=int(pair),
                     c_base_info=c_base_info, g_base_info=g_base_info)
+        
+
+class StreamOutput:
+    '''
+    write the simulation values/variants to disk
+    :param str sim_output: path to the simulation folder
+    :param str shuffle: whether to shuffle the reads or not, default is reads are 
+                        segemented by contig_id
+    :rtype None
+    '''
+    
+    def __init__(self, sim_output=None, shuffle = True):
+        self.sim_output = sim_output
+        self.shuffle = shuffle
+
+    def generate_sim_directory(self):
+        if not os.path.isdir(self.sim_output):
+            os.makedirs(self.sim_output, exist_ok=False)
+
+    def output_contig(self, contig_id, contig_profile, values=False, variant=False):
+        if contig_id:
+            contig_label = contig_id
+            if values:
+                contig_label = f'{contig_id}_values'
+            elif variant:
+                contig_label = f'{contig_id}_variants'
+            with open(f'{self.sim_output}/{contig_label}.pkl', 'wb') as contig_out:
+                pickle.dump(contig_profile, contig_out)
+
+    def load_contig(self, contig_id, values=False):
+        contig_label = contig_id
+        if values:
+            contig_label = f'{contig_id}_values'
+        try:
+            with open(f'{self.sim_output}/{contig_label}.pkl', 'rb') as contig_out:
+                contig_profile = pickle.load(contig_out)
+        except FileNotFoundError:
+            return None
+        else:
+            return contig_profile

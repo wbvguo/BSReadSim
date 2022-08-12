@@ -129,5 +129,7 @@ dmypy.json
 .pyre/
 
 # test
-test/
+test*/
 .vscode/
+TestData/
+*_copy/
