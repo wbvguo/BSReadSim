@@ -1,0 +1,16 @@
+XXXX we want to skip this line XXXX
+XXXX we want to skip this line XXXX
+DATA BEGIN
+[ Block #1 ] ... 1992-08-08 08:08:08
+[ Block #1 ] ... DATA #1 IN BLOCK
+[ Block #1 ] ... 2018-03-06 15:33:23
+DATA END
+XXXX we want to skip this line XXXX
+XXXX we want to skip this line XXXX
+DATA BEGIN
+[ Block #2 ] ... 2021-02-01 00:01:00
+[ Block #2 ] ... DATA #2 IN BLOCK
+[ Block #2 ] ... 2021-02-02 01:00:00
+DATA END
+XXXX we want to skip this line XXXX
+XXXX we want to skip this line XXXX

@@ -125,7 +125,7 @@ void parse_vcf_chr(char *fname, char *chr_id)
 			// 3. multi nucleotide polymorphism (MNP); 
 			// 4. contains Ns, or missing values; 
 			// 5. same POS; 
-			// 6. for unphased, swap snp_hap1 & snp_hap2
+			// 6. for unphased, swap snp_hap1 & snp_hap2？ test for the phased genotype
 			// 7. ngt doesn't work
 			if (abs(base_offset) > 4 || ngt > 2) {
 				fprintf(stderr, "[%s] Skip unusual SNP: CHROM:%s; POS:%d; REF:%s; ALT:%s\n", __func__, chr_id, snp_pos, ref.c_str(), alt.c_str());
@@ -521,7 +521,7 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 			g_offset[0] = new int[l + 1];
 			g_offset[1] = new int[l + 1];
 
-																										//what's these symbol, why need?, in line 345, why it's M for Insertion?
+																										//what's these symbol, why need?, in line 345, why it's M for Insertion? (i CHANGED TO I)
 			#define __gen_read(x, start, iter) do {									\
 				for (i = (start), k = 0, ext_coor[x] = -10; i >= 0 && i < ks->seq.l && k < s[x]; iter) {	\
 					int c = target[i], mut_type = c & mutmsk;			\
@@ -560,7 +560,7 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 					} else {											\
 						int n, ins;										\
 						++n_indel[x];	                                \
-						cigar[x] += 'M';								\
+						cigar[x] += 'I';								\
 						char base = c & 0xf;                            \
 						tmp_seq[x][k] = base;						    \
 						if ((int)base == 1) {                           \
