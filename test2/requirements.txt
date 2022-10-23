@@ -1,5 +1,0 @@
-Bio >= 1.76
-tqdm >= 4.31.1
-numpy >= 1.16.3
-setuptools >= 46.0.0
-scipy >= 1.6.0
