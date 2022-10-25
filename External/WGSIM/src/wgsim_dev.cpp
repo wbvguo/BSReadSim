@@ -63,7 +63,7 @@ const uint8_t nst_nt4_table[256] = {
 
 
 /* wgsim */
-
+// if the leftmost 4 bit is non-zero, then it must be snp or indel
 enum muttype_t {NOCHANGE = 0, INSERT = 0x1000, SUBSTITUTE = 0xe000, DELETE = 0xf000};
 typedef unsigned short mut_t;
 static mut_t mutmsk = (mut_t)0xf000;
@@ -149,7 +149,7 @@ void parse_vcf_chr(char *fname, char *chr_id)
 			int is_phased = bcf_gt_is_phased(gt[1]); //phased:1, unphased:0
 
 			//skip the following records: 
-			// 1. insert/delete length greater than 4
+			// 1. insert/delete offset greater than 4
 			// 2. multi-allelic sites
 			// 3. contains no-call values
 			// 4. multi-ploid organism
@@ -254,7 +254,7 @@ void wgsim_mut_vcf(const kseq_t *ks, char * vcf_file, mutseq_t *hap1, mutseq_t *
 		if(vec_ptr < pos_vec.size() && i == pos_vec[vec_ptr] && c < 4){
 			int geno_int = geno_vec[vec_ptr];
 			int is_phased= geno_int & 0x000f;
-			int snp_hap1 = geno_int & 0x003f >> 4;
+			int snp_hap1 = (geno_int & 0x003f) >> 4;
 			int snp_hap2 = (geno_int & 0x00ff) >> 6;
 			int ref_len  = (geno_int & 0x0fff) >> 8;
 			int base_offset = geno_int >> 12;
@@ -374,7 +374,6 @@ void wgsim_print_mutref(const char *name, const kseq_t *ks, mutseq_t *hap1, muts
 		int c[3];
 		c[0] = nst_nt4_table[(int)ks->seq.s[i]];
 		c[1] = hap1->s[i]; c[2] = hap2->s[i];
-		//fprintf(stderr, "%s,%d,%d,%d,%d\n", ks->name.s,i,c[0],c[1],c[2]);
 		if (c[0] >= 4) continue;
 		if ((c[1] & mutmsk) != NOCHANGE || (c[2] & mutmsk) != NOCHANGE) {
 			if (c[1] == c[2]) { // hom
@@ -438,7 +437,7 @@ void wgsim_print_mutref(const char *name, const kseq_t *ks, mutseq_t *hap1, muts
 	}
 }
 
-void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, int size_l, int size_r, int mean_inner, int output_mode, char *vcf_file)
+void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, int size_l, int size_r, int output_mode, char *vcf_file)
 {
 	kseq_t *ks;
     mutseq_t rseq[2];
@@ -447,19 +446,24 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 	int i, l, n_ref;
 	char *qstr;
 	int size[2], Q, max_size;
-	uint8_t *tmp_seq[2];
+	uint8_t *tmp_seq[2];    // save sequence
+	uint8_t *tmp_context[2];// save context (CG, CHG, and Mutation context)
+	int8_t  *tmp_offset[2]; // save offset per base
     mut_t *target;
 	
-	l = size_l > size_r? size_l : size_r;
-	qstr = (char*)calloc(l+1, 1);
-	tmp_seq[0] = (uint8_t*)calloc(l+2, 1);
-	tmp_seq[1] = (uint8_t*)calloc(l+2, 1);
+	max_size = std::max(size_l, size_r);
+	qstr = (char*)calloc(max_size+1, 1);
+	tmp_seq[0] = (uint8_t*)calloc(max_size+2, 1);
+	tmp_seq[1] = (uint8_t*)calloc(max_size+2, 1);
+	tmp_context[0] = (uint8_t*)calloc(max_size+2, 1);
+	tmp_context[1] = (uint8_t*)calloc(max_size+2, 1);
+	tmp_offset[0]  = (int8_t*)calloc(max_size+2, 1);
+	tmp_offset[1]  = (int8_t*)calloc(max_size+2, 1);
 	size[0] = size_l; size[1] = size_r;
-	max_size = size_l > size_r? size_l : size_r;
 	
 	int min_inner, max_inner, inner_dist;
-	min_inner = -1 * size_r; //originally 10, here changed to the -size_r
-	max_inner = dist - 2 * size_l; // dist is the insert size
+	min_inner = -1 * std::min(size_l, size_r); //when the one read's start is the other read's end
+	max_inner = 600 - 2* max_size; // observed from real data, max insert size is ~600
 
 	Q = (ERR_RATE == 0.0)? 'I' : (int)(-10.0 * log(ERR_RATE) / log(10.0) + 0.499) + 33;
 
@@ -496,7 +500,7 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 		std::random_device rd;
 		std::mt19937 gen(rd());
 		// pull from truncated distribution to ensure read doesn't pass boundary 
-		std::uniform_int_distribution<int> dis(0, ks->seq.l - dist - 100);
+		std::uniform_int_distribution<int> dis(2, ks->seq.l - max_inner - 2*max_size -2); //add 2 base offset
 
 		uint64_t n_pairs = (uint64_t)((long double)l / tot_len * N + 0.5);
 		// initialise random normal for insert size simulation 
@@ -519,7 +523,7 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 		}
 		wgsim_print_mutref(ks->name.s, ks, rseq, rseq+1);
 		fprintf(stdout, "Contig Variant End\n");
-
+		
 		for (ii = 0; ii != n_pairs; ++ii) { // the core loop
 			double ran;
 			int d, pos, s[2];
@@ -527,7 +531,7 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 
 			pos = dis(gen);
 			int insert_dev = (int)(std_dev * dis_rn(gen_rn));
-			inner_dist = mean_inner + insert_dev;
+			inner_dist = dist + insert_dev - size_l - size_r; //dist is the mean insert size
 			inner_dist = std::max(min_inner, std::min(inner_dist, max_inner));
 			s[0] = size[0]; s[1] = size[1];
 
@@ -536,36 +540,22 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 			n_sub[0] = n_sub[1] = n_indel[0] = n_indel[1] = n_err[0] = n_err[1] = 0;
 			int start[2] = {pos, pos + inner_dist + size_l};
 			int end[2] = {start[0], start[1]};
-			std::string cigar[2];
 			int offset[2] = {0, 0};
 			int c_count[2] = {0, 0};
 			int g_count[2] = {0, 0};
-			int** c_bases = new int*[2]; // a pointer to a pointer to an int; why new and delete? 
-			int** g_bases = new int*[2];
-			int** c_offset = new int*[2];
-			int** g_offset = new int*[2];
-			c_bases[0] = new int[l + 1];
-			c_bases[1] = new int[l + 1];
-			g_bases[0] = new int[l + 1];
-			g_bases[1] = new int[l + 1];
-			c_offset[0] = new int[l + 1];
-			c_offset[1] = new int[l + 1];
-			g_offset[0] = new int[l + 1];
-			g_offset[1] = new int[l + 1];
-
-			//Why these \ symbol, in line 595, why it's M for Insertion? (I changed to I)
-			// x: read1 or read2; ext_coor: extend corrdinates; 
+ 
+			//Why these \ symbol, in line 595, why it's M for Insertion? (I changed to 'I')
+			// x: select read1 or read2; ext_coor: extend corrdinates; 
 			#define __gen_read(x, start, iter) do {									\
 				for (i = (start), k = 0, ext_coor[x] = -10; i >= 0 && i < ks->seq.l && k < s[x]; iter) {	\
 					int c = target[i], mut_type = c & mutmsk;			\
 					if (ext_coor[x] < 0) {								\
-						/*if the first base is deletion, then move until no deletion*/ \
-						if (mut_type != NOCHANGE && mut_type != SUBSTITUTE) continue; \
+						/* avoid indel as the first base */ 			\
+						if (mut_type != NOCHANGE && mut_type != SUBSTITUTE){ ++start[x]; ++end[x]; continue;} \
 						ext_coor[x] = i;								\
 					}													\
 					if (mut_type == DELETE){                            \
 						++n_indel[x];                                   \
-						/*cigar[x] += 'D';*/                            \
 						++offset[x];                                    \
 						++end[x];	                                    \
 					}			                                        \
@@ -573,6 +563,7 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 						char base = c & 0xf;                            \
 						int ob = nst_nt4_table[(int)ks->seq.s[i]];      \
 						tmp_seq[x][k] = base;						    \
+						tmp_offset[x][k] = offset[x];					\
 						if (mut_type == SUBSTITUTE) {                   \
 							++n_sub[x];	                                \
 							cigar[x] += 'X';                            \
@@ -598,13 +589,13 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 						char base = c & 0xf;                            \
 						tmp_seq[x][k] = base;						    \
 						if ((int)base == 1) {                           \
-	                        c_bases[x][c_count[x]] = k;                 \
-							c_offset[x][c_count[x]] = offset[x];        \
+	                        /* c_bases[x][c_count[x]] = k;  */               \
+							/* c_offset[x][c_count[x]] = offset[x]; */       \
 							++c_count[x];                               \
 							}                                           \
 						else if ((int)base == 2){                       \
-	                        g_bases[x][g_count[x]] = k;                 \
-							g_offset[x][g_count[x]] = offset[x];        \
+	                        /* g_bases[x][g_count[x]] = k; */                 \
+							/* g_offset[x][g_count[x]] = offset[x]; */        \
 							++g_count[x];                               \
 							}                                           \
 						++end[x];                                       \
@@ -622,11 +613,11 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 			} while (0)
 
 			__gen_read(0, pos, ++i);
-			__gen_read(1, pos + inner_dist + size_l, ++i);
+			__gen_read(1, pos + size_l + inner_dist, ++i);
 			//for (k = 0; k < s[1]; ++k) tmp_seq[1][k] = tmp_seq[1][k] < 4? 3 - tmp_seq[1][k] : 4; // complement
 			if (ext_coor[0] < 0 || ext_coor[1] < 0) { // failed to generate the read(s)
 				--ii;
-				goto CLEAN_CG_PTR;
+				continue;
 			}
 
 			// generate sequencing errors
@@ -648,14 +639,8 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 			}
 			if (j < 2) { // too many ambiguous bases on one of the reads
 				--ii;
-				goto CLEAN_CG_PTR;
+				continue;
 			}
-
-			// print
-			if (output_mode == 0) {
-				
-			}
-
 
 			for (j = 0; j < 2; ++j) {
 				for (i = 0; i < s[j]; ++i) qstr[i] = Q;
@@ -682,19 +667,6 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 
 			}
 			
-			CLEAN_CG_PTR:
-			delete c_bases[0];
-			delete c_bases[1];
-			delete c_bases;
-			delete g_bases[0];
-			delete g_bases[1];
-			delete g_bases;
-			delete c_offset[0];
-			delete c_offset[1];
-			delete c_offset;
-			delete g_offset[0];
-			delete g_offset[1];
-			delete g_offset;
 		}
 		free(rseq[0].s); free(rseq[1].s);
 	}
@@ -709,7 +681,7 @@ static int simu_usage()
 	fprintf(stderr, "\n");
 	fprintf(stderr, "Forked wgsim (short read simulator) for simulating WGS or WGBS reads\n");
 	fprintf(stderr, "Version: %s\n", PACKAGE_VERSION);
-	fprintf(stderr, "Contact: Wenbin Guo <wbguo@ucla.edu>; Hongxiang Fu; Junxi Feng;\n\n");
+	fprintf(stderr, "Contact: Wenbin Guo <wbguo@ucla.edu>; \n\n");
 	fprintf(stderr, "Usage:   wgsim [options] <in.ref.fa> \n\n");
 	fprintf(stderr, "Options: -e FLOAT      base error rate [%.3f]\n", ERR_RATE);
 	fprintf(stderr, "         -d INT        outer distance between the two ends [500]\n");
@@ -740,8 +712,7 @@ int main(int argc, char *argv[])
 
 	N = 1000000; dist = 500; std_dev = 50;
 	size_l = size_r = 70;
-	int mean_inner = (dist - size_l * 2) / 2;
-	while ((c = getopt(argc, argv, "e:d:s:N:1:2:r:R:h:X:S:A:I:m:g:")) >= 0) {
+	while ((c = getopt(argc, argv, "e:d:s:N:1:2:r:R:h:X:S:A:m:g:")) >= 0) {
 		switch (c) {
 		case 'd': dist = atoi(optarg); break;
 		case 's': std_dev = atoi(optarg); break;
@@ -755,7 +726,6 @@ int main(int argc, char *argv[])
 		case 'A': MAX_N_RATIO = atof(optarg); break;
 		case 'S': seed = atoi(optarg); break;
 		case 'h': is_hap = atoi(optarg); break;
-		case 'I': mean_inner = atoi(optarg); break;
 		case 'm': output_mode = atoi(optarg); break;
 		case 'g': vcf_file = optarg; break;
 		}
@@ -764,7 +734,7 @@ int main(int argc, char *argv[])
 	if (seed <= 0) seed = time(0)&0x7fffffff;
 	fprintf(stderr, "[wgsim] seed = %d\n", seed);
 	srand48(seed);
-	wgsim_core(argv[optind], is_hap, N, dist, std_dev, size_l, size_r, mean_inner, output_mode, vcf_file);
+	wgsim_core(argv[optind], is_hap, N, dist, std_dev, size_l, size_r, output_mode, vcf_file);
 
 	return 0;
 }
