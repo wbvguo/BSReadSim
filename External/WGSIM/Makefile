@@ -21,7 +21,7 @@
 ##   CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 ##   SOFTWARE.
 ##
-##Contacts: Wenbin Guo <wbguo@ucla.edu>
+##   Contacts: Wenbin Guo <wbguo@ucla.edu>
 ##*****************************************************************************************/
 # $(shell export LD_LIBRARY_PATH=$(LD_LIBRARY_PATH):../HTSLIB/)
 # $(shell echo $(LD_LIBRARY_PATH))
