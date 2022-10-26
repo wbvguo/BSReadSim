@@ -479,7 +479,7 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 	int i, l, n_ref;
 	char *qstr;
 	int size[2], Q, max_size;
-	uint32_t tot_sub, tot_indel, tot_err, tot_pairs;
+	unsigned int tot_sub, tot_indel, tot_err, tot_pairs;
 	uint8_t *tmp_seq[2];    	// save sequence
 	uint8_t *tmp_context[2];	// save context (CG, CHG, CHH)
 	uint8_t *tmp_mutation[2];	// save mutation status
@@ -583,9 +583,9 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 			int offset[2] = {0, 0};
 
 			// x: select read1 or read2; ext_coor: extend corrdinates;
-			#define __gen_read(x, start, iter) do {	\
+			#define __gen_read(x, start_pos, iter) do {	\
 				/* generate reads assign mutation flag; */ \
-				for (i = (start), k = 0, ext_coor[x] = -10; i >= 0 && i < ks->seq.l && k < s[x]; iter) {	\
+				for (i = (start_pos), k = 0, ext_coor[x] = -10; i >= 0 && i < ks->seq.l && k < s[x]; iter) {	\
 					int c = target[i], mut_type = c & mutmsk;			\
 					if (ext_coor[x] < 0) {								\
 						/* avoid indel as the first base */				\
@@ -609,7 +609,7 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 							++n_sub[x];									\
 							tmp_mutation[x][k] = SNV;					\
 						} else {										\
-							tmp_mutation[x][k] = MATCH					\
+							tmp_mutation[x][k] = MATCH;					\
 						}												\
 						++end[x];										\
 						++k;											\
@@ -643,8 +643,8 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 							c_d1 = target[end[x]+ix_ext];				\
 							c_d2 = target[end[x]+ix_ext+1];				\
 						} else {										\
-							c_d1 = tmp_seq[x][ix+1]						\
-							c_d2 = tmp_seq[x][ix+2]						\
+							c_d1 = tmp_seq[x][ix+1];						\
+							c_d2 = tmp_seq[x][ix+2];						\
 						}												\
 					} else {											\
 						/*handle the first 2 base*/						\
@@ -700,7 +700,7 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 					fprintf(stdout, "@%s:%d:%d:%llx/%d\n", ks->name.s, start[j], end[j], (long long)ii, j+1);
 					// sequence (introduce random sequencing error)
 					for (i = 0; i < s[j]; ++i) {
-						int c = tmp_seq[j][i]
+						int c = tmp_seq[j][i];
 						if (drand48() < ERR_RATE){
 							// c = (c + (int)(drand48() * 3.0 + 1)) & 3; // random sequencing errors
 							c = (c + 1) & 3; // recurrent sequencing errors
@@ -740,13 +740,13 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 					fprintf(stdout, "\n");
 					// quality
 					fprintf(stdout, "%s\n", qstr);
-				
-			}	
+				}
+			}
 		}
 		free(rseq[0].s); free(rseq[1].s);
 	}
-	fprintf(stderr, "There are %lu read pairs generated, with %lu mutations (%lu SNP, %lu Indel) and %lu errors\n", 
-								tot_pairs, tot_sub+tot_indel, tot_snp, tot_indel, tot_err);
+	fprintf(stderr, "There are %u read pairs generated, with %u mutations (%u SNP, %u Indel) and %u errors\n", 
+						tot_pairs, tot_sub+tot_indel, tot_sub, tot_indel, tot_err);
 	kseq_destroy(ks);
 	gzclose(fp_fa);
 	free(qstr);
