@@ -62,10 +62,10 @@ const uint8_t nst_nt4_table[256] = {
 };
 
 static uint8_t MATCH  = 0x00;
-static uint8_t SNV 	  = 0x10;
-static uint8_t INSR   = 0x30;
-static uint8_t CONVT  = 0x50;
-static uint8_t SEQERR = 0x90;
+static uint8_t SNV 	  = 0x01;
+static uint8_t INSR   = 0x03;
+static uint8_t CONVT  = 0x05;
+static uint8_t SEQERR = 0x09;
 const uint8_t mut_table[16] = {
 	0, 1, 0, 2, 
 	0, 0, 0, 0, 
@@ -105,8 +105,8 @@ typedef struct {
 	mut_t *s; /* sequence */
 } mutseq_t;
 
-static double ERR_RATE = 0.02;
-static double MUT_RATE = 0.001;
+static double ERR_RATE = 0.005;
+static double MUT_RATE = 0.01;
 static double INDEL_FRAC = 0.15;
 static double INDEL_EXTEND = 0.3;
 static double MAX_N_RATIO = 0.05;
@@ -616,7 +616,7 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 					} else {											\
 						tmp_seq[x][k] = c & 0xf;						\
 						tmp_offset[x][k] = offset[x];					\
-						tmp_mutation[x][k] = INSR;						\
+						tmp_mutation[x][k] = MATCH;/*The base is ref*/	\
 						++n_indel[x];									\
 						++end[x];										\
 						++k;											\
@@ -714,7 +714,7 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 					// comment
 					fprintf(stdout, "+%d:%d:%d:%d:%d:", n_sub[j], n_indel[j], end[1] - start[0], end[0] - start[1], n_err[j]);
 					for (i = 0; i < s[j]; ++i) {
-						int c = (tmp_mutation[j][i] & 0xf0) >> 4;
+						int c = (tmp_mutation[j][i] & 0x0f);
 						fputc("MXIE"[mut_table[c]], stdout);
 					}
 					fprintf(stdout, "\n");
@@ -723,23 +723,33 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 				}
 			} else {
 				int mut_flag = n_sub[0] + n_sub[1] + n_indel[0] + n_indel[1];
+				int num_indel= n_indel[0] + n_indel[1];
 				for (j = 0; j < 2; ++j) {
 					// header
-					fprintf(stdout, "@%s:%d:%d:%llx %d %d %d %d\n", ks->name.s, start[j], end[j], (long long)ii, 
-																	j+1, mut_flag, start[j], end[j]);
+					fprintf(stdout, "@%s:%d:%d:%llx %d %d %d %d %d ", ks->name.s, start[j], end[j], (long long)ii, 
+																		j+1, mut_flag, num_indel,start[j], end[j]);
+					for (i = 0; i < s[j]; ++i) {
+						fprintf(stdout, "%x", tmp_mutation[j][i]);
+					}
+					fprintf(stdout, "\n");
 					// sequence (no sequencing error, represented by 0-4)
 					for (i = 0; i < s[j]; ++i) {
-						fputc(tmp_seq[j][i], stdout);
+						fprintf(stdout, "%d", tmp_seq[j][i]);
 					}
 					fprintf(stdout, "\n");
 					// comment
 					fprintf(stdout, "+%d:%d:%d:", n_sub[j], n_indel[j], end[1] - start[0]);
+					const char *pad = "";
 					for (i = 0; i < s[j]; ++i) {
-						fputc( tmp_mutation[j][i] | tmp_context[j][i], stdout);
+						fprintf(stdout, "%s%d", pad, tmp_offset[j][i]);
+						pad = ",";
 					}
 					fprintf(stdout, "\n");
 					// quality
-					fprintf(stdout, "%s\n", qstr);
+					for (i = 0; i < s[j]; ++i) {
+						fprintf(stdout, "%x", tmp_context[j][i]);
+					}
+					fprintf(stdout, "\n");
 				}
 			}
 		}
