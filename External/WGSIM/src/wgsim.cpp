@@ -62,7 +62,7 @@ const uint8_t nst_nt4_table[256] = {
 };
 
 static uint8_t MATCH  = 0x00;
-static uint8_t SNV 	  = 0x01;
+static uint8_t SNV    = 0x01;
 static uint8_t INSR   = 0x03;
 static uint8_t CONVT  = 0x05;
 static uint8_t SEQERR = 0x09;
@@ -108,7 +108,7 @@ typedef struct {
 static double ERR_RATE = 0.005;
 static double MUT_RATE = 0.01;
 static double INDEL_FRAC = 0.15;
-static double INDEL_EXTEND = 0.3;
+static double INDEL_EXTEND= 0.3;
 static double MAX_N_RATIO = 0.05;
 
 // to store vcf information
@@ -147,9 +147,7 @@ void parse_vcf_chr(char *fname, char *chr_id)
     }
 
     while (bcf_read(fp, hdr, rec)>=0) {	
-        if (collect_present == false && collect_previous == true) { // finished collecting
-            break;
-        }
+        if (collect_present == false && collect_previous == true) { break; } // finished collecting
         
         // a new round, save last status
         collect_previous = collect_present; 
@@ -184,10 +182,9 @@ void parse_vcf_chr(char *fname, char *chr_id)
             //skip the following records: 
             // 1. insert/delete offset greater than 4
             // 2. multi-allelic sites
-            // 3. contains no-call values
-            // 4. multi-ploid organism
-            // 5. multi nucleotide polymorphism (MNP); (consider to include?)
-            // 6. SNP with the same position (only keep the first occurence)
+            // 3. multi-ploid organism
+            // 4. multi nucleotide polymorphism (MNP); (consider to include?)
+            // 5. SNP with the same position (only keep the first occurence)
             // TODO: 
             // 1. contains Ns;
             // 2. missing snps?
@@ -411,7 +408,7 @@ void wgsim_print_mutref(const char *name, const kseq_t *ks, mutseq_t *hap1, muts
         if ((c[1] & mutmsk) != NOCHANGE || (c[2] & mutmsk) != NOCHANGE) {
             if (c[1] == c[2]) { // hom
                 if ((c[1]&mutmsk) == SUBSTITUTE) { // substitution
-                    printf("%s\t%d\t%c\t%c\t-\n", name, i+1, "ACGTN"[c[0]], "ACGTN"[c[1]&0xf]); // variants is 1-based
+                    printf("%s\t%d\t%c\t%c\t-\n", name, i+1, "ACGTN"[c[0]], "ACGTN"[c[1]&0xf]); // coordinate is 1-based
                 } else if ((c[1]&mutmsk) == DELETE) { // del
                     if (i >= j) {
                         printf("%s\t%d\t", name, i+1);
@@ -524,7 +521,7 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
         fprintf(stderr, "No VCF input, will generate SNP randomly if mutation rate is nonzero\n");
     } else if(vcf=fopen(vcf_file,"r")) {
         fprintf(stderr, "VCF file exists, use it to simulate reads\n");
-        bool_vcf=true;
+        bool_vcf = true;
         fclose(vcf);
     } else {
         fprintf(stderr, "The specified VCF file does not exist, please check\n");
@@ -583,84 +580,84 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
             int offset[2] = {0, 0};
 
             // x: select read1 or read2; ext_coor: extend corrdinates;
-            #define __gen_read(x, start_pos, iter) do {	\
-                /* generate reads assign mutation flag; */ \
-                for (i = (start_pos), k = 0, ext_coor[x] = -10; i >= 0 && i < ks->seq.l && k < s[x]; iter) {	\
-                    int c = target[i], mut_type = c & mutmsk;			\
-                    if (ext_coor[x] < 0) {								\
-                        /* avoid indel as the first base */				\
-                        if (mut_type != NOCHANGE && mut_type != SUBSTITUTE) continue;	\
-                        start[x] = i; 									\
-                        end[x] = i; 									\
-                        ext_coor[x] = i;								\
-                    }													\
-                    if (mut_type == DELETE){							\
-                        ++offset[x];									\
-                        ++end[x];										\
-                        ++n_indel[x];									\
-                    }													\
-                    else if (mut_type == NOCHANGE || mut_type == SUBSTITUTE) {	\
-                        /* context: 0x00 Match, 0x10 SNP, 0x30 INSERT	\
-                                    0x01 CG, 0x03 CHG, 0x07 CHH (>>)  	\
-                                    0x09 GC, 0x0b GDC, 0x0f GDD (<<) */	\
-                        tmp_seq[x][k] = c & 0xf;						\
-                        tmp_offset[x][k] = offset[x];					\
-                        if (mut_type == SUBSTITUTE) {					\
-                            ++n_sub[x];									\
-                            tmp_mutation[x][k] = SNV;					\
-                        } else {										\
-                            tmp_mutation[x][k] = MATCH;					\
-                        }												\
-                        ++end[x];										\
-                        ++k;											\
-                    } else {											\
-                        tmp_seq[x][k] = c & 0xf;						\
-                        tmp_offset[x][k] = offset[x];					\
-                        tmp_mutation[x][k] = MATCH;/*The base is ref*/	\
-                        ++n_indel[x];									\
-                        ++end[x];										\
-                        ++k;											\
-                        int num_ins, ins;								\
-                        for (num_ins = mut_type>>12, ins = c>>4; num_ins > 0 && k < s[x]; --num_ins, ins >>= 2){	\
-                            --offset[x];								\
-                            tmp_seq[x][k] = ins & 0x3;					\
-                            tmp_offset[x][k] = offset[x];				\
-                            tmp_mutation[x][k] = INSR;					\
-                            ++k;										\
-                        }												\
-                    }													\
-                }														\
-                /* append CG context flag; 								\
-                   currently not handling bounday context by indel*/	\
-                for (ix=0; ix < k; ++ix) {								\
-                    int c_d1, c_d2;										\
-                    int c = tmp_seq[x][ix];								\
-                    if (cg_table[(uint8_t) c]) continue;				\
-                    if (c == 1) {										\
-                        /*handle the last 2 base*/						\
-                        if(ix > k-3){									\
-                            int ix_ext = k - ix; /*think if ix=k-1*/	\
-                            c_d1 = target[end[x]+ix_ext];				\
-                            c_d2 = target[end[x]+ix_ext+1];				\
-                        } else {										\
-                            c_d1 = tmp_seq[x][ix+1];						\
-                            c_d2 = tmp_seq[x][ix+2];						\
-                        }												\
-                    } else {											\
-                        /*handle the first 2 base*/						\
-                        if(ix < 2){										\
-                            int ix_ext = 2 - ix; /*think if ix=1 */		\
-                            c_d1 = target[start[x]-ix_ext+1];			\
-                            c_d2 = target[start[x]-ix_ext];				\
-                        } else {										\
-                            c_d1 = tmp_seq[x][ix-1];					\
-                            c_d2 = tmp_seq[x][ix-2];					\
-                        }												\
-                    }													\
-                    uint8_t context_idx = c << 4 | c_d1 <<2 | c_d2;		\
-                    tmp_context[x][ix] = cg_context_table[context_idx];\
-                }														\
-                if (k != s[x]) ext_coor[x] = -10;						\
+            #define __gen_read(x, start_pos, iter) do {                 \
+                /* generate reads assign mutation flag; */              \
+                for (i = (start_pos), k = 0, ext_coor[x] = -10; i >= 0 && i < ks->seq.l && k < s[x]; iter) { \
+                    int c = target[i], mut_type = c & mutmsk;           \
+                    if (ext_coor[x] < 0) {                              \
+                        /* avoid indel as the first base */             \
+                        if (mut_type != NOCHANGE && mut_type != SUBSTITUTE) continue; \
+                        start[x] = i;                                   \
+                        end[x] = i;                                     \
+                        ext_coor[x] = i;                                \
+                    }                                                   \
+                    if (mut_type == DELETE){                            \
+                        ++offset[x];                                    \
+                        ++end[x];                                       \
+                        ++n_indel[x];                                   \
+                    }                                                   \
+                    else if (mut_type == NOCHANGE || mut_type == SUBSTITUTE) { \
+                        /* context: 0x00 Match, 0x10 SNP, 0x30 INSERT   \
+                                    0x01 CG, 0x03 CHG, 0x07 CHH (>>)    \
+                                    0x09 GC, 0x0b GDC, 0x0f GDD (<<) */ \
+                        tmp_seq[x][k] = c & 0xf;                        \
+                        tmp_offset[x][k] = offset[x];                   \
+                        if (mut_type == SUBSTITUTE) {                   \
+                            ++n_sub[x];                                 \
+                            tmp_mutation[x][k] = SNV;                   \
+                        } else {                                        \
+                            tmp_mutation[x][k] = MATCH;                 \
+                        }                                               \
+                        ++end[x];                                       \
+                        ++k;                                            \
+                    } else {                                            \
+                        tmp_seq[x][k] = c & 0xf;                        \
+                        tmp_offset[x][k] = offset[x];                   \
+                        tmp_mutation[x][k] = MATCH;/*The base is ref*/  \
+                        ++n_indel[x];                                   \
+                        ++end[x];                                       \
+                        ++k;                                            \
+                        int num_ins, ins;                               \
+                        for (num_ins = mut_type>>12, ins = c>>4; num_ins > 0 && k < s[x]; --num_ins, ins >>= 2){ \
+                            --offset[x];                                \
+                            tmp_seq[x][k] = ins & 0x3;                  \
+                            tmp_offset[x][k] = offset[x];               \
+                            tmp_mutation[x][k] = INSR;                  \
+                            ++k;                                        \
+                        }                                               \
+                    }                                                   \
+                }                                                       \
+                /* append CG context flag;                              \
+                   currently not handling bounday context by indel*/    \
+                for (ix=0; ix < k; ++ix) {                              \
+                    int c_d1, c_d2;                                     \
+                    int c = tmp_seq[x][ix];                             \
+                    if (cg_table[(uint8_t) c]) continue;                \
+                    if (c == 1) {                                       \
+                        /*handle the last 2 base*/                      \
+                        if(ix > k-3){                                   \
+                            int ix_ext = k - ix; /*think if ix=k-1*/    \
+                            c_d1 = target[end[x]+ix_ext];               \
+                            c_d2 = target[end[x]+ix_ext+1];             \
+                        } else {                                        \
+                            c_d1 = tmp_seq[x][ix+1];                    \
+                            c_d2 = tmp_seq[x][ix+2];                    \
+                        }                                               \
+                    } else {                                            \
+                        /*handle the first 2 base*/                     \
+                        if(ix < 2){                                     \
+                            int ix_ext = 2 - ix; /*think if ix=1 */     \
+                            c_d1 = target[start[x]-ix_ext+1];           \
+                            c_d2 = target[start[x]-ix_ext];             \
+                        } else {                                        \
+                            c_d1 = tmp_seq[x][ix-1];                    \
+                            c_d2 = tmp_seq[x][ix-2];                    \
+                        }                                               \
+                    }                                                   \
+                    uint8_t context_idx = c << 4 | c_d1 <<2 | c_d2;     \
+                    tmp_context[x][ix] = cg_context_table[context_idx]; \
+                }                                                       \
+                if (k != s[x]) ext_coor[x] = -10;                       \
             } while (0)
 
             __gen_read(0, pos, ++i);
@@ -738,9 +735,8 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
                 int mut_flag = n_sub[0] + n_sub[1] + n_indel[0] + n_indel[1];
                 int num_indel= n_indel[0] + n_indel[1];
                 for (j = 0; j < 2; ++j) {
-                    // header
-                    fprintf(stdout, "@%s:%d:%d:%llx %d %d %d %d %d ", ks->name.s, start[j], end[j], (long long)ii, 
-                                                                        j+1, mut_flag, num_indel,start[j], end[j]); // 0-based coordinates for number output
+                    // header: 0-based coordinates for number output
+                    fprintf(stdout, "@%s:%d:%d:%llx %d %d %d %d %d ", ks->name.s, start[j], end[j], (long long)ii, j+1, mut_flag, num_indel,start[j], end[j]); 
                     for (i = 0; i < s[j]; ++i) {
                         fprintf(stdout, "%x", tmp_mutation[j][i]);
                     }
@@ -768,8 +764,7 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
         }
         free(rseq[0].s); free(rseq[1].s);
     }
-    fprintf(stderr, "[%s] There are %u read pairs generated, with %u mutations (%u SNP, %u Indel) and %u errors\n", 
-                        __func__, tot_pairs, tot_sub+tot_indel, tot_sub, tot_indel, tot_err);
+    fprintf(stderr, "[%s] There are %u read pairs generated, with %u mutations (%u SNP, %u Indel) and %u errors\n", __func__, tot_pairs, tot_sub+tot_indel, tot_sub, tot_indel, tot_err);
     kseq_destroy(ks);
     gzclose(fp_fa);
     free(qstr);
@@ -795,7 +790,7 @@ static int simu_usage()
     fprintf(stderr, "         -S INT        seed for random generator [-1]\n");
     fprintf(stderr, "         -A FLOAT      disgard if the fraction of ambiguous bases higher than FLOAT [%.2f]\n", MAX_N_RATIO);
     fprintf(stderr, "         -h INT        haplotype mode: 0 for No; non-zero for Yes [0]\n");
-    fprintf(stderr, "         -m INT		output mode: 0 for letters (sequence: AGCT,CIGAR: MIX); 1 for numbers (0123, flags) [0]\n");
+    fprintf(stderr, "         -m INT        output mode: 0 for letters (sequence: AGCT,CIGAR: MIX); 1 for numbers (sequence: 0123, and flags) [0]\n");
     fprintf(stderr, "         -g STRING     path to the genetic variant file (vcf.gz) [None]\n");
     fprintf(stderr, "\n");
     return 1;
