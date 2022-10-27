@@ -510,6 +510,9 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
         tot_len += l;
         ++n_ref;
     }
+    // if fasta is non-existing or empty
+    if (!fp_fa) { fprintf (stderr, "gzopen of '%s' failed: %s. Exit... \n", fn, strerror (errno)); exit (EXIT_FAILURE);}
+    if (!n_ref) { fprintf (stderr, "Input fasta is empty: %s. Exit... \n", fn); exit (EXIT_FAILURE);}
     fprintf(stderr, "[%s] %d sequences, total length: %llu\n", __func__, n_ref, (long long)tot_len);
     kseq_destroy(ks);
     gzclose(fp_fa);
@@ -736,7 +739,7 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
                 int num_indel= n_indel[0] + n_indel[1];
                 for (j = 0; j < 2; ++j) {
                     // header: 0-based coordinates for number output
-                    fprintf(stdout, "@%s:%d:%d:%llx %d %d %d %d %d ", ks->name.s, start[j], end[j], (long long)ii, j+1, mut_flag, num_indel,start[j], end[j]); 
+                    fprintf(stdout, "@%s:%d:%d:%llx:%d %d %d %d %d %d ", ks->name.s, start[j], end[j], (long long)ii, j+1, j+1, mut_flag, num_indel,start[j], end[j]); 
                     for (i = 0; i < s[j]; ++i) {
                         fprintf(stdout, "%x", tmp_mutation[j][i]);
                     }
@@ -747,7 +750,7 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
                     }
                     fprintf(stdout, "\n");
                     // comment
-                    fprintf(stdout, "+%d:%d:%d:", n_sub[j], n_indel[j], end[1] - start[0]);
+                    fprintf(stdout, "+:%d:%d:%d:", n_sub[j], n_indel[j], end[1] - start[0]);
                     const char *pad = "";
                     for (i = 0; i < s[j]; ++i) {
                         fprintf(stdout, "%s%d", pad, tmp_offset[j][i]);
