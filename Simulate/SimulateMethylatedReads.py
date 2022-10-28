@@ -31,7 +31,7 @@ class SimulateMethylatedReads:
        * *mutation_indel_fraction (float)*: fraction of mutations that are INDELs, [0.15]
        * *indel_extension_probability (float)*: probability INDEL length will be extended, [0.15]
        * *random_seed (int)*: random seed for mutation and sequencing error generation, [-1]
-       * *paired_end (bool)*: simulate paired end bisulfite sequencing data. [False]
+       * *pair_end (bool)*: simulate paired end bisulfite sequencing data. [False]
        * *read_length (int)*: length of simulated reads, [100]
        * *read_depth (int)*: average read depth over simulated contigs, [20]
        * *undirectional (bool)*: simulate undirectional (PCR product of Watson and Crick strands), [False]
@@ -69,7 +69,7 @@ class SimulateMethylatedReads:
                  mutation_indel_fraction: float = 0.15, indel_extension_probability: float = 0.15,
                  pe_fragment_size: int = 400, insert_deviation: int = 25, mean_inner_dist: int = 100,    # fragment setting
                  read_length: int = 100, read_depth: int = 20, sequencing_error: float = 0.005,          # reads setting
-                 undirectional: bool = False, paired_end: bool = True, conversion_rate: float = 0.998,   # sequencing protocol
+                 undirectional: bool = False, pair_end: bool = True, conversion_rate: float = 0.998,   # sequencing protocol
                  ambiguous_base_cutoff: float = 0.05, 
                  verbose: bool = True, collect_ch_sites: bool = True, collect_sim_stats: bool = False, overwrite_db: bool = False):
         
@@ -86,7 +86,7 @@ class SimulateMethylatedReads:
         # prepare wgsim command
         wgsim_args     = [get_external_paths()[1], reference_file] # second element is wgsim path
         genome_length  = sum([len(seq) for key, seq in self.reference_dict.items()])
-        number_reads   = int(genome_length * read_depth / read_length / (1 + int(paired_end)))
+        number_reads   = int(genome_length * read_depth / read_length / (1 + int(pair_end)))
         wgsim_options  = {'-1': read_length, '-2': read_length, '-N': number_reads,
                           '-r': mutation_rate, '-h': int(haplotype_mode), '-S': random_seed, 
                           '-R': mutation_indel_fraction,'-X': indel_extension_probability,
@@ -99,7 +99,7 @@ class SimulateMethylatedReads:
         self.meth_options   = {'cgmap': cgmap_file, 'meth_ref': meth_db_file, 'beta_param': meth_beta_param}
         
         # sequencing settings
-        self.paired_end     = paired_end
+        self.pair_end       = pair_end
         self.undirectional  = undirectional
         self.conversion_rate= conversion_rate
         self.seq_error      = sequencing_error
@@ -177,13 +177,13 @@ class SimulateMethylatedReads:
         
         # set read methylation, bisulfite conversion, add sequencing error
         sim_data[0] = self.set_read_methylation_bisulfite(sim_data[0], sub_pattern)
-        if self.paired_end:
+        if self.pair_end:
             sim_data[1] = self.set_read_methylation_bisulfite(sim_data[1], sub_pattern)
         
         # switch subpattern randomly for output if undirectional                        #??? need to check
         if self.undirectional and bernoulli.rvs(0.5):
             sub_pattern = ('C', 'T') if sub_pattern[0] == 'G' else ('G', 'A')
-            if self.paired_end:
+            if self.pair_end:
                 sim_data[0], sim_data[1] = sim_data[1], sim_data[0]
         self.output_sim_reads(sim_data, sub_pattern[0], ref_strand)
         
@@ -326,7 +326,7 @@ class SimulateMethylatedReads:
                        f'{sim_data[0][0]["end"]}:{sim_data[0][0]["cigar"]}:{ref_strand}{conversion_1}'
         read = f'{read_label}\n{sim_data[0][1].upper()}\n{read_comment}\n{sim_data[0][3]}\n'
         self.output_objects[0].write(read)
-        if self.paired_end:
+        if self.pair_end:
             read_label = f'@{sim_data[1][0]["read_id"]}_{sim_data[1][0]["chrom"]}/2'
             read_comment = f'+{sim_data[1][0]["chrom"]}:{sim_data[1][0]["start"]+1}:' \
                            f'{sim_data[1][0]["end"]}:{sim_data[1][0]["cigar"]}:{ref_strand}{conversion_2}'
@@ -357,7 +357,7 @@ class SimulateMethylatedReads:
     def get_output_objects(self):
         """Return io object for fastq writing"""
         output_list = [open(f'{self.sim_output}_1.fq', 'w')]
-        if self.paired_end:
+        if self.pair_end:
             output_list.append(open(f'{self.sim_output}_2.fq', 'w'))
         return output_list
 

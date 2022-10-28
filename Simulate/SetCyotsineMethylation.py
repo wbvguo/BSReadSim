@@ -8,6 +8,7 @@ from Bio import SeqIO
 from Utils.CGmapIterator import OpenCGmap
 from StreamSim import StreamOutput
 
+
 class SetCytosineMethylation:
     
     def __init__(self, reference_file: str = None, sim_output: str = None, 

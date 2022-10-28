@@ -1,9 +1,6 @@
 ##/*************************************************************************************
 ##                           The MIT License
 ##
-##   BWA-MEM2  (Sequence alignment using Burrows-Wheeler Transform),
-##   Copyright (C) 2019  Vasimuddin Md, Sanchit Misra, Intel Corporation, Heng Li.
-##
 ##   Permission is hereby granted, free of charge, to any person obtaining
 ##   a copy of this software and associated documentation files (the
 ##   "Software"), to deal in the Software without restriction, including
@@ -24,8 +21,7 @@
 ##   CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 ##   SOFTWARE.
 ##
-##Contacts: Vasimuddin Md <vasimuddin.md@intel.com>; Sanchit Misra <sanchit.misra@intel.com>;
-##                                Heng Li <hli@jimmy.harvard.edu> 
+##   Contacts: Wenbin Guo <wbguo@ucla.edu>
 ##*****************************************************************************************/
 # $(shell export LD_LIBRARY_PATH=$(LD_LIBRARY_PATH):../HTSLIB/)
 # $(shell echo $(LD_LIBRARY_PATH))
