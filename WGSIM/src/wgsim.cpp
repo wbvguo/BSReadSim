@@ -192,7 +192,7 @@ void parse_vcf_chr(char *fname, char *chr_id)
                 fprintf(stderr, "[%s] Skip unusual SNP [length/ploidy/pos]: CHROM:%s; POS:%d; REF:%s; ALT:%s\n", __func__, chr_id, snp_pos, ref.c_str(), alt.c_str());
                 continue;
             }
-            if (snp_hap1 < 0 || snp_hap2 < 0 || snp_hap1 > 1 || snp_hap2 > 1 || (snp_hap1 == 0 && snp_hap2 == 0)) {
+            if (snp_hap1 < 0 || snp_hap2 < 0 || snp_hap1 > 1 || snp_hap2 > 1) {
                 fprintf(stderr, "[%s] Skip unusual SNP [snp haplotype]: CHROM:%s; POS:%d; HAP1:%d; HAP2:%d\n", __func__, chr_id, snp_pos, snp_hap1, snp_hap2);
                 continue;
             }
@@ -249,7 +249,7 @@ void parse_vcf_chr(char *fname, char *chr_id)
     }
 }
 
-void wgsim_mut_vcf(const kseq_t *ks, char * vcf_file, mutseq_t *hap1, mutseq_t *hap2)
+void wgsim_mut_vcf(const kseq_t *ks, char * vcf_file, mutseq_t *hap1, mutseq_t *hap2, uint8_t *site_flag_arr)
 {
     // initiate
     mutseq_t *ret[2];
@@ -277,6 +277,7 @@ void wgsim_mut_vcf(const kseq_t *ks, char * vcf_file, mutseq_t *hap1, mutseq_t *
                 if (deleting & 1){ ret[0]->s[i] |= DELETE;}
                 if (deleting & 2){ ret[1]->s[i] |= DELETE;}
                 deletion_count--;
+                site_flag_arr[i] = 1;
                 continue;
             } else {deleting = 0;}
         }
@@ -288,6 +289,7 @@ void wgsim_mut_vcf(const kseq_t *ks, char * vcf_file, mutseq_t *hap1, mutseq_t *
             int snp_hap2 = (geno_int & 0x00ff) >> 6;
             int ref_len  = (geno_int & 0x0fff) >> 8;
             int base_offset = geno_int >> 12;
+            site_flag_arr[i] = 1;
             //fprintf(stderr, "%d,%d,%d,%d,%d,%d\n", i, is_pahsed,snp_hap1, snp_hap2, ref_len, base_offset);
 
             if (!is_phased){ // for unphased genotype, randomly swap the haplotype
@@ -341,7 +343,7 @@ void wgsim_mut_vcf(const kseq_t *ks, char * vcf_file, mutseq_t *hap1, mutseq_t *
     }
 }
 
-void wgsim_mut_diref(const kseq_t *ks, int is_hap, mutseq_t *hap1, mutseq_t *hap2)
+void wgsim_mut_diref(const kseq_t *ks, int is_hap, mutseq_t *hap1, mutseq_t *hap2, uint8_t *site_flag_arr)
 {
     int i, deleting = 0;
     mutseq_t *ret[2];
@@ -358,6 +360,7 @@ void wgsim_mut_diref(const kseq_t *ks, int is_hap, mutseq_t *hap1, mutseq_t *hap
             if (drand48() < INDEL_EXTEND) {
                 if (deleting & 1) ret[0]->s[i] |= DELETE;
                 if (deleting & 2) ret[1]->s[i] |= DELETE;
+                site_flag_arr[i] = 1;
                 continue;
             } else deleting = 0;
         }
@@ -393,6 +396,7 @@ void wgsim_mut_diref(const kseq_t *ks, int is_hap, mutseq_t *hap1, mutseq_t *hap
                     }
                 }
             }
+            site_flag_arr[i] = 1;
         }
     }
 }
@@ -551,13 +555,14 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
             continue;
         }
 
+        uint8_t site_flag_arr[ks->seq.l] = {0}; // record if the site is a SNP/INDEL position (the base can be REF)
         // introduce mutations and print them to stdout
         fprintf(stdout, "Contig Variant Start\n");
         if(bool_vcf){
-            wgsim_mut_vcf(ks, vcf_file, rseq, rseq+1);
+            wgsim_mut_vcf(ks, vcf_file, rseq, rseq+1, site_flag_arr);
             if(pos_vec.size() == 0){fprintf(stdout, "%s\n", ks->name.s);} //if no variants, print contig id
         } else {
-            wgsim_mut_diref(ks, is_hap, rseq, rseq+1);
+            wgsim_mut_diref(ks, is_hap, rseq, rseq+1, site_flag_arr);
             if(MUT_RATE == 0.0){fprintf(stdout, "%s\n", ks->name.s);}
         }
         wgsim_print_mutref(ks->name.s, ks, rseq, rseq+1);
@@ -566,7 +571,8 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
         for (ii = 0; ii != n_pairs; ++ii) { // the core loop
             double ran;
             int pos, s[2];
-            int n_sub[2], n_indel[2], n_err[2], ext_coor[2], j, k, ix;
+            int n_sub[2], n_indel[2], n_err[2], ext_coor[2], pos_flag[2], j, k, ix;
+            //pos_flag hold if the read covers a snp *position* (the read don't have to contain the ALT allele)
             //j hold read1/read2, k hold the length of read, ix hold the cursor transversing read
 
             pos = dis(gen);
@@ -577,7 +583,7 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 
             // generate the read sequences
             target = rseq[drand48()<0.5?0:1].s; // haplotype from which the reads are generated
-            n_sub[0] = n_sub[1] = n_indel[0] = n_indel[1] = n_err[0] = n_err[1] = 0;
+            n_sub[0] = n_sub[1] = n_indel[0] = n_indel[1] = n_err[0] = n_err[1] = pos_flag[0] = pos_flag[1] =0;
             int start[2] = {pos, pos + inner_dist + size_l};
             int end[2] = {start[0], start[1]};
             int offset[2] = {0, 0};
@@ -600,7 +606,7 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
                         ++n_indel[x];                                   \
                     }                                                   \
                     else if (mut_type == NOCHANGE || mut_type == SUBSTITUTE) { \
-                        /* context: 0x00 Match, 0x10 SNP, 0x30 INSERT   \
+                        /* context: 0x00 Match, 0x01 SNP, 0x03 INSERT   \
                                     0x01 CG, 0x03 CHG, 0x07 CHH (>>)    \
                                     0x09 GC, 0x0b GDC, 0x0f GDD (<<) */ \
                         tmp_seq[x][k] = c & 0xf;                        \
@@ -629,6 +635,7 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
                             ++k;                                        \
                         }                                               \
                     }                                                   \
+                    pos_flag[x] |= site_flag_arr[i];                    \
                 }                                                       \
                 /* append CG context flag;                              \
                    currently not handling bounday context by indel*/    \
@@ -710,7 +717,10 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
                 for (j = 0; j < 2; ++j) {
                     int jj = j ^ is_flip; // x^0=x; x^1=!x (when x is binary)
                     // header
-                    fprintf(stdout, "@%s:%d:%d:%llx/%d\n", ks->name.s, start[jj]+1, end[jj]+1, (long long)ii, j+1); //1-based coordinates for string output
+                    int pos_flag_summary = pos_flag[0] | pos_flag[1];
+                    int num_mut  = n_sub[0] + n_sub[1] + n_indel[0] + n_indel[1];
+                    int num_indel= n_indel[0] + n_indel[1];
+                    fprintf(stdout, "@%s:%d:%d:%llx:%d:%d:%d/%d\n", ks->name.s, start[jj]+1, end[jj]+1, (long long)ii, pos_flag_summary, num_mut, num_indel, j+1); //1-based coordinates for string output
                     // sequence (introduce random sequencing error)
                     for (i = 0; i < s[jj]; ++i) {
                         int c = tmp_seq[jj][i];
@@ -725,7 +735,7 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
                     }
                     fprintf(stdout, "\n");
                     // comment
-                    fprintf(stdout, "+%d:%d:%d:%d:%d:", n_sub[jj], n_indel[jj], end[1] - start[0], end[0] - start[1], n_err[jj]);
+                    fprintf(stdout, "+%d:%d:%d:%d:%d:%d:", pos_flag[jj], n_sub[jj], n_indel[jj], n_err[jj], end[1] - start[0], end[0] - start[1]);
                     for (i = 0; i < s[jj]; ++i) {
                         int c = (tmp_mutation[jj][i] & 0x0f);
                         fputc("MXIE"[mut_table[c]], stdout);
@@ -735,22 +745,25 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
                     fprintf(stdout, "%s\n", qstr);
                 }
             } else {
-                int mut_flag = n_sub[0] + n_sub[1] + n_indel[0] + n_indel[1];
+                int pos_flag_summary = pos_flag[0] | pos_flag[1];
+                int num_mut  = n_sub[0] + n_sub[1] + n_indel[0] + n_indel[1];
                 int num_indel= n_indel[0] + n_indel[1];
                 for (j = 0; j < 2; ++j) {
                     // header: 0-based coordinates for number output
-                    fprintf(stdout, "@%s:%d:%d:%llx:%d %d %d %d %d %d ", ks->name.s, start[j], end[j], (long long)ii, j+1, j+1, mut_flag, num_indel,start[j], end[j]); 
+                    fprintf(stdout, "@%s:%d:%d:%llx:%d %d %d %d %d %d %d ", ks->name.s, start[j], end[j], (long long)ii, j+1, j+1, pos_flag_summary, num_mut, num_indel, start[j], end[j]); 
                     for (i = 0; i < s[j]; ++i) {
-                        fprintf(stdout, "%x", tmp_mutation[j][i]);
+                        //fprintf(stdout, "%x", tmp_mutation[j][i]); //this will output the hex number, below line will output the ascii
+                        fputc(tmp_mutation[j][i], stdout);
                     }
                     fprintf(stdout, "\n");
                     // sequence (no sequencing error, represented by 0-4)
                     for (i = 0; i < s[j]; ++i) {
-                        fprintf(stdout, "%d", tmp_seq[j][i]);
+                        //fprintf(stdout, "%d", tmp_seq[j][i]);
+                        fputc(tmp_seq[j][i], stdout);
                     }
                     fprintf(stdout, "\n");
                     // comment
-                    fprintf(stdout, "+:%d:%d:%d:", n_sub[j], n_indel[j], end[1] - start[0]);
+                    fprintf(stdout, "+:%d:%d:%d:%d:", pos_flag[j], n_sub[j], n_indel[j], end[1] - start[0]);
                     const char *pad = "";
                     for (i = 0; i < s[j]; ++i) {
                         fprintf(stdout, "%s%d", pad, tmp_offset[j][i]);
@@ -759,7 +772,8 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
                     fprintf(stdout, "\n");
                     // quality
                     for (i = 0; i < s[j]; ++i) {
-                        fprintf(stdout, "%x", tmp_context[j][i]);
+                        //fprintf(stdout, "%x", tmp_context[j][i]);
+                        fputc(tmp_context[j][i], stdout);
                     }
                     fprintf(stdout, "\n");
                 }
@@ -793,7 +807,7 @@ static int simu_usage()
     fprintf(stderr, "         -S INT        seed for random generator [-1]\n");
     fprintf(stderr, "         -A FLOAT      disgard if the fraction of ambiguous bases higher than FLOAT [%.2f]\n", MAX_N_RATIO);
     fprintf(stderr, "         -h INT        haplotype mode: 0 for No; non-zero for Yes [0]\n");
-    fprintf(stderr, "         -m INT        output mode: 0 for letters (sequence: AGCT,CIGAR: MIX); 1 for numbers (sequence: 0123, and flags) [0]\n");
+    fprintf(stderr, "         -m INT        output mode: 0 for letters (sequence: AGCT,CIGAR: MXI); 1 for numbers (sequence: 0123, and flags) [0]\n");
     fprintf(stderr, "         -g STRING     path to the genetic variant file (vcf.gz) [None]\n");
     fprintf(stderr, "\n");
     return 1;

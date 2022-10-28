@@ -129,9 +129,9 @@ dmypy.json
 .pyre/
 
 # test
-test*/
 .vscode/
 *_copy/
 .vscode/
 */.ipynb_checkpoints/
 */test*
+test

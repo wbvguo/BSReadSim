@@ -4,7 +4,7 @@ import subprocess
 
 from array import array
 from typing import Dict, Union
-from Utils.UtilityFunctions import retrieve_iupac
+from UtilityFunctions import retrieve_iupac
 
 
 class StreamWGSIM:
