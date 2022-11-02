@@ -7,21 +7,30 @@ import pysam
 from typing import List, Union
 
 
-class OpenCGmap:
-
-    def __init__(self, cgmap: str = None):
-        if cgmap.endswith('.gz'):
-            self.f = io.BufferedReader(gzip.open(cgmap, 'rb'))
+class parseCGmap:
+    def __init__(self, cgmap_file: str = None, contig_id: str = None, collect_ch: bool = False):
+        self.cgmap_file = cgmap_file
+        self.contig_id  = contig_id
+        self.collect_ch = collect_ch
+        
+        if cgmap_file.endswith('.gz'):
+            self.f = io.BufferedReader(gzip.open(cgmap_file, 'rb'))
         else:
-            self.f = open(cgmap, 'r')
+            self.f = open(cgmap_file, 'r')
 
+            
     def __iter__(self):
         with self.f as cg:
             while True:
                 line = cg.readline()
                 if not line:
                     break
-                yield self.process_line(line)
+                chr_id, base, pos, context, diN, meth_level, meth_count, tot_count = self.process_line(line)
+                if chr_id != contig_id:
+                    continue
+                if not self.collect_ch and context != 'CG': 
+                    continue
+                yield [chr_id, base, pos, context, meth_level]
 
     @staticmethod
     def process_line(line: Union[str, bytes]) -> List[str]:
@@ -29,6 +38,43 @@ class OpenCGmap:
             return line.decode('utf-8').replace('\n', '').split('\t')
         else:
             return line.replace('\n', '').split('\t')
+
+        
+class parseASM:
+    def __init__(self, asm_file: str = None, contig_id: str = None, collect_ch: bool = False):
+        self.asm_file   = asm_file
+        self.contig_id  = contig_id
+        self.collect_ch = collect_ch
+        
+        if asm_file.endswith('.gz'):
+            self.f = io.BufferedReader(gzip.open(asm_file, 'rb'))
+        else:
+            self.f = open(asm_file, 'r')
+
+            
+    def __iter__(self):
+        with self.f as asm:
+            while True:
+                line = asm.readline()
+                if not line:
+                    break
+                # chr, base, pos, context, dinucleotide, meth, snp_pos, REF, ALT, ref_meth, alt_meth, fold_change, pval
+                # comment can be meth_count/tot_count;ref_meth_count/ref_tot_count;alt_meth_count/alt_tot_count
+                chr_id, base, pos, context, tot_meth, snp_pos, ref, alt, ref_meth, alt_meth, fold_change, p_val, comment = self.process_line(line)
+                if chr_id != contig_id:
+                    continue
+                if not self.collect_ch and context != 'CG': 
+                    continue
+                yield [chr_id, base, pos, context, tot_meth, ref_meth, alt_meth]
+                
+                
+    @staticmethod
+    def process_line(line: Union[str, bytes]) -> List[str]:
+        if isinstance(line, bytes):
+            return line.decode('utf-8').replace('\n', '').split('\t')
+        else:
+            return line.replace('\n', '').split('\t')
+
 
 
 def complement(sequence):

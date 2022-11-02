@@ -131,8 +131,10 @@ dmypy.json
 # test
 .vscode/
 *_copy/
+*/*_copy*
 .vscode/
 */.ipynb_checkpoints/
 */test*
 test*
 .gitignore
+.history
