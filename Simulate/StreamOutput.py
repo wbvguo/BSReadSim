@@ -19,6 +19,7 @@ class StreamOutput:
         if not os.path.isdir(self.outdir):
             os.makedirs(self.outdir, exist_ok=False)
             os.makedirs(self.pkl_dir, exist_ok=False)
+
     def check_outdir(self):
         '''check if we have existence and permission'''
         if not os.path.isdir(self.outdir):

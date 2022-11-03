@@ -16,22 +16,24 @@ from UtilityFunctions import parseCGmap, parseASM
 class SetCytosineMethylation:
     '''
     prepare Cytosine methylation level database for read methylation state simulation
-    :param str  ref_fasta    : path to the reference genome [.fasta/.fa/.fa.gz]
-    :param str  outdir       : path to the output directory
-    :param str  meth_db_path : path to the previous obj [.pkl] (if use meth_db for simulation)
-    :param str  cgmap_file   : path to the cgmap file [.CGmap/.CGmap.gz]
-    :param bool cgmap_pool   : whether to pool methylaiton levels and random draws from it
-    :param bool asm_sim      : whether to conduct allelic specific methylation (ASM)
-    :param str  asm_file     : path to the allelic specific methylation (ASM) file
-    :param dict beta_param   : dict of beta parameters for CG/CHG/CHH methylation values simulation
-    :param bool collect_ch   : whether to collect the CHG/CHH sites, slow speed is expected
-    :param bool overwrite_db : whether to overwrite the meth_db if it already exists
-    :param bool verbose      : whether to output processing details
+    :param str  ref_fasta   : path to the reference genome (.fasta/.fa/.fa.gz) [None]
+    :param str  outdir      : path to the output directory [None]
+    :param str  meth_db_path: path to the previous obj (.pkl) [None]
+    :param str  cgmap_file  : path to the cgmap file (.CGmap/.CGmap.gz) [False]
+    :param bool cgmap_pool  : whether to pool methylaiton levels and random draws from it [False]
+    :param bool asm_sim     : whether to conduct allelic specific methylation (ASM) [False]
+    :param str  asm_file    : path to the allelic specific methylation (ASM) file [None]
+    :param dict beta_param  : dict of beta parameters for CG/CHG/CHH methylation values simulation
+                              [{"CG": (0.5, 0.5), "CHG": (0.01, 0.05), "CHH":(0.01, 0.05)}]
+    :param bool collect_ch  : whether to collect/simulate the CHG/CHH sites [False]
+    :param bool overwrite_db: whether to overwrite the meth_db if it already exists [True]
+    :param int  seed        : seed for random methylation generation
+    :param bool verbose     : whether to output processing details [True]
     :rtype None
 
-    :var array meth_arr : nx5 numpy array: context, flag, meth_avg, meth_ref, meth_alt
-    (flag: 0 from dist or from cgmap pool, 1 from CGmap, 2 from ASM, -1 for uninitialized)
-    :var series pos_map : pd.Series of length n: index is genome coordinate, value is row idx of meth_arr
+    :var np.array meth_arr  : nx5 numpy array: context, flag, meth_avg, meth_ref, meth_alt
+     (flag: 0 from dist or from cgmap pool, 1 from CGmap, 2 from ASM, -1 for uninitialized)
+    :var pd.Series pos_map  : pd.Series of length n: index is genome coordinate, value is row idx of meth_arr
     '''
 
 
@@ -39,7 +41,8 @@ class SetCytosineMethylation:
                  meth_db_path: str = None, cgmap_file: str = None, cgmap_pool: bool = False,
                  beta_param: dict = {"CG": (0.5, 0.5), "CHG": (0.01, 0.05), "CHH":(0.01, 0.05)},
                  asm_sim: bool = False, asm_file: str = None,
-                 collect_ch: bool = True, overwrite_db: bool = False, verbose: bool = False):
+                 collect_ch: bool = True, overwrite_db: bool = False,
+                 seed: int = None, verbose: bool = False):
 
         self.ref_fasta   = ref_fasta
         self.outdir      = outdir
@@ -51,6 +54,7 @@ class SetCytosineMethylation:
         self.asm_file    = asm_file
         self.collect_ch  = collect_ch
         self.overwrite_db= overwrite_db
+        self.seed        = seed
         self.verbose     = verbose
         self.meth_arr    = None
         self.pos_map     = None
@@ -70,6 +74,7 @@ class SetCytosineMethylation:
         self.meth_db = StreamOutput(outdir=self.outdir)
         self.meth_db.check_outdir()
         self.ref_dict= SeqIO.to_dict(SeqIO.parse(ref_fasta, "fasta"))
+        self.genome_len = sum([len(seq) for _, seq in self.ref_dict.items()])
 
         # initiate
         if meth_db_path:
@@ -154,18 +159,16 @@ class SetCytosineMethylation:
             return None
 
         if self.cgmap_pool:
-            ctx_idx_dict = {'CG':1, 'CHG':2, 'CHH':3}
-            meth_level_pool = [[],[],[]]
-            for line in parseCGmap(self.cgmap_file, contig_id, collect_ch = self.collect_ch):
-                _, base, pos, context, meth_level = line
-                meth_level_pool[ctx_idx_dict[context]].append(float(meth_level))
-
+            meth_level_pool = self.get_cgmap_pool(contig_id=None)
             idx_cg  = np.where(np.bitwise_and(self.meth_arr[:, 1].astype(np.int16), 0x7) == 1)
             idx_chg = np.where(np.bitwise_and(self.meth_arr[:, 1].astype(np.int16), 0x7) == 3)
             idx_chh = np.where(np.bitwise_and(self.meth_arr[:, 1].astype(np.int16), 0x7) == 7)
 
+            np.random.seed(self.seed)
             self.meth_arr[idx_cg, 2] = np.random.choice(meth_level_pool[0], size = np.sum(idx_cg))
+            np.random.seed(self.seed)
             self.meth_arr[idx_chg,2] = np.random.choice(meth_level_pool[1], size = np.sum(idx_chg))
+            np.random.seed(self.seed)
             self.meth_arr[idx_chh,2] = np.random.choice(meth_level_pool[2], size = np.sum(idx_chh))
             return None
 
@@ -186,7 +189,7 @@ class SetCytosineMethylation:
         ratio_404 = round(num_404_pos / num_cgmap_pos, 4)
         ### also print what context
         print(f"Contig {contig_id}: {num_cgmap_pos} sites found in CGmap file, among them {num_404_pos} sites ({ratio_404 * 100}%) are not compatible...")
-        if (ratio_404 >=0.5):
+        if ratio_404 >=0.5:
             warnings.warn("[WARNING]: More than half sites in CGmap file cannot be found in the reference fasta\n" +
                           "Potential reason: the CGmap does not share the same coordinates with fasta, please check!")
         return None
@@ -212,7 +215,7 @@ class SetCytosineMethylation:
                 self.meth_arr[arr_idx, 1:4] = [2, tot_meth, ref_meth, alt_meth]
         ratio_404 = round(num_404_pos / num_asm_pos, 4)
         print(f"Contig {contig_id}: {num_asm_pos} sites found in CGmap file, among them {num_404_pos} sites ({ratio_404 * 100}%) are not compatible...")
-        if (ratio_404 >=0.5):
+        if ratio_404 >=0.5:
             warnings.warn("[WARNING]: More than half sites in ASM file cannot be found in the reference fasta\n" +
                           "Potential reason: the CGmap does not share the same coordinates with fasta, please check!")
         return None
@@ -289,9 +292,36 @@ class SetCytosineMethylation:
         '''output the values accordig to the context using beta distribution'''
         if isinstance(context, int):
             context = self.context_dict[context]
-        return beta.rvs(a=self.beta_param[context][0], b=self.beta_param[context][1], size=size).astype(np.float16)
+        return beta.rvs(a=self.beta_param[context][0],
+                        b=self.beta_param[context][1],
+                        size=size, random_state=self.seed).astype(np.float16)
+
+
+    def get_cgmap_pool(self, contig_id):
+        '''get the pool of cgmaps, return a list of size 3'''
+        ctx_idx_dict = {'CG':1, 'CHG':2, 'CHH':3}
+        meth_level_pool = [[],[],[]]
+        for line in parseCGmap(self.cgmap_file, contig_id, collect_ch = self.collect_ch):
+            _, _,  _, context, meth_level = line
+            meth_level_pool[ctx_idx_dict[context]].append(float(meth_level))
+        return meth_level_pool
 
 
     def estimate_beta_params(self, context = None):
         '''estimate the beta parameters for each context'''
-        pass
+        ctx_idx_dict = {'CG':1, 'CHG':2, 'CHH':3}
+        idx_ctx_dict = {v: k for k, v in ctx_idx_dict.items()}
+        meth_level_pool = self.get_cgmap_pool(contig_id=None)
+        beta_param_estimate = {}
+
+        if context:
+            idx = ctx_idx_dict[context]
+            meth_list = meth_level_pool[idx]
+            a, b, _, _ = beta.fit(meth_list)
+            beta_param_estimate[context] = (a, b)
+        else:
+            for idx, meth_list in enumerate(meth_level_pool):
+                context = idx_ctx_dict[idx]
+                a, b, _, _ = beta.fit(meth_list)
+                beta_param_estimate[context] = (a, b)
+        return beta_param_estimate

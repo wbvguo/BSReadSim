@@ -94,7 +94,7 @@ class StreamWGSIM:
             heter = heter_flag == '+'
             indel = int(ref == '-') - int(alt == '-') # 1 for ref=='-', -1 for alt=='-', o.w. 0
             iupac = retrieve_iupac(alt) if indel == 0 else None
-            return dict(chrom=chrom, pos=int(pos), ref=ref, alt=alt, 
+            return dict(chrom=chrom, pos=int(pos), ref=ref, alt=alt,
                         heter=heter, indel=indel, iupac=iupac)
 
 
@@ -117,9 +117,9 @@ class StreamWGSIM:
         _, start, end, cover_pos, n_sub, n_indel, insrt_len, insrt_len2, ofs= next(sim_iter).strip().split(':')
         ofs = np.fromstring(ofs, dtype=np.int8, sep = ',')
         ctx = np.frombuffer(next(sim_iter).strip().encode(), np.int8)
-        return dict(read_id=read_id, pair=int(pair), 
+        return dict(read_id=read_id, pair=int(pair),
                     flag_pos=int(flag_pos), flag_mut=int(flag_mut), flag_indel=int(flag_indel),
-                    start=int(start), end=int(end), cover_pos=int(cover_pos), 
+                    start=int(start), end=int(end), cover_pos=int(cover_pos),
                     n_sub=int(n_sub), n_indel=int(n_indel),
                     insrt_len=int(insrt_len), insrt_len2=int(insrt_len2),
                     cgr=cgr, seq=seq, ofs=ofs, ctx=ctx)
