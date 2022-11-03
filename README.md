@@ -8,11 +8,21 @@ methylation profile input | no | $\textsf{yes}^*$ | yes
 genetic variant input | no   | no | yes
 alleclic-specific methylation simulation | no | no | [todo]
 site-site dependency | no | no | [todo]
+multi-thread support | no | no | [todo]
+
 
 ( $\textsf{yes}^*$ : BSBolt allows users to input the methylation profile, but used the profile as a reference pool. During simulation, it **randomly** picks a methylation value from this pool. As a result, for a paticular CG site, the simulated data and the reference profile will likely not have the same methylation level)
 
 # Installation
-## install from github
+## Dependency
+- Python 3.8 or later
+- Biopython
+- tqdm
+## Install from conda
+```
+Toadd
+```
+## Install from github
 ```
 git clone https://github.com/wbvguo/BSReadSim.git
 cd BSReadSim

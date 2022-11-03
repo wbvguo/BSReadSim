@@ -635,7 +635,7 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
                             ++k;                                        \
                         }                                               \
                     }                                                   \
-                    cover_pos[x] |= site_flag_arr[i];                    \
+                    cover_pos[x] |= site_flag_arr[i];                   \
                 }                                                       \
                 /* append CG context flag;                              \
                    currently not handling bounday context by indel*/    \
