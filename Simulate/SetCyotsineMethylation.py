@@ -243,8 +243,10 @@ class SetCytosineMethylation:
         self.meth_arr[idx_nan, 4] = self.meth_arr[idx_nan, 2]
 
 
-    def set_var_meth(self, sim_data, contig_id) -> Dict(str, List):
+    def set_var_meth(self, contig_id, sim_data) -> Dict(str, List):
         '''set random methylation due to variants are random'''
+        if not sim_data:
+            return None
         var_meth_dict = {}
 
         seq = self.ref_dict[contig_id].seq.upper()
@@ -286,6 +288,7 @@ class SetCytosineMethylation:
                     var_meth_dict[f"{pos}_{variant_info['ref']}_{variant_info['alt']}"] = [base, 1, context, meth_level]
 
         self.meth_db.output_contig(contig_id, var_meth_dict, is_variant=True)
+        return None
 
 
     def simu_beta_dist(self, context = "CG", size = 1):
