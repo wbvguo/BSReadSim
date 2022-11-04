@@ -81,6 +81,17 @@ class parseASM:
             return line.replace('\n', '').split('\t')
 
 
+def get_wgsim_path():
+    """Get paths of dependencies. Print warning if setup.py not run and dependencies not compiled.
+    rtype: str wgsim_path: path to wgsim executable wgsim
+    """
+    utility_dir = os.path.dirname(os.path.realpath(__file__))
+    base_dir    = os.path.dirname(utility_dir)
+    wgsim_path  = f'{base_dir}/WGSIM/wgsim'
+    if not os.path.exists(wgsim_path):
+        raise ValueError("[ERROR] Executable wgsim not found, please check!")
+    return wgsim_path
+
 
 def complement(sequence):
     """
@@ -161,21 +172,7 @@ def check_python_version():
         raise OSError
 
 
-def get_external_paths():
-    """Get paths of dependencies. Print warning if setup.py not run and dependencies not compiled.
 
-    Returns:
-    * *bwa (str)*: path to bwa executable
-    * *wgsim (str)*: path to wgsim executable
-    """
-    utility_directory = os.path.dirname(os.path.realpath(__file__))
-    external_directory = '/'.join(utility_directory.split('/')[:-1]) + '/External/'
-    bwa = f'{external_directory}BWA/bwa'
-    wgsim = f'{external_directory}WGSIM/wgsim'
-    stream_bam = f'{external_directory}HTSLIB/stream_bam'
-    if not os.path.exists(bwa) or not os.path.exists(wgsim):
-        print(f'Must compile external dependencies\n python3 setup.py build')
-    return bwa, wgsim, stream_bam
 
 
 def propagate_error(error):
