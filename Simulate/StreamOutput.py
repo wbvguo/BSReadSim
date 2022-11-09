@@ -10,9 +10,10 @@ class StreamOutput:
     :rtype None
     '''
 
-    def __init__(self, outdir: str = None):
+    def __init__(self, outdir: str = None, overwrite_db: bool = False):
         self.outdir = outdir
         self.pkl_dir= f'{self.outdir}/pkl/'
+        self.overwrite_db = overwrite_db
 
     def create_outdir(self):
         '''create output directory'''
@@ -35,7 +36,12 @@ class StreamOutput:
         else:
             contig_label = f'{contig_id}_values'
 
-        with open(f'{self.pkl_dir}/{contig_label}.pkl', 'wb') as file:
+        output_file = f'{self.pkl_dir}/{contig_label}.pkl'
+
+        if not self.overwrite_db and os.path.exists(output_file):
+            raise ValueError("Output file exists but overwrite_db is false, please check")
+
+        with open(output_file, 'wb') as file:
             pickle.dump(contig_profile, file)
 
 
