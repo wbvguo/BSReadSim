@@ -93,9 +93,14 @@ class StreamWGSIM:
         else:
             heter = heter_flag == '+'
             indel = int(ref == '-') - int(alt == '-') # 1 for ref=='-', -1 for alt=='-', o.w. 0
-            iupac = retrieve_iupac(alt) if indel == 0 else None
+            offset= indel * max(len(ref), len(alt))
+            if indel:
+                iupac  = None
+            else:
+                iupac  = retrieve_iupac(alt)
+                alt    = list(set(iupac) - set(ref))[0]
             return dict(chrom=chrom, pos=int(pos), ref=ref, alt=alt,
-                        heter=heter, indel=indel, iupac=iupac)
+                        offset=offset, heter=heter, indel=indel, iupac=iupac)
 
 
     @staticmethod
@@ -110,14 +115,14 @@ class StreamWGSIM:
 
         if not line:
             line = next(sim_iter).strip()
-        # header, seq, comment, qual process
-        read_id, pair, flag_pos, flag_mut, flag_indel, cgr = line.split(' ')
+        # header, seq, comment process
+        read_id, pair, flag_pos, flag_mut, flag_indel, qual, cgr = line.split(' ')
         cgr = np.frombuffer(cgr.encode(), dtype=np.int8)
         seq = np.frombuffer(next(sim_iter).strip().encode(), dtype=np.int8)
         _, start, end, cover_pos, n_sub, n_indel, insrt_len, insrt_len2, ofs= next(sim_iter).strip().split(':')
         ofs = np.fromstring(ofs, dtype=np.int8, sep = ',')
         ctx = np.frombuffer(next(sim_iter).strip().encode(), np.int8)
-        return dict(read_id=read_id, pair=int(pair),
+        return dict(read_id=read_id, pair=int(pair), qual = int(qual),
                     flag_pos=int(flag_pos), flag_mut=int(flag_mut), flag_indel=int(flag_indel),
                     start=int(start), end=int(end), cover_pos=int(cover_pos),
                     n_sub=int(n_sub), n_indel=int(n_indel),

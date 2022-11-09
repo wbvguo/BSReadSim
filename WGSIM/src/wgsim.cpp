@@ -717,9 +717,13 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
                 continue;
             }
             
-            int flag_pos = cover_pos[0] | cover_pos[1];
-            int flag_mut  = n_sub[0] + n_sub[1] + n_indel[0] + n_indel[1];
-            int flag_indel= n_indel[0] + n_indel[1];
+            int flag_pos, flag_mut;
+            for(i=pos; i < pos+size_l+inner_dist+size_r; ++i){
+                flag_pos |= site_flag_arr[i];
+                flag_mut |= target[i] & mutmsk;
+            }
+            int flag_indel= n_indel[0] | n_indel[1];
+            
             // print reads to stdout: mode 0 print string (WGS), else print numbers (WGBS)
             if(output_mode == 0){
                 // flip and get the reverse complementary
@@ -765,7 +769,7 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
             } else {
                 for (j = 0; j < 2; ++j) {
                     // header: 0-based coordinates for number output
-                    fprintf(stdout, "@%s:%d:%d:%llx %d %d %d %d ", ks->name.s, start[0]+1, end[1]+1, (long long)ii, j+1, flag_pos, flag_mut, flag_indel); 
+                    fprintf(stdout, "@%s:%d:%d:%llx %d %d %d %d %d ", ks->name.s, start[0]+1, end[1]+1, (long long)ii, j+1, flag_pos, flag_mut, flag_indel, Q); 
                     for (i = 0; i < s[j]; ++i) {
                         //fprintf(stdout, "%x", tmp_mutation[j][i]); //this will output the hex number, below line will output the ascii
                         fputc(tmp_mutation[j][i], stdout);
@@ -827,7 +831,7 @@ static int simu_usage()
     fprintf(stderr, "         -S INT        seed for random generator [-1]\n");
     fprintf(stderr, "         -A FLOAT      disgard if the fraction of ambiguous bases higher than FLOAT [%.2f]\n", MAX_N_RATIO);
     fprintf(stderr, "         -h INT        haplotype mode: 0 for No; non-zero for Yes [0]\n");
-    fprintf(stderr, "         -m INT        output mode: 0 for letters (sequence: AGCT,CIGAR: MXI); 1 for numbers (sequence: 0123, and flags) [0]\n");
+    fprintf(stderr, "         -m INT        output mode: 0 for letters; 1 for numbers (for Bisulfite simulaiton) [0]\n");
     fprintf(stderr, "         -g STRING     path to the genetic variant file (vcf.gz) [None]\n");
     fprintf(stderr, "         -c STRING     contig name [None]\n");
     fprintf(stderr, "         -n INT        number of read pairs for specified contig [-1]\n");
