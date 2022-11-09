@@ -7,28 +7,90 @@ import pysam
 from typing import List, Union
 
 
-class OpenCGmap:
+class parseCGmap:
+    '''turn a CGmap file into a generator'''
+    def __init__(self, cgmap_file: str = None, contig_id: str = None, collect_ch: bool = False):
+        self.cgmap_file = cgmap_file
+        self.contig_id  = contig_id
+        self.collect_ch = collect_ch
 
-    def __init__(self, cgmap: str = None):
-        if cgmap.endswith('.gz'):
-            self.f = io.BufferedReader(gzip.open(cgmap, 'rb'))
+        if cgmap_file.endswith('.gz'):
+            self.file_obj = io.BufferedReader(gzip.open(cgmap_file, 'rb'))
         else:
-            self.f = open(cgmap, 'r')
+            self.file_obj = open(cgmap_file, 'r')
+
 
     def __iter__(self):
-        with self.f as cg:
+        with self.file_obj as cg:
             while True:
                 line = cg.readline()
                 if not line:
                     break
-                yield self.process_line(line)
+                chr_id, base, pos, context, diN, meth_level, meth_count, tot_count = self.process_line(line)
+                if self.contig_id:
+                    if chr_id != self.contig_id:
+                        continue
+                    if not self.collect_ch and context != 'CG':
+                        continue
+                yield [chr_id, base, pos, context, meth_level]
 
     @staticmethod
     def process_line(line: Union[str, bytes]) -> List[str]:
+        '''parse the CGmap lines'''
         if isinstance(line, bytes):
             return line.decode('utf-8').replace('\n', '').split('\t')
         else:
             return line.replace('\n', '').split('\t')
+
+
+class parseASM:
+    '''parse the ASM file'''
+    def __init__(self, asm_file: str = None, contig_id: str = None, collect_ch: bool = False):
+        self.asm_file   = asm_file
+        self.contig_id  = contig_id
+        self.collect_ch = collect_ch
+
+        if asm_file.endswith('.gz'):
+            self.file_obj = io.BufferedReader(gzip.open(asm_file, 'rb'))
+        else:
+            self.file_obj = open(asm_file, 'r')
+
+
+    def __iter__(self):
+        with self.file_obj as asm:
+            while True:
+                line = asm.readline()
+                if not line:
+                    break
+                # chr, base, pos, context, dinucleotide, meth, snp_pos, REF, ALT, ref_meth, alt_meth, fold_change, pval
+                # comment can be meth_count/tot_count;ref_meth_count/ref_tot_count;alt_meth_count/alt_tot_count
+                chr_id, base, pos, context, tot_meth, snp_pos, ref, alt, ref_meth, alt_meth, fold_change, p_val, comment = self.process_line(line)
+                if chr_id != self.contig_id:
+                    continue
+                if not self.collect_ch and context != 'CG':
+                    continue
+                yield [chr_id, base, pos, context, tot_meth, ref_meth, alt_meth]
+
+
+    @staticmethod
+    def process_line(line: Union[str, bytes]) -> List[str]:
+        '''parse the ASM lines'''
+        if isinstance(line, bytes):
+            return line.decode('utf-8').replace('\n', '').split('\t')
+        else:
+            return line.replace('\n', '').split('\t')
+
+
+def get_wgsim_path():
+    """Get paths of dependencies. Print warning if setup.py not run and dependencies not compiled.
+    rtype: str wgsim_path: path to wgsim executable wgsim
+    """
+    utility_dir = os.path.dirname(os.path.realpath(__file__))
+    base_dir    = os.path.dirname(utility_dir)
+    wgsim_path  = f'{base_dir}/WGSIM/wgsim'
+    if not os.path.exists(wgsim_path):
+        raise ValueError("[ERROR] Executable wgsim not found, please check!")
+    return wgsim_path
 
 
 def complement(sequence):
@@ -110,21 +172,7 @@ def check_python_version():
         raise OSError
 
 
-def get_external_paths():
-    """Get paths of dependencies. Print warning if setup.py not run and dependencies not compiled.
 
-    Returns:
-    * *bwa (str)*: path to bwa executable
-    * *wgsim (str)*: path to wgsim executable
-    """
-    utility_directory = os.path.dirname(os.path.realpath(__file__))
-    external_directory = '/'.join(utility_directory.split('/')[:-1]) + '/External/'
-    bwa = f'{external_directory}BWA/bwa'
-    wgsim = f'{external_directory}WGSIM/wgsim'
-    stream_bam = f'{external_directory}HTSLIB/stream_bam'
-    if not os.path.exists(bwa) or not os.path.exists(wgsim):
-        print(f'Must compile external dependencies\n python3 setup.py build')
-    return bwa, wgsim, stream_bam
 
 
 def propagate_error(error):
