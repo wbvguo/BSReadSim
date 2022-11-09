@@ -245,12 +245,11 @@ class SimulateMethylatedReads:
         read_ctx = read_rec['ctx']
         if sub_pattern[0] == "C":   # 1, 3, 7
             site_idx = (read_ctx<8) if self.collect_ch else (read_ctx==1)
-            read_ctx[read_ctx > 8] = 0
-            read_rec['ctx2'] = read_ctx
+            read_rec['ctx2'] = np.ma.masked_greater(read_ctx, 8)
         else:                       # 9, 11, 15
             site_idx = (read_ctx>8) if self.collect_ch else (read_ctx==9)
             read_ctx[read_ctx < 8] = 0
-            read_rec['ctx2'] = read_ctx
+            read_rec['ctx2'] = np.ma.masked_less(read_ctx, 8)
 
         read_pos = read_rec['start'] + np.arange(self.read_len)
         read_meth= np.zeros(self.read_len)
