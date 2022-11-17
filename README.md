@@ -39,3 +39,9 @@ bsreadsim ... [to add]
 1. reference genome: [FASTA](https://en.wikipedia.org/wiki/FASTA_format) format (`.fasta`, `.fa` or `.fa.gz`)
 2. methylation profile: [CGmap](https://bsbolt.readthedocs.io/en/latest/methylation_calling/) format (`.CGmap` or `.CGmap.gz`)
 3. genetic variants: [VCF](https://samtools.github.io/hts-specs/VCFv4.2.pdf) format, v4.2 or later (`.vcf` or `.vcf.gz`)
+
+
+# Reference
+[1] Sherman: https://www.bioinformatics.babraham.ac.uk/projects/sherman/
+
+[2] Farrell, C., Thompson, M., Tosevska, A., Oyetunde, A., & Pellegrini, M. (2021). BiSulfite Bolt: A bisulfite sequencing analysis platform. GigaScience, 10(5), giab033.

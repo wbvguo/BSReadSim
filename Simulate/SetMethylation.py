@@ -13,9 +13,9 @@ from StreamOutput import StreamOutput
 from UtilityFunctions import parseCGmap, parseASM
 
 
-class SetCytosineMethylation:
+class SetMethylation:
     '''
-    prepare Cytosine methylation level database for read methylation state simulation
+    prepare methylation level database for read methylation state simulation
     :param str  ref_fasta   : path to the reference genome (.fasta/.fa/.fa.gz) [None]
     :param str  outdir      : path to the output directory [None]
     :param str  meth_db_path: path to the previous obj (.pkl) [None]
@@ -104,6 +104,8 @@ class SetCytosineMethylation:
             self.fill_cgmap(contig_id)
             self.fill_asm(contig_id)
             self.fill_dist()
+            if self.verbose:
+                print(f"Processed {self.pos_map.shape[0]} sites from contig {self.current_contig}")
             # the 3rd item: 1 for boundary updated by variants, 0 for not updated
             self.meth_db.output_contig(contig_id, [self.pos_map, self.meth_arr, 0], is_variant=False)
 
@@ -115,7 +117,7 @@ class SetCytosineMethylation:
         idx = 0
 
         if self.verbose:
-            print(f"Initiating the methylaiton database for {self.current_contig}...")
+            print(f"\n[Initiating the methylaiton database] for {self.current_contig}...")
         if self.collect_ch:
             count_c = seq.count("C")
             count_g = seq.count("G")
@@ -152,8 +154,6 @@ class SetCytosineMethylation:
                 self.pos_map[idx+1]= pos+1
                 idx += 2
         self.pos_map = pd.Series(self.pos_map.index.values, index=self.pos_map)
-        if self.verbose:
-            print(f"Finished initiate {self.pos_map.shape[0]} sites from contig {self.current_contig}")
 
 
     def fill_cgmap(self, contig_id):
@@ -162,7 +162,7 @@ class SetCytosineMethylation:
             return None
 
         if self.verbose:
-            print(f"Filling CGmap for {self.current_contig}...")
+            print(f"Filling CGmap for {self.current_contig}... ", end="")
         if self.cgmap_pool:
             meth_level_pool = self.get_cgmap_pool(contig_id=None)
             idx_cg  = np.where(np.bitwise_and(self.meth_arr[:,0].astype(np.int16), 0x7)==1)
@@ -192,12 +192,17 @@ class SetCytosineMethylation:
                     continue
                 self.meth_arr[arr_idx, 1:3] = [1, float(meth_level)]
 
-        ratio_404 = round(num_404_pos / num_cgmap_pos, 4)
-        ### also print what context
-        print(f"Contig {contig_id}: {num_cgmap_pos} sites found in CGmap file, among them {num_404_pos} sites ({ratio_404 * 100}%) are not compatible...")
-        if ratio_404 >=0.5:
-            warnings.warn("[WARNING]: More than half sites in CGmap file cannot be found in the reference fasta\n" +
-                          "Potential reason: the CGmap does not share the same coordinates with fasta, please check!")
+        if self.verbose:
+            if num_cgmap_pos:
+                ratio_404 = round(num_404_pos / num_cgmap_pos, 4)
+                ### also print what context
+                print(f"{num_cgmap_pos} sites found in CGmap file," +
+                    f"among them {num_404_pos} sites ({ratio_404 * 100}%) are not compatible...")
+                if ratio_404 >=0.5:
+                    warnings.warn("[WARNING]: More than half sites in CGmap file cannot be found in the reference fasta\n" +
+                                  "Potential reason: the CGmap does not share the same coordinates with fasta, please check!")
+            else:
+                print(f"No sites found in CGmap file for {self.current_contig}, skip...")
         return None
 
 
@@ -207,7 +212,7 @@ class SetCytosineMethylation:
             return None
 
         if self.verbose:
-            print(f"Filling ASM for {self.current_contig}...")
+            print(f"Filling ASM for {self.current_contig}... ", end="")
         num_asm_pos, num_404_pos = [0,0] # counting
         for line in parseASM(self.asm_file, contig_id, collect_ch = self.collect_ch):
             _, base, pos, context, tot_meth, ref_meth, alt_meth = line
@@ -221,12 +226,17 @@ class SetCytosineMethylation:
                     num_404_pos +=1
                     continue
                 self.meth_arr[arr_idx, 1:4] = [2, tot_meth, ref_meth, alt_meth]
-        ratio_404 = round(num_404_pos / num_asm_pos, 4)
-        print(f"Contig {contig_id}: {num_asm_pos} sites found in CGmap file, \
-                among them {num_404_pos} sites ({ratio_404 * 100}%) are not compatible...")
-        if ratio_404 >=0.5:
-            warnings.warn("[WARNING]: More than half sites in ASM file cannot be found in the reference fasta\n" +
-                          "Potential reason: the CGmap does not share the same coordinates with fasta, please check!")
+
+        if self.verbose:
+            if num_asm_pos:
+                ratio_404 = round(num_404_pos / num_asm_pos, 4)
+                print(f"{num_asm_pos} sites found in CGmap file, " +
+                    f"among them {num_404_pos} sites ({ratio_404 * 100}%) are not compatible...")
+                if ratio_404 >=0.5:
+                    warnings.warn("[WARNING]: More than half sites in ASM file cannot be found in the reference fasta\n" +
+                                  "Potential reason: the CGmap does not share the same coordinates with fasta, please check!")
+            else:
+                print(f"No sites found in ASM file for {self.current_contig}, skip...")
         return None
 
 
