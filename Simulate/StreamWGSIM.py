@@ -80,7 +80,6 @@ class StreamWGSIM:
         else:
             return line
 
-
     @staticmethod
     def process_variant_line(line: str) -> Dict:
         '''parse variant lines'''
@@ -102,7 +101,6 @@ class StreamWGSIM:
             return dict(chrom=chrom, pos=int(pos), ref=ref, alt=alt,
                         offset=offset, heter=heter, indel=indel, iupac=iupac)
 
-
     @staticmethod
     def process_read_lines(sim_iter, line = None, skip = False):
         '''parse read lines'''
@@ -119,12 +117,12 @@ class StreamWGSIM:
         read_id, pair, flag_pos, flag_mut, flag_indel, qual, cgr = line.split(' ')
         cgr = np.frombuffer(cgr.encode(), dtype=np.int8)
         seq = np.frombuffer(next(sim_iter).strip().encode(), dtype=np.int8)
-        _, start, end, cover_pos, n_sub, n_indel, insrt_len, insrt_len2, ofs= next(sim_iter).strip().split(':')
+        _, start, end, cover_pos, n_sub, n_indel, insert_size, inner_dist, ofs= next(sim_iter).strip().split(':')
         ofs = np.fromstring(ofs, dtype=np.int8, sep = ',')
         ctx = np.frombuffer(next(sim_iter).strip().encode(), np.int8)
         return dict(read_id=read_id, pair=int(pair), qual = int(qual),
                     flag_pos=int(flag_pos), flag_mut=int(flag_mut), flag_indel=int(flag_indel),
                     start=int(start), end=int(end), cover_pos=int(cover_pos),
                     n_sub=int(n_sub), n_indel=int(n_indel),
-                    insrt_len=int(insrt_len), insrt_len2=int(insrt_len2),
+                    insert_size=int(insert_size), inner_dist=int(inner_dist),
                     cgr=cgr, seq=seq, ofs=ofs, ctx=ctx)
