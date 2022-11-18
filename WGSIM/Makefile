@@ -25,9 +25,12 @@
 ##*****************************************************************************************/
 # $(shell export LD_LIBRARY_PATH=$(LD_LIBRARY_PATH):../HTSLIB/)
 # $(shell echo $(LD_LIBRARY_PATH))
+#HTSLIB=		-I../HTSLIB/htslib/ -L../HTSLIB/ -lhts -Wl,-rpath ../HTSLIB
+BASE_PATH = $(shell pwd | xargs dirname)
+
 EXE=		wgsim
 LIBS=		-Bstatic -lz 
-HTSLIB=		-I../HTSLIB/htslib/ -L../HTSLIB/ -lhts -Wl,-rpath ../HTSLIB
+HTSLIB=		-I$(BASE_PATH)/HTSLIB/htslib/ -L$(BASE_PATH)/HTSLIB/ -lhts -Wl,-rpath $(BASE_PATH)/HTSLIB
 CXX=c++
 
 CXXFLAGS=	-g -O3 -fpermissive $(ARCH_FLAGS) #-Wall ##-xSSE2

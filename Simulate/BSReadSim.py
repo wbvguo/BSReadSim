@@ -100,7 +100,8 @@ class BSReadSim:
         self.prefix   = prefix
         self.seed     = seed
         self.n_threads= n_threads
-        self.lock     = Lock()
+        self.countlock= Lock()
+        self.writelock= Lock()
 
         # prepare the methylation reference
         print('Initiating methylation profile:\n')
@@ -149,6 +150,7 @@ class BSReadSim:
         self.variant_profile= None
 
         # prepare output
+        self.fastq_list     = None
         self.gzip           = gzip
         self.shuffle        = shuffle
 
@@ -381,7 +383,7 @@ class BSReadSim:
             read_rec['qual'] = qual_arr
         else:
             # generate quality score from a profile
-            pass
+            pass 
 
 
     def output_reads(self, read_pair, read_flip, read1_sub):
@@ -391,12 +393,13 @@ class BSReadSim:
 
             if read_flip:
                 read_pair[0], read_pair[1] = read_pair[1], read_pair[0]
+
             conv_tag = ('G2A', 'C2T') if read1_sub else ('C2T', 'G2A')
             for idx, read_rec in enumerate(read_pair):
                 conv_pattern = conv_tag[idx]
                 
-            
         else:
+            
             
         
         # format reads
@@ -421,7 +424,7 @@ class BSReadSim:
     @property
     def progress_bar(self):
         '''show the progress of read simulaiton'''
-        with self.lock:
+        with self.countlock:
             self.tqdm_count[0] += 2 if self.pair_end else 1
 
         incre_amount = self.tqdm_count[0] - self.tqdm_count[1]
