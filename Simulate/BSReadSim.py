@@ -149,7 +149,6 @@ class BSReadSim:
         self.variant_profile= None
 
         # prepare output
-        self.fastq_list     = StreamOutput()
         self.gzip           = gzip
         self.shuffle        = shuffle
 
@@ -176,9 +175,14 @@ class BSReadSim:
                 self.current_contig = var_contig                                        # update the profiles
                 self.pos_map, self.meth_arr, _ = self.meth_db.load_contig(var_contig)   # 3 items list, pos_map, meth_arr, status
                 self.variant_profile= self.meth_db.set_var_meth(var_contig, sim_data)   # a dict
-                job_arr = [executor.submit(self.process_read_group, read_pair) for read_pair in read_gen] #what if read_gen is empty at very beginning
-                for job in job_arr:
-                    job.add_done_callback(self.progress_bar)
+                if self.pair_end:
+                    job_arr = [executor.submit(self.process_read_pair, read_pair) for read_pair in read_gen] #what if read_gen is empty at very beginning
+                else:
+                    job_arr = [executor.submit(self.process_read, read_pair) for read_pair in read_gen]
+
+                if self.verbose:
+                    for job in job_arr:
+                        job.add_done_callback(self.progress_bar)
 
 
         for output in self.output_obj:      # close the fastq object
@@ -196,7 +200,21 @@ class BSReadSim:
         print('Simulation Finished!\n')
 
 
-    def process_read_group(self, read_pair):
+    def process_read(self, read_pair):
+        '''process single end reads'''
+        read_flip = random.choice([0, 1])
+        read1_sub = random.choice([0, 1]) if self.undirectional else read_flip
+
+        self.mask_context(read_pair[0], read1_sub)
+        self.retrive_meth_db(read_pair[0])
+        self.set_context_state(read_pair[0])
+        self.treat_bisulfite(read_pair[0])
+        self.add_seq_err(read_pair[0])
+        self.add_qual_score(read_pair[0])
+        self.output_reads(read_pair, read_flip, read1_sub)
+
+
+    def process_read_pair(self, read_pair):
         """
         This processing step works as follows:
         1. randomly assign reads to Watson or Crick strand, with corresponding base change pattern
@@ -205,66 +223,33 @@ class BSReadSim:
         4. output reads
         """
 
+        # for directional library, read1 will be G2A if read_flip else C2A, strand will be W else C
+        # if read_flip: read_pair[0], read_pair[1] = read_pair[1], read_pair[0]
         read_flip = random.choice([0, 1])
         read1_sub = random.choice([0, 1]) if self.undirectional else read_flip
-        # for directional library, read1 will be G2A if read_flip else C2A
-        # if read_flip:
-        #     read_pair[0], read_pair[1] = read_pair[1], read_pair[0]
 
-        #strand_list = ['W', 'C'] # for read_slip
-        #pattern_list= [('C', 'T'), ('G', 'A')] # for read1_sub
-        #ref_strand  = random.choice([0, 1]) # randomly select ref strand ['W', 'C']
-        #sub_pattern = pattern_list[ref_strand]
+        # mask the context
+        self.mask_context(read_pair[0], read1_sub)
+        self.mask_context(read_pair[1], 1-read1_sub)
+        # retrive methy profile
+        self.retrive_meth_db(read_pair[0])
+        self.retrive_meth_db(read_pair[1])
 
-        if self.pair_end:
-            # mask the context
-            self.mask_context(read_pair[0], read1_sub)
-            self.mask_context(read_pair[1], 1-read1_sub)
-            # retrive methy profile
-            self.retrive_meth_db(read_pair[0])
-            self.retrive_meth_db(read_pair[1])
+        self.set_context_state(read_pair)
 
-            # set methy state
-            if read_pair[0]['inner_dist'] <= 0: # overlapped read pair: merge meth, get state, split
-                overlap_idx = np.where(read_pair[0]['pos'] == read_pair[1]['pos'][0])
-                if np.any(overlap_idx):
-                    for idx in overlap_idx:
-                        overlap_len = self.read_len - idx
-                        if read_pair[0]['pos'][idx:] == read_pair[1]['pos'][:overlap_len]:
-                            break
-                else:
-                    idx = self.read_len
-                comb_meth = np.concatenate(read_pair[0]['meth'][:idx],read_pair[1]['meth'])
-                comb_state= self.set_meth_state(comb_meth)
-                read_pair[0]['ctx'][np.where(comb_state[:self.read_len])] +=1
-                read_pair[1]['ctx'][np.where(comb_state[-self.read_len:])]+=1
-            else:
-                read1_state = self.set_meth_state(read_pair[0]['meth'])
-                read_pair[0]['ctx'][np.where(read1_state)] += 1
-                read2_state = self.set_meth_state(read_pair[1]['meth'])
-                read_pair[1]['ctx'][np.where(read2_state)] += 1
+        # bisulfite converted
+        self.treat_bisulfite(read_pair[0])
+        self.treat_bisulfite(read_pair[1])
 
-            # bisulfite converted
-            self.treat_bisulfite(read_pair[0])
-            self.treat_bisulfite(read_pair[1])
+        # introduce seq errors
+        self.add_seq_err(read_pair[0])
+        self.add_seq_err(read_pair[1])
 
-            # introduce seq errors
-            self.add_seq_err(read_pair[0])
-            self.add_seq_err(read_pair[1])
-
-            # introduce quality scores
-            self.add_qual_score(read_pair[0])
-            self.add_qual_score(read_pair[1])
-
-            # output
-            self.output_reads(read_pair, read_flip, read1_sub)
-        else:
-            self.mask_context(read_pair[0], read1_sub)
-            self.retrive_meth_db(read_pair[0])
-            read_pair[0]['ctx']= self.set_meth_state(read_pair[0]['meth'])
-            self.treat_bisulfite(read_pair[0])
-            self.add_seq_err(read_pair[0])
-            self.add_qual_score(read_pair[0])
+        # introduce quality scores
+        self.add_qual_score(read_pair[0])
+        self.add_qual_score(read_pair[1])
+        # output
+        self.output_reads(read_pair, read_flip, read1_sub)
 
 
     def mask_context(self, read_rec, read_sub):
@@ -326,7 +311,33 @@ class BSReadSim:
         return meth_val
 
 
-    def set_meth_state(self, read_meth):
+    def set_context_state(self, read_rec):
+        '''set the context methylation state'''
+        if self.pair_end: #overlappd
+            if read_rec[0]['inner_dist'] <= 0: # overlapped read pair: merge meth, get state, split
+                overlap_idx = np.where(read_rec[0]['pos'] == read_rec[1]['pos'][0])
+                if np.any(overlap_idx):
+                    for idx in overlap_idx:
+                        overlap_len = self.read_len - idx
+                        if read_rec[0]['pos'][idx:] == read_rec[1]['pos'][:overlap_len]:
+                            break
+                else:
+                    idx = self.read_len
+                comb_meth = np.concatenate(read_rec[0]['meth'][:idx],read_rec[1]['meth'])
+                comb_state= self.fetch_meth_state(comb_meth)
+                read_rec[0]['ctx'][np.where(comb_state[:self.read_len])] +=1
+                read_rec[1]['ctx'][np.where(comb_state[-self.read_len:])]+=1
+            else:
+                read1_state = self.fetch_meth_state(read_rec[0]['meth'])
+                read_rec[0]['ctx'][np.where(read1_state)] += 1
+                read2_state = self.fetch_meth_state(read_rec[1]['meth'])
+                read_rec[1]['ctx'][np.where(read2_state)] += 1
+        else:
+            read_state = self.fetch_meth_state(read_rec['meth'])
+            read_rec['ctx'][np.where(read_state)] += 1
+
+
+    def fetch_meth_state(self, read_meth):
         '''set methylation states based on the meth_arr'''
         if self.site_dependency:
             # generate methylation pattern according to read_meth and distance
@@ -374,7 +385,20 @@ class BSReadSim:
 
 
     def output_reads(self, read_pair, read_flip, read1_sub):
-        """Write simulated bisulfite reads"""
+        """write bisulfite reads to disk"""
+        if self.pair_end:
+            self.rev_complement(read_pair[1])
+
+            if read_flip:
+                read_pair[0], read_pair[1] = read_pair[1], read_pair[0]
+            conv_tag = ('G2A', 'C2T') if read1_sub else ('C2T', 'G2A')
+            for idx, read_rec in enumerate(read_pair):
+                conv_pattern = conv_tag[idx]
+                
+            
+        else:
+            
+        
         # format reads
         conversion_1, conversion_2 = ('C2T', 'G2A') if sim_data[0][0]['sub_base'] == sub_base else ('G2A', 'C2T')
         reverse_read = 1 if sub_base == 'C' else 0
@@ -397,14 +421,13 @@ class BSReadSim:
     @property
     def progress_bar(self):
         '''show the progress of read simulaiton'''
-        if self.verbose:
-            with self.lock:
-                self.tqdm_count[0] += 2 if self.pair_end else 1
+        with self.lock:
+            self.tqdm_count[0] += 2 if self.pair_end else 1
 
-            incre_amount = self.tqdm_count[0] - self.tqdm_count[1]
-            if incre_amount > self.tqdm_count[2]:
-                self.tqdm_pbar.update(incre_amount)
-                self.tqdm_count[1] = self.tqdm_count[0]
+        incre_amount = self.tqdm_count[0] - self.tqdm_count[1]
+        if incre_amount > self.tqdm_count[2]:
+            self.tqdm_pbar.update(incre_amount)
+            self.tqdm_count[1] = self.tqdm_count[0]
 
 
 # column context, row cigar
