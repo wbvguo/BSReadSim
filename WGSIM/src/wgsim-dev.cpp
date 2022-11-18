@@ -81,7 +81,7 @@ static uint8_t GDC= 0x0b;
 static uint8_t GDD= 0x0f;
 //0110**: 24-27; 01**10: 18, 22, 30; 01****: the rest of 16-31
 //1001**: 36-39; 10**01: 33, 41, 45; 10****: the rest of 32-47
-//encode not as 1,3,5 have problem with print 5 (or 13) when putc
+//encode not as 1,3,5; have problem with print 5 (or 13) when putc
 const uint8_t cg_context_table[64] = {
     0,   0,   0,   0,    0,   0,   0,   0, 
     0,   0,   0,   0,    0,   0,   0,   0, 
@@ -472,7 +472,7 @@ void wgsim_print_mutref(const char *name, const kseq_t *ks, mutseq_t *hap1, muts
     }
 }
 
-void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, int size_l, int size_r, int output_mode, char *vcf_file, char *contig_id, int64_t contig_N)
+void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, int size_l, int size_r, int tech_mode, int output_mode, char *vcf_file, char *contig_id, int64_t contig_N)
 {
     kseq_t *ks;
     mutseq_t rseq[2];
@@ -591,17 +591,34 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
         wgsim_print_mutref(ks->name.s, ks, rseq, rseq+1);
         fprintf(stdout, "Contig Variant End\n");
         
+        uint8_t capture_arr[ks->seq.l] = {0};   // 0 for not captured, 1 for captured TODO
+        if (tech_mode == 1){                    // RRBS
+
+        } else if (tech_mode == 2){             // TBS
+
+        }                                       // else: WGBS
+
+
         for (ii = 0; ii != n_pairs; ++ii) { // the core loop
             double ran;
-            int pos, s[2];
-            int n_sub[2], n_indel[2], n_err[2], ext_coor[2], cover_pos[2], j, k, ix;
-            //cover_pos hold if the read covers a snp *position* (the read don't have to contain the ALT allele)
-            //j hold read1/read2, k hold the length of read, ix hold the cursor transversing read
+            int pos;
 
+            // random position generation
             pos = dis(gen);
             int insert_dev = (int)(std_dev * dis_rn(gen_rn));
             inner_dist = dist + insert_dev - size_l - size_r; //dist is the mean insert size
             inner_dist = std::max(min_inner, std::min(inner_dist, max_inner));
+            
+            // determine if we should skip or not
+            capture_flag = true;
+            if (tech_mode){
+                capture_flag = true; //TODO
+                if (!capture_flag){ --ii; continue;}
+            }
+            
+            int s[2], n_sub[2], n_indel[2], n_err[2], ext_coor[2], cover_pos[2], j, k, ix;
+            //cover_pos hold if the read covers a snp *position* (the read don't have to contain the ALT allele)
+            //j hold read1/read2, k hold the length of read, ix hold the cursor transversing read
             s[0] = size[0]; s[1] = size[1];
 
             // generate the read sequences
@@ -758,7 +775,7 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
                     }
                     fprintf(stdout, "\n");
                     // comment
-                    fprintf(stdout, "+:%d:%d:%d:%d:%d:%d:%d:%d:", start[jj]+1, end[jj]+1, cover_pos[jj], n_sub[jj], n_indel[jj], n_err[jj], end[1]-start[0], start[1]-end[0]);
+                    fprintf(stdout, "+:%d:%d:%d:%d:%d:%d:%d:%d:", start[jj]+1, end[jj]+1, cover_pos[jj], n_sub[jj], n_indel[jj], n_err[jj], end[1]-start[0], end[0]-start[1]);
                     for (i = 0; i < s[jj]; ++i) {
                         int c = (tmp_mutation[jj][i] & 0x0f);
                         fputc("MXIE"[mut_table[c]], stdout);
@@ -783,7 +800,7 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
                     }
                     fprintf(stdout, "\n");
                     // comment
-                    fprintf(stdout, "+:%d:%d:%d:%d:%d:%d:%d:", start[j], end[j], cover_pos[j], n_sub[j], n_indel[j], end[1]-start[0], start[1]-end[0]);
+                    fprintf(stdout, "+:%d:%d:%d:%d:%d:%d:%d:", start[j], end[j], cover_pos[j], n_sub[j], n_indel[j], end[1]-start[0], end[0]-start[1]);
                     const char *pad = "";
                     for (i = 0; i < s[j]; ++i) {
                         fprintf(stdout, "%s%d", pad, tmp_offset[j][i]);
@@ -832,6 +849,7 @@ static int simu_usage()
     fprintf(stderr, "         -S INT        seed for random generator [-1]\n");
     fprintf(stderr, "         -A FLOAT      disgard if the fraction of ambiguous bases higher than FLOAT [%.2f]\n", MAX_N_RATIO);
     fprintf(stderr, "         -h INT        haplotype mode: 0 for No; non-zero for Yes [0]\n");
+    fprintf(stderr, "         -T INT        technology: 0 for WGBS; 1 for RRBS; 2 for TBS [0]\n");
     fprintf(stderr, "         -m INT        output mode: 0 for letters; 1 for numbers (for Bisulfite simulaiton) [0]\n");
     fprintf(stderr, "         -g STRING     path to the genetic variant file (vcf.gz) [None]\n");
     fprintf(stderr, "         -c STRING     contig name [None]\n");
@@ -845,7 +863,7 @@ int main(int argc, char *argv[])
     uint64_t N;
     int64_t contig_N;
     int dist, std_dev, c, size_l, size_r, is_hap = 0;
-    int output_mode= 0;
+    int tech_mode, output_mode = 0;
     char none_default[] = "None";
     char *vcf_file = none_default;
     char *contig_id= none_default; // checked, will not intefere with vcf_file
@@ -853,7 +871,7 @@ int main(int argc, char *argv[])
 
     N = 1000000; dist = 500; std_dev = 50; contig_N = -1;
     size_l = size_r = 70;
-    while ((c = getopt(argc, argv, "e:d:s:N:1:2:r:R:h:X:S:A:m:g:c:n:")) >= 0) {
+    while ((c = getopt(argc, argv, "e:d:s:N:1:2:r:R:h:X:S:A:T:m:g:c:n:")) >= 0) {
         switch (c) {
         case 'd': dist = atoi(optarg); break;
         case 's': std_dev = atoi(optarg); break;
@@ -867,6 +885,7 @@ int main(int argc, char *argv[])
         case 'A': MAX_N_RATIO = atof(optarg); break;
         case 'S': seed = atoi(optarg); break;
         case 'h': is_hap = atoi(optarg); break;
+        case 'T': tech_mode= atoi(optarg); break;
         case 'm': output_mode = atoi(optarg); break;
         case 'g': vcf_file = optarg; break;
         case 'c': contig_id= optarg; break;
@@ -877,7 +896,7 @@ int main(int argc, char *argv[])
     if (seed <= 0) seed = time(0)&0x7fffffff;
     fprintf(stderr, "[wgsim] seed = %d\n", seed);
     srand48(seed);
-    wgsim_core(argv[optind], is_hap, N, dist, std_dev, size_l, size_r, output_mode, vcf_file, contig_id, contig_N);
+    wgsim_core(argv[optind], is_hap, N, dist, std_dev, size_l, size_r, tech_mode, output_mode, vcf_file, contig_id, contig_N);
 
     return 0;
 }

@@ -11,12 +11,13 @@ from typing import Dict, Union, Tuple
 from threading import Lock
 from concurrent.futures import ThreadPoolExecutor
 
-from SetCyotsineMethylation import SetCytosineMethylation
+from SetMethylation import SetMethylation
 from StreamWGSIM import StreamWGSIM
+from StreamOutput import StreamOutput
 from UtilityFunctions import get_wgsim_path, reverse_complement
 
 
-class SimulateMethylatedReads:
+class BSReadSim:
     """
     The bisulfite sequencing simulation works as follows:
 
@@ -67,7 +68,7 @@ class SimulateMethylatedReads:
 
     Usage:
     ```python
-    simulation = SimulateMethylatedReads(ref_fasta, outdir, **kwargs)
+    simulation = BSReadSim(ref_fasta, outdir, **kwargs)
     simulation.run()
     ```
 
@@ -75,19 +76,19 @@ class SimulateMethylatedReads:
 
     def __init__(self, ref_fasta: str = None, outdir: str = None, prefix: str = "sim",          # required arguments
                  meth_db_path: str = None, cgmap_file: str = None, cgmap_pool: bool = False,    # methylation ref
-                 asm_sim: bool = False, asm_file: str = None,                                   # ASM simulation
+                 asm_file: str = None,                                                          # ASM simulation
                  beta_params: Dict = {"CG":(0.5, 0.5), "CHG":(0.01, 0.05), "CHH":(0.01, 0.05)}, # beta distribution
                  collect_ch: bool = True, overwrite_db: bool = False,                           # methylation output
                  vcf_file: str = None,                                                          # genetic variant reference
                  mut_rate: float = 0.0010, haplo_mode: bool = False, seed: int = -1,            # mutation parameter
-                 update_boundary: bool = False,
+                 update_boundary: bool = False, site_dependency: bool = False, random_err= True, collect_sim_stats: bool = False,
                  mut_indel_frac: float = 0.15, indel_ext_prob: float = 0.15,                    # indel parameter
                  insert_mean: int = 400, insert_std: int = 25,                                  # fragment setting
                  read_len: int = 100, depth: int = 20, num_reads: int = None,                   # reads setting
                  seq_err: float = 0.005, conversion_rate: float = 0.998,                        # rates setting
                  undirectional: bool = False, pair_end: bool = True, propN_cutoff: float = 0.05,# sequencing protocol
                  n_threads: int = 4, gzip: bool = True, verbose: bool = True, shuffle: bool = True):
-        # not sure collect_sim_stats's role in previous bsbolt simulator
+
         # check required auguments are provided
         if not os.path.exists(ref_fasta):
             raise ValueError('Cannot find the reference file, please check!')
@@ -97,26 +98,27 @@ class SimulateMethylatedReads:
         self.ref_fasta= ref_fasta
         self.outdir   = outdir
         self.prefix   = prefix
-        self.gzip     = gzip
         self.seed     = seed
-        self.fastq1   = None
-        self.fastq2   = None
+        self.n_threads= n_threads
+        self.countlock= Lock()
+        self.writelock= Lock()
 
         # prepare the methylation reference
         print('Initiating methylation profile:\n')
-        self.meth_db  = SetCytosineMethylation(ref_fasta=ref_fasta, outdir=outdir,
-                                               meth_db_path=meth_db_path,
-                                               cgmap_file=cgmap_file, cgmap_pool=cgmap_pool,
-                                               asm_sim=asm_sim, asm_file=asm_file,
-                                               beta_params=beta_params,
-                                               collect_ch=collect_ch,
-                                               overwrite_db=overwrite_db,verbose=verbose,
-                                               seed = None if seed < 0 else seed)
+        self.meth_db  = SetMethylation(ref_fasta=ref_fasta, outdir=outdir,
+                                       meth_db_path=meth_db_path,
+                                       cgmap_file=cgmap_file, cgmap_pool=cgmap_pool,
+                                       asm_file=asm_file,
+                                       beta_params=beta_params,
+                                       collect_ch=collect_ch,
+                                       update_boundary=update_boundary,
+                                       overwrite_db=overwrite_db,verbose=verbose,
+                                       seed = None if seed < 0 else seed)
 
         # prepare wgsim command
         wgsim_args    = [get_wgsim_path(), ref_fasta]
-        genome_len    = self.meth_db.genome_len
-        num_reads     = int(genome_len*depth/read_len/(1+int(pair_end))) if not num_reads else num_reads
+        if not num_reads:
+            num_reads = int(self.meth_db.genome_len*depth/read_len/(1+int(pair_end)))
         wgsim_options = {'-d': insert_mean, '-s': insert_std,
                          '-1': read_len, '-2': read_len, '-N': num_reads,
                          '-g': vcf_file,
@@ -134,28 +136,29 @@ class SimulateMethylatedReads:
         self.pair_end       = pair_end
         self.undirectional  = undirectional
         self.conversion_rate= conversion_rate
+        self.random_err     = random_err
         self.seq_err        = seq_err
         self.collect_ch     = collect_ch
-        self.asm_sim        = asm_sim
+        self.asm_sim        = True if asm_file else False
+        self.site_dependency= site_dependency
+
 
         # to hold intermediate data
         self.current_contig = None
         self.pos_map        = None
         self.meth_arr       = None
         self.variant_profile= None
-        self.variant_data   = {}
-        self.read_count     = 0
-        self.read_count_old = 0
-        self.tqdm_step_size = num_reads * 0.01
-        self.n_threads      = n_threads
-        self.lock           = Lock()
 
         # prepare output
-        self.output_obj     = self.get_output_obj
+        self.fastq_list     = None
+        self.gzip           = gzip
         self.shuffle        = shuffle
+
+        # progress
         self.verbose        = verbose
         if verbose:
-            self.pbar= tqdm(range(self.num_reads), bar_format="{desc:<5.5}{percentage:3.0f}%|{bar:20}{r_bar}")
+            self.tqdm_count = [0, 0, num_reads * 0.01] # current, previous, step size
+            self.tqdm_pbar  = tqdm(range(num_reads), bar_format="{desc:<5.5}{percentage:3.0f}%|{bar:20}{r_bar}")
 
 
     def run(self):
@@ -174,19 +177,23 @@ class SimulateMethylatedReads:
                 self.current_contig = var_contig                                        # update the profiles
                 self.pos_map, self.meth_arr, _ = self.meth_db.load_contig(var_contig)   # 3 items list, pos_map, meth_arr, status
                 self.variant_profile= self.meth_db.set_var_meth(var_contig, sim_data)   # a dict
-                job_arr = [executor.submit(self.process_read_group, read_pair) for read_pair in read_gen]
-                for job in job_arr:
-                    job.add_done_callback(self.progress_bar)
+                if self.pair_end:
+                    job_arr = [executor.submit(self.process_read_pair, read_pair) for read_pair in read_gen] #what if read_gen is empty at very beginning
+                else:
+                    job_arr = [executor.submit(self.process_read, read_pair) for read_pair in read_gen]
+
+                if self.verbose:
+                    for job in job_arr:
+                        job.add_done_callback(self.progress_bar)
+
 
         for output in self.output_obj:      # close the fastq object
             output.close()
 
         if self.verbose:                    # close the progress bar
-            self.pbar.close()
+            self.tqdm_pbar.close()
 
-        if self.shuffle or self.gzip:       # shuffle or gzip the reads if needed
-            print("Shuffle/Gzip the reads...\n")
-        for fastq in self.fastq_list:
+        for fastq in self.fastq_list:       # shuffle or gzip reads
             if self.shuffle:
                 self.shuffle_read(fastq, self.ref_fasta)
             if self.gzip:
@@ -195,7 +202,21 @@ class SimulateMethylatedReads:
         print('Simulation Finished!\n')
 
 
-    def process_read_group(self, read_pair):
+    def process_read(self, read_pair):
+        '''process single end reads'''
+        read_flip = random.choice([0, 1])
+        read1_sub = random.choice([0, 1]) if self.undirectional else read_flip
+
+        self.mask_context(read_pair[0], read1_sub)
+        self.retrive_meth_db(read_pair[0])
+        self.set_context_state(read_pair[0])
+        self.treat_bisulfite(read_pair[0])
+        self.add_seq_err(read_pair[0])
+        self.add_qual_score(read_pair[0])
+        self.output_reads(read_pair, read_flip, read1_sub)
+
+
+    def process_read_pair(self, read_pair):
         """
         This processing step works as follows:
         1. randomly assign reads to Watson or Crick strand, with corresponding base change pattern
@@ -203,144 +224,184 @@ class SimulateMethylatedReads:
         3. bisulfite converted and introduce sequencing error
         4. output reads
         """
-        pattern_list= [('C', 'T'), ('G', 'A')]
-        ref_strand  = random.choice([0, 1]) # randomly select ref strand ['W', 'C']
-        sub_pattern = pattern_list[ref_strand]
 
-        if self.pair_end:
-            # retrive the methy profile
-            if ref_strand: # G to A
-                tmp_meth = self.retrive_meth_db(read_rec, sub_pattern)
-                tmp_meth = self.set_methylation(read_rec, sub_pattern)
-            else: #C to T
-                pass
-            
-        # set methylation
-        
+        # for directional library, read1 will be G2A if read_flip else C2A, strand will be W else C
+        # if read_flip: read_pair[0], read_pair[1] = read_pair[1], read_pair[0]
+        read_flip = random.choice([0, 1])
+        read1_sub = random.choice([0, 1]) if self.undirectional else read_flip
+
+        # mask the context
+        self.mask_context(read_pair[0], read1_sub)
+        self.mask_context(read_pair[1], 1-read1_sub)
+        # retrive methy profile
+        self.retrive_meth_db(read_pair[0])
+        self.retrive_meth_db(read_pair[1])
+
+        self.set_context_state(read_pair)
+
         # bisulfite converted
-        
+        self.treat_bisulfite(read_pair[0])
+        self.treat_bisulfite(read_pair[1])
+
         # introduce seq errors
-        
+        self.add_seq_err(read_pair[0])
+        self.add_seq_err(read_pair[1])
+
         # introduce quality scores
-        
+        self.add_qual_score(read_pair[0])
+        self.add_qual_score(read_pair[1])
         # output
-        if self.pair_end:
-            if ref_strand:
-                sim_data[0], sim_data[1] = sim_data[1], sim_data[0]        #??? need to check
-            sim_data[0] = self.treat_bisulfite(sim_data[0], sub_pattern)
-            sim_data[1] = self.treat_bisulfite(sim_data[1], sub_pattern)
+        self.output_reads(read_pair, read_flip, read1_sub)
+
+
+    def mask_context(self, read_rec, read_sub):
+        '''mask the context based on read substitution pattern (0 for C2T, 1 for G2A)'''
+        if read_sub:
+            if self.collect_ch:
+                read_rec['ctx'] = np.ma.masked_greater(read_rec['ctx'], 8)
+            else:
+                read_rec['ctx'] = np.ma.not_equal(read_rec['ctx'], 9)
         else:
-            sim_data[0] = self.treat_bisulfite(sim_data[0], sub_pattern)
-
-        # switch subpattern randomly for output if undirectional           #??? need to check
-        if self.undirectional and random.choice([0, 1]):
-            sub_pattern = ('C', 'T') if sub_pattern[0] == 'G' else ('G', 'A')
-            if self.pair_end:
-                sim_data[0], sim_data[1] = sim_data[1], sim_data[0]
-        self.output_sim_reads(sim_data, sub_pattern[0], ref_strand)    
+            if self.collect_ch:
+                read_rec['ctx'] = np.ma.masked_less(read_rec['ctx'], 8)
+            else:
+                read_rec['ctx'] = np.ma.not_equal(read_rec['ctx'], 1)
 
 
-    def retrive_meth_db(self, read_rec, sub_pattern):
-        '''input the cigar string ofs etc, output the values per site'''
-        read_ctx = read_rec['ctx']
-        if sub_pattern[0] == "C":   # 1, 3, 7
-            site_idx = (read_ctx<8) if self.collect_ch else (read_ctx==1)
-            read_rec['ctx2'] = np.ma.masked_greater(read_ctx, 8)
-        else:                       # 9, 11, 15
-            site_idx = (read_ctx>8) if self.collect_ch else (read_ctx==9)
-            read_ctx[read_ctx < 8] = 0
-            read_rec['ctx2'] = np.ma.masked_less(read_ctx, 8)
+    def retrive_meth_db(self, read_rec):
+        '''retrive methylation levels from meth_db, append meth and pos to read_rec'''
+        read_meth = np.zeros(self.read_len)
+        site_flag = np.logical_not(read_rec['ctx'].mask)            # not masked sites
 
-        read_pos = read_rec['start'] + np.arange(self.read_len)
-        read_meth= np.zeros(self.read_len)
+        if np.any(site_flag):                                       # contain methylable bases
+            arr_idx  = 2
+            read_pos = read_rec['start'] + np.arange(self.read_len)
 
-        arr_idx = 2
-        if not read_rec['flag_pos']:                # SNP free region match
-            match_site = site_idx
-            read_meth[match_site]= self.fetch_meth_val(read_pos[match_site], arr_idx, 0)
-        else:                                       # contain mutation pos in DNA fragment
-            if self.asm_sim:
-                arr_idx = 4 if read_rec['flag_mut'] else 3
+            if read_rec['flag_pos']:                                # covers mutation position
+                if self.asm_sim:
+                    arr_idx  = 4 if read_rec['flag_mut'] else 3
 
-            match_idx = read_rec['cgr'] == 0        # match
-            match_site= match_idx & site_idx
-            read_meth[match_site]   = self.fetch_meth_val(read_pos[match_site],arr_idx, 0)
-            if read_rec['n_sub']:                   # snp
-                snp_idx   = read_rec['cgr'] == 1
-                snp_site  = snp_idx & site_idx
-                read_meth[snp_site] = self.fetch_meth_val(read_pos[snp_site],  arr_idx, 1)
-            if read_rec['n_indel']:                 # indel
-                read_pos += read_rec['ofs']
-                indel_idx = read_rec['cgr'] == 3
-                read_meth[indel_idx]= self.fetch_meth_val(read_pos[indel_idx], arr_idx, 3)
+                if read_rec['n_indel']:                             # handle indel first (offset)
+                    read_pos += read_rec['ofs']
+                    indel_site= read_rec['cgr'] == 3
+                    read_meth[indel_site]= self.fetch_meth_val(read_pos[indel_site], arr_idx, 3)
 
-        return read_meth, site_idx
+                if read_rec['n_sub']:
+                    snp_site = site_flag & (read_rec['cgr'] == 1)   # snp methylable site
+                    read_meth[snp_site]  = self.fetch_meth_val(read_pos[snp_site],  arr_idx, 1)
+
+                match_site = site_flag & (read_rec['cgr'] == 0)     # match methylable site
+                read_meth[match_site] = self.fetch_meth_val(read_pos[match_site],arr_idx, 0)
+            else:
+                match_site = site_flag                              # SNP/INDEL free region
+                read_meth[match_site] = self.fetch_meth_val(read_pos[match_site],arr_idx, 0)
+        read_rec['meth']   = read_meth
+        read_rec['pos']    = read_pos
 
 
     def fetch_meth_val(self, pos_arr, arr_idx, var_type):
         '''fetch the methylation value from meth_db'''
         if var_type == 1:           # SNP
-            return [self.variant_profile[pos][0] for pos in pos_arr]
-        elif var_type == 3:         # insertion sites will have the same coordinate
+            meth_val = [self.variant_profile[pos][0] for pos in pos_arr]
+        elif var_type== 3:          # insertion sites will have the same coordinate
             insert_pos= [x for x in pos_arr if pos_arr.count(x) > 1]
-            meth_val = []
+            meth_val  = []
             for pos in insert_pos:
-                meth_val  += list(self.variant_profile[pos][0])
+                meth_val += list(self.variant_profile[pos][0])
+        else:                       # match
+            meth_val  = list(self.meth_arr[self.pos_map[pos_arr], arr_idx])
+        return meth_val
+
+
+    def set_context_state(self, read_rec):
+        '''set the context methylation state'''
+        if self.pair_end: #overlappd
+            if read_rec[0]['inner_dist'] <= 0: # overlapped read pair: merge meth, get state, split
+                overlap_idx = np.where(read_rec[0]['pos'] == read_rec[1]['pos'][0])
+                if np.any(overlap_idx):
+                    for idx in overlap_idx:
+                        overlap_len = self.read_len - idx
+                        if read_rec[0]['pos'][idx:] == read_rec[1]['pos'][:overlap_len]:
+                            break
+                else:
+                    idx = self.read_len
+                comb_meth = np.concatenate(read_rec[0]['meth'][:idx],read_rec[1]['meth'])
+                comb_state= self.fetch_meth_state(comb_meth)
+                read_rec[0]['ctx'][np.where(comb_state[:self.read_len])] +=1
+                read_rec[1]['ctx'][np.where(comb_state[-self.read_len:])]+=1
+            else:
+                read1_state = self.fetch_meth_state(read_rec[0]['meth'])
+                read_rec[0]['ctx'][np.where(read1_state)] += 1
+                read2_state = self.fetch_meth_state(read_rec[1]['meth'])
+                read_rec[1]['ctx'][np.where(read2_state)] += 1
         else:
-            return list(self.meth_arr[self.pos_map[pos_arr], arr_idx])
+            read_state = self.fetch_meth_state(read_rec['meth'])
+            read_rec['ctx'][np.where(read_state)] += 1
 
 
-    def set_meth_state(self, read_rec,  read_meth, site_dependency = False):
-        '''set methylation status based on the meth_arr'''
-        if site_dependency:
-            pass
+    def fetch_meth_state(self, read_meth):
+        '''set methylation states based on the meth_arr'''
+        if self.site_dependency:
             # generate methylation pattern according to read_meth and distance
+            pass
         else:
             meth_states = bernoulli.rvs(read_meth, size = len(read_meth))
-            meth_change = np.where(meth_states!=0)
-            read_rec['ctx2'][meth_change]+= 1 # methybases increased by 1
+            #read_ctx[np.where(meth_states)] += 1 # context increased by 1 if methylated
+        return meth_states
 
 
     def treat_bisulfite(self, read_rec):
-        """ unmethylated C conversion """
-        conv_pos = np.where(np.bitwise_and(read_rec['ctx2'], 0x1))
-        conv_change = [i for i in bernoulli.rvs(self.conversion_rate, size=len(conv_pos))]
-        read_rec['seq'][conv_pos] = np.bitwise_and(read_rec['seq'][conv_change] + 2, 0x3) # C2T, G2A
+        """ bisulfite conversion """
+        unmeth_idx = np.where(np.bitwise_and(read_rec['ctx'], 0x1)==1) # behave strange without ==1
+        conv_states= bernoulli.rvs(self.conversion_rate, size=len(unmeth_idx))
+        conv_idx   = unmeth_idx[conv_states]        # successfully converted base index
+        read_rec['seq'][conv_idx]  = np.bitwise_and(read_rec['seq'][conv_idx] + 2, 0x3) # C2T, G2A
+        unconv_idx = unmeth_idx[conv_states == 0]   # remains the same base index
+        read_rec['cgr'][unconv_idx]= 4
 
 
-    def add_seq_err(self, read_rec, random_err = True):
-        ''' introduce sequencing error and quality scores'''
-        if random_err:
-            err_arr = bernoulli.rvs(self.seq_err, size = self.read_len)
-            err_idx = np.where(err_arr == 1)
+    def add_seq_err(self, read_rec):
+        ''' introduce sequencing error'''
+        if self.random_err:
+            err_states = bernoulli.rvs(self.seq_err, size = self.read_len)
+            err_idx    = np.where(err_states)
             if err_idx:
                 base_set = {0,1,2,3}
                 for idx in err_idx:
-                    base = read_rec[idx]
-                    read_rec['seq'][idx] = np.ramdon.choice(base_set.difference(base), size = 1)
-                    read_rec['ctx2'] = 
-                
-                # change
-                # update cigar string
+                    base_ori = read_rec[idx]
+                    base_alt = np.ramdon.choice(base_set.difference(base_ori), size = 1)
+                    read_rec['cgr_str'][idx] = "e" if (base_ori, base_alt) in {(1,3), (2,0)} else "E"
         else:
+            # generate sequencing error based on a profile
             pass
+
 
     def add_qual_score(self, read_rec, qual_uniform = True):
         '''add quality scores for the read'''
         if qual_uniform:
-            qual_arr = np.full(self.read_len, read_rec['qual'])
+            qual_arr = np.full(self.read_len, chr(read_rec['qual']))
             read_rec['qual'] = qual_arr
         else:
-            pass
+            # generate quality score from a profile
+            pass 
 
 
-    def output_reads(self, read_rec):
-        ''' output reads '''
-        pass
+    def output_reads(self, read_pair, read_flip, read1_sub):
+        """write bisulfite reads to disk"""
+        if self.pair_end:
+            self.rev_complement(read_pair[1])
 
+            if read_flip:
+                read_pair[0], read_pair[1] = read_pair[1], read_pair[0]
 
-    def output_sim_reads(self, sim_data, sub_base, ref_strand):
-        """Write simulated bisulfite reads"""
+            conv_tag = ('G2A', 'C2T') if read1_sub else ('C2T', 'G2A')
+            for idx, read_rec in enumerate(read_pair):
+                conv_pattern = conv_tag[idx]
+                
+        else:
+            
+            
+        
         # format reads
         conversion_1, conversion_2 = ('C2T', 'G2A') if sim_data[0][0]['sub_base'] == sub_base else ('G2A', 'C2T')
         reverse_read = 1 if sub_base == 'C' else 0
@@ -361,47 +422,20 @@ class SimulateMethylatedReads:
 
 
     @property
-    def get_output_obj(self):
-        """Return io object for fastq writing"""
-        self.fastq1 = f'{self.outdir}/{self.prefix}_1.fastq'
-        if self.pair_end:
-            self.fastq2 = f'{self.outdir}/{self.prefix}_2.fastq'
-
-
-    @staticmethod
-    def shuffle_read(fastq_file: str = None, random_source: str = None):
-        '''
-        shuffle the reads randomly, if false, the reads will be segemented by contigs
-        the number of simulated reads should not exceed the number of bits in the reference genome.
-        for HG, should be less than 8*3G < 2.4*10^10 (average DEPTH should be less than read_len*8)
-        from link: https://www.biostars.org/p/9764/
-        '''
-        prefix_split    = os.path.splitext(fastq_file)[0].split("_")
-        fastq_shuffle   = "_".join(prefix_split[:-1]) + "_shuffle_" + prefix_split[-1] + ".fastq"
-        shuf_cmd_list   = ["awk", "'{OFS=\"\t\"; getline seq; getline sep; getline qual; print $0,seq,sep,qual}'",
-                         fastq_file, "|", "shuf --random-source", random_source, "|",
-                         "awk", "'{OFS=\"\n\"; print $1,$2,$3,$4}'", ">", fastq_shuffle]
-        shuffle_run     = subprocess.Popen(shuf_cmd_list,  stdout=subprocess.PIPE, universal_newlines=True)
-        stdout, stderr  = shuffle_run.communicate()
-        rename_cmd_list = ["mv", fastq_shuffle, fastq_file]
-        rename_run      = subprocess.Popen(rename_cmd_list,stdout=subprocess.PIPE, universal_newlines=True)
-        stdout, stderr  = rename_run.communicate()
-
-    @staticmethod
-    def gzip_read(fastq_file):
-        '''gzip the output reads to fastq.gz format'''
-        gzip_cmd_list   = ["gzip", fastq_file]
-        gzip_run        = subprocess.Popen(gzip_cmd_list,  stdout=subprocess.PIPE, universal_newlines=True)
-        stdout, stderr  = gzip_run.communicate()
-
-    @property
     def progress_bar(self):
         '''show the progress of read simulaiton'''
-        if self.verbose:
-            with self.lock:
-                self.read_count += 2 if self.pair_end else 1
+        with self.countlock:
+            self.tqdm_count[0] += 2 if self.pair_end else 1
 
-            incre_amount = self.read_count - self.read_count_old
-            if incre_amount > self.tqdm_step_size:
-                self.pbar.update(incre_amount)
-                self.read_count_old = self.read_count
+        incre_amount = self.tqdm_count[0] - self.tqdm_count[1]
+        if incre_amount > self.tqdm_count[2]:
+            self.tqdm_pbar.update(incre_amount)
+            self.tqdm_count[1] = self.tqdm_count[0]
+
+
+# column context, row cigar
+cigar_table = np.array([['M', 'c', 'C', 'b',  'B', '-', '-', 'a',  'A', 'c', 'C', 'b',  'B', '-', '-', 'a',  'A'], # match
+                        ['x', 'x', 'X', 'x',  'X', '-', '-', 'x',  'X', 'x', 'X', 'x',  'X', '-', '-', 'x',  'X'], # snp
+                        ['-', '-', '-', '-',  '-', '-', '-', '-',  '-', '-', '-', '-',  '-', '-', '-', '-',  '-'], # empty
+                        ['M', 'i', 'I', 'i',  'I', '-', '-', 'i',  'I', 'i', 'I', 'i',  'I', '-', '-', 'i',  'I'], # insert
+                        ['-', '#', '-', '#',  '-', '-', '-', '#',  '-', '#', '-', '#',  '-', '-', '-', '#',  '-']])# convert failed
