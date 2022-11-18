@@ -81,7 +81,7 @@ static uint8_t GDC= 0x0b;
 static uint8_t GDD= 0x0f;
 //0110**: 24-27; 01**10: 18, 22, 30; 01****: the rest of 16-31
 //1001**: 36-39; 10**01: 33, 41, 45; 10****: the rest of 32-47
-//encode not as 1,3,5 have problem with print 5 when putc
+//encode not as 1,3,5 have problem with print 5 (or 13) when putc
 const uint8_t cg_context_table[64] = {
     0,   0,   0,   0,    0,   0,   0,   0, 
     0,   0,   0,   0,    0,   0,   0,   0, 
