@@ -3,7 +3,7 @@ import pickle
 import subprocess
 
 
-class StreamOutput:
+class StreamMethDB:
     '''
     write simulation values/variants/reads to disk
     :param str  outdir: path to the simulation folder
@@ -64,9 +64,12 @@ class StreamOutput:
             return contig_profile
 
 
-    def output_reads(self, reads):
-        '''write reads to disk'''
-        pass
+    @property
+    def get_output_obj(self):
+        """Return io object for fastq writing"""
+        self.fastq1 = f'{self.outdir}/{self.prefix}_1.fastq'
+        if self.pair_end:
+            self.fastq2 = f'{self.outdir}/{self.prefix}_2.fastq'
 
 
     @staticmethod
