@@ -1,7 +1,12 @@
-This tool is derived (but heavily modified) from WGSIM, which make use of the HTSLIB library to enable the profile-based read simulation. 
-Specifically, WGSIM simulate WGS reads with randomly generated mutations. In addition to achieve what WGSIM did, this tool also enables introducing the genetic variant from a reference (.vcf file)
-It can be used to simulate WGS reads (by default), or deliver intedimedate results to the BSReadSim python module for more WGBS read simulation (when specifying -m 1).
+This tool is derived (but very heavily modified) from WGSIM to generate short reads for diploid organisms. It used the HTSLIB library to read and process VCF file, as a result it can generate realistic sequencing reads with either randomly generated mutations or variants from a user-specified reference VCF file (in other words, it enables profile-based simulation). Noteably, when conducting the profile-based simulation, the tool is haplotype-aware, that when the VCF file is phased, the haplotype information is kept and can be reflected in the reads.
+
+The tool can be used to simulate WGS reads (by default), or deliver intedimedate data to the BSReadSim python module for bisulfite sequencing reads simulation (when specifying -m 1).
+
 The tool is written in C++, which makes the read simulation very fast.
+
+
+Contact: 
+    Wenbin Guo <wbguo@ucla.edu>
 
 Usage:   
     wgsim [options] <in.ref.fa> 
@@ -24,4 +29,4 @@ Options:
     -c STRING     contig name [None]
     -n INT        number of read pairs for specified contig [-1]
 
-The coordinates of string output is 1-based: SNP or reads (-m 0), 
+The coordinates of string output is 1-based for SNPs and read names when -m is set as 0
