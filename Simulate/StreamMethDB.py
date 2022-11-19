@@ -1,13 +1,13 @@
 import os
 import pickle
-import subprocess
 
 
 class StreamMethDB:
     '''
-    write simulation values/variants/reads to disk
-    :param str  outdir: path to the simulation folder
-    :param bool shuffle: whether to shuffle the reads (Default: reads are segemented by contig_id)
+    write methylation values/variants to disk
+    :param str  outdir      : path to the simulation folder
+    :param str  pkl_dir     : subfolder of the meth_db pkl file
+    :param bool overwrite_db: if we should overwrite exisiting files
     :rtype None
     '''
 
@@ -62,43 +62,3 @@ class StreamMethDB:
             return None
         else:
             return contig_profile
-
-
-    @property
-    def get_output_obj(self):
-        """Return io object for fastq writing"""
-        self.fastq1 = f'{self.outdir}/{self.prefix}_1.fastq'
-        if self.pair_end:
-            self.fastq2 = f'{self.outdir}/{self.prefix}_2.fastq'
-
-
-    @staticmethod
-    def shuffle_read(fastq_file: str = None, random_source: str = None):
-        '''
-        shuffle the reads randomly, if false, the reads will be segemented by contigs
-        the number of simulated reads should not exceed the number of bits in the reference genome.
-        for HG, should be less than 8*3G < 2.4*10^10 (average DEPTH should be less than read_len*8)
-        from link: https://www.biostars.org/p/9764/
-        '''
-        print(f"shuffle reads {fastq_file}")
-        
-        prefix_split    = os.path.splitext(fastq_file)[0].split("_")
-        fastq_shuffle   = "_".join(prefix_split[:-1]) + "_shuffle_" + prefix_split[-1] + ".fastq"
-        shuf_cmd_list   = ["awk", "'{OFS=\"\t\"; getline seq; getline sep; getline qual; print $0,seq,sep,qual}'",
-                         fastq_file, "|", "shuf --random-source", random_source, "|",
-                         "awk", "'{OFS=\"\n\"; print $1,$2,$3,$4}'", ">", fastq_shuffle]
-        shuffle_run     = subprocess.Popen(shuf_cmd_list,  stdout=subprocess.PIPE, universal_newlines=True)
-        stdout, stderr  = shuffle_run.communicate()
-        
-        rename_cmd_list = ["mv", fastq_shuffle, fastq_file]
-        rename_run      = subprocess.Popen(rename_cmd_list,stdout=subprocess.PIPE, universal_newlines=True)
-        stdout, stderr  = rename_run.communicate()
-
-    @staticmethod
-    def gzip_read(fastq_file):
-        '''gzip the output reads to fastq.gz format'''
-        print(f"gzip reads {fastq_file}")
-        
-        gzip_cmd_list   = ["gzip", fastq_file]
-        gzip_run        = subprocess.Popen(gzip_cmd_list,  stdout=subprocess.PIPE, universal_newlines=True)
-        stdout, stderr  = gzip_run.communicate()

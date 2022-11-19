@@ -9,7 +9,7 @@ from scipy.stats import beta
 from tqdm import tqdm
 from typing import Dict, List
 
-from StreamOutput import StreamOutput
+from StreamMethDB import StreamMethDB
 from UtilityFunctions import parseCGmap, parseASM
 
 
@@ -72,7 +72,7 @@ class SetMethylation:
         if self.asm_sim and not os.path.exists(asm_file):
             raise ValueError('Please specify allelic specific methylation file correctly for ASM simulation!')
 
-        self.meth_db = StreamOutput(outdir=self.outdir, overwrite_db=self.overwrite_db)
+        self.meth_db = StreamMethDB(outdir=self.outdir, overwrite_db=self.overwrite_db)
         self.meth_db.check_outdir()
         self.ref_dict= SeqIO.to_dict(SeqIO.parse(ref_fasta, "fasta"))
         self.genome_len = sum([len(seq) for _, seq in self.ref_dict.items()])
