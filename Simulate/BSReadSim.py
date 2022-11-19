@@ -1,10 +1,7 @@
 import os
 import random
-import sys
-import subprocess
 import numpy as np
 
-from Bio import SeqIO
 from tqdm import tqdm
 from scipy.stats import bernoulli
 from typing import Dict, Union, Tuple
@@ -13,30 +10,36 @@ from concurrent.futures import ThreadPoolExecutor
 
 from SetMethylation import SetMethylation
 from StreamWGSIM import StreamWGSIM
-from StreamOutput import StreamOutput
-from UtilityFunctions import get_wgsim_path, reverse_complement
+from StreamReads import StreamReads
+from UtilityFunctions import get_wgsim_path
 
 
 class BSReadSim:
     """
     The bisulfite sequencing simulation works as follows:
-
-    1. modified WGSIM module is invoked to simulate pair-end Illumina sequencing reads
-        - if run in single end mode, the second read is not processed nor output,
-          correspondly the number of reads simulated is doubled to get desired depth
-        - the output of 2 reads from WGSIM is always the watson 5' to 3' and error-free
-          the strandness/orientation is determined in the python module
-    2. methylation values are set for methylable bases (Cytosine and Guanine), from 3 ways
-        - reference CGmap, either faithfully or from a pool
-        - from a beta distribution (whose parameters can be estimated from the reference CGmap)
-        - from the ASM file
-    3. Allelic methylation and site-site dependency pattern is permitted if needed [TODO]
-    4. Reads are bisulfite converted (with a conversion rate) and sequencing error can be introduced
+    1. construct the meth_db:
+        - parse the reference fasta to initiate a methylation database (using array and Series)
+        - fill in the methylaiton value, which can be obtained from the following 3 aspects:
+            a. reference CGmap, either pool randomly or assign to correponding sites
+            b. beta distribution (prarameters can be estimated from CGmap file and set by users)
+            c. from the ASM file, especially estimated from the ASM simulation
+    2. modified WGSIM module is invoked to simulate pair-end Illumina sequencing reads and variants
+        - if run in single end mode, the second read is not processed nor output, correspondingly 
+          the number of reads simulated is doubled to get desired depth
+        - the output of 2 reads from WGSIM is always the watson 5' to 3' and error-free,the 
+          strandness/orientation is determined in the python module
+        - update meth_db: the variant's methylable base (also the boundary methylable bases whose 
+        context is changed by variants) is set using beta distribution according to their context
+    3. For each read, methylation values are retrived from meth_db for methylable bases (C or G),
+       methylation states is simulated either using the naive independent bernoulli distribution or
+       using RNN-GAN model for site-site dependency consideration. [TODO]
+    4. Allelic methylation is permitted if specified
+    5. Reads are bisulfite converted (with a conversion rate) and sequencing error can be introduced
 
     # parameters
     :param str   ref_fasta      : path to the reference genome (.fasta/.fa/.fa.gz) [None]
     :param str   outdir         : path to the output directory [None]
-    :param str   prefix         : prefix of output reads ['sim']
+    :param str   prefix         : prefix of output reads ["sim"]
     :param str   meth_db_path   : path to the previous obj (.pkl) [None]
     :param str   cgmap_file     : path to the cgmap file (.CGmap/.CGmap.gz) [False]
     :param bool  cgmap_pool     : whether to pool methylaiton levels and random draws from it [False]
@@ -74,20 +77,21 @@ class BSReadSim:
 
     """
 
-    def __init__(self, ref_fasta: str = None, outdir: str = None, prefix: str = "sim",          # required arguments
-                 meth_db_path: str = None, cgmap_file: str = None, cgmap_pool: bool = False,    # methylation ref
-                 asm_file: str = None,                                                          # ASM simulation
-                 beta_params: Dict = {"CG":(0.5, 0.5), "CHG":(0.01, 0.05), "CHH":(0.01, 0.05)}, # beta distribution
-                 collect_ch: bool = True, overwrite_db: bool = False,                           # methylation output
-                 vcf_file: str = None,                                                          # genetic variant reference
-                 mut_rate: float = 0.0010, haplo_mode: bool = False, seed: int = -1,            # mutation parameter
-                 update_boundary: bool = False, site_dependency: bool = False, random_err= True, collect_sim_stats: bool = False,
-                 mut_indel_frac: float = 0.15, indel_ext_prob: float = 0.15,                    # indel parameter
-                 insert_mean: int = 400, insert_std: int = 25,                                  # fragment setting
-                 read_len: int = 100, depth: int = 20, num_reads: int = None,                   # reads setting
-                 seq_err: float = 0.005, conversion_rate: float = 0.998,                        # rates setting
-                 undirectional: bool = False, pair_end: bool = True, propN_cutoff: float = 0.05,# sequencing protocol
-                 n_threads: int = 4, gzip: bool = True, verbose: bool = True, shuffle: bool = True):
+    def __init__(self, ref_fasta: str = None, outdir: str = None, prefix: str = "sim",              # required arguments
+                 meth_db_path: str = None, cgmap_file: str = None, cgmap_pool: bool = False,        # methylation ref
+                 asm_file: str = None,                                                              # ASM simulation
+                 beta_params: Dict = {"CG":(0.5, 0.5), "CHG":(0.01, 0.05), "CHH":(0.01, 0.05)},     # beta distribution
+                 collect_ch: bool = True, update_boundary: bool = False, overwrite_db: bool = False,# meth_db output
+                 vcf_file: str = None,                                                              # genotype reference
+                 mut_rate: float = 0.0010, haplo_mode: bool = False, seed: int = -1,                # mutation parameter
+                 mut_indel_frac: float = 0.15, indel_ext_prob: float = 0.15,                        # indel parameter
+                 insert_mean: int = 400, insert_std: int = 25,                                      # fragment setting
+                 read_len: int = 100, depth: int = 20, num_reads: int = None,                       # reads setting
+                 random_err= True, seq_err: float = 0.005,                                          # sequencing error
+                 site_dependency: bool = False, conversion_rate: float = 0.998,                     # methylation setting
+                 undirectional: bool = False, pair_end: bool = True,                                # sequencing protocol
+                 n_threads: int = 4, gzip: bool = True, shuffle: bool = True,                       # output setting
+                 verbose: bool = True, collect_stats: bool = False, propN_cutoff: float = 0.05):
 
         # check required auguments are provided
         if not os.path.exists(ref_fasta):
@@ -100,8 +104,8 @@ class BSReadSim:
         self.prefix   = prefix
         self.seed     = seed
         self.n_threads= n_threads
-        self.countlock= Lock()
-        self.writelock= Lock()
+        self.countLock= Lock()
+        self.writeLock= Lock()
 
         # prepare the methylation reference
         print('Initiating methylation profile:\n')
@@ -112,7 +116,8 @@ class BSReadSim:
                                        beta_params=beta_params,
                                        collect_ch=collect_ch,
                                        update_boundary=update_boundary,
-                                       overwrite_db=overwrite_db,verbose=verbose,
+                                       overwrite_db=overwrite_db,
+                                       verbose=verbose,
                                        seed = None if seed < 0 else seed)
 
         # prepare wgsim command
@@ -131,7 +136,6 @@ class BSReadSim:
         self.sim_cmd_part   = wgsim_args + [str(item) for key_val in wgsim_options.items() for item in key_val]
 
         # sequencing settings
-        self.num_reads      = num_reads
         self.read_len       = read_len
         self.pair_end       = pair_end
         self.undirectional  = undirectional
@@ -141,7 +145,7 @@ class BSReadSim:
         self.collect_ch     = collect_ch
         self.asm_sim        = True if asm_file else False
         self.site_dependency= site_dependency
-
+        self.collect_stats  = collect_stats
 
         # to hold intermediate data
         self.current_contig = None
@@ -153,9 +157,9 @@ class BSReadSim:
         self.fastq_list     = None
         self.gzip           = gzip
         self.shuffle        = shuffle
+        self.verbose        = verbose
 
         # progress
-        self.verbose        = verbose
         if verbose:
             self.tqdm_count = [0, 0, num_reads * 0.01] # current, previous, step size
             self.tqdm_pbar  = tqdm(range(num_reads), bar_format="{desc:<5.5}{percentage:3.0f}%|{bar:20}{r_bar}")
@@ -163,20 +167,20 @@ class BSReadSim:
 
     def run(self):
         """Simulating Bisulfite sequencing reads with parallelization:
-        # 1. recieve from WGSIM (in chunk)
+        # 1. recieve from WGSIM
         # 2. process and write to disk (multiple threads)
         """
         print('Simulating methylated Reads:\n')
-        print(f'[CMD]: {" ".join(self.sim_cmd_part)} for each contigs\n')
+        print(f'[CMD]: {" ".join(self.sim_cmd_part)} \n')
 
         with ThreadPoolExecutor(max_workers=self.n_threads) as executor:
             for contig_id in self.meth_db.ref_dict.keys():
                 sim_cmd  = self.sim_cmd_part + ['-c', contig_id]
-                read_gen = StreamWGSIM(sim_cmd=sim_cmd, pair_end=self.pair_end)         # should we make it thread-safe?
+                read_gen = StreamWGSIM(sim_cmd=sim_cmd, pair_end=self.pair_end)         # should make it thread-safe?
                 var_contig, sim_data = next(read_gen)                                   # the first element is the variants
                 self.current_contig = var_contig                                        # update the profiles
                 self.pos_map, self.meth_arr, _ = self.meth_db.load_contig(var_contig)   # 3 items list, pos_map, meth_arr, status
-                self.variant_profile= self.meth_db.set_var_meth(var_contig, sim_data)   # a dict
+                self.variant_profile= self.meth_db.set_var_meth(var_contig, sim_data)   # a dict, can be empty
                 if self.pair_end:
                     job_arr = [executor.submit(self.process_read_pair, read_pair) for read_pair in read_gen] #what if read_gen is empty at very beginning
                 else:
@@ -211,6 +215,7 @@ class BSReadSim:
         self.retrive_meth_db(read_pair[0])
         self.set_context_state(read_pair[0])
         self.treat_bisulfite(read_pair[0])
+        self.rev_complement(read_pair[0], read_flip)
         self.add_seq_err(read_pair[0])
         self.add_qual_score(read_pair[0])
         self.output_reads(read_pair, read_flip, read1_sub)
@@ -237,19 +242,23 @@ class BSReadSim:
         self.retrive_meth_db(read_pair[0])
         self.retrive_meth_db(read_pair[1])
 
+        # set methylation states
         self.set_context_state(read_pair)
-
         # bisulfite converted
         self.treat_bisulfite(read_pair[0])
         self.treat_bisulfite(read_pair[1])
 
+        # rev complementary
+        self.rev_complement(read_pair, read_flip)
+
+
         # introduce seq errors
         self.add_seq_err(read_pair[0])
         self.add_seq_err(read_pair[1])
-
         # introduce quality scores
         self.add_qual_score(read_pair[0])
         self.add_qual_score(read_pair[1])
+
         # output
         self.output_reads(read_pair, read_flip, read1_sub)
 
@@ -271,7 +280,7 @@ class BSReadSim:
     def retrive_meth_db(self, read_rec):
         '''retrive methylation levels from meth_db, append meth and pos to read_rec'''
         read_meth = np.zeros(self.read_len)
-        site_flag = np.logical_not(read_rec['ctx'].mask)            # not masked sites
+        site_flag = np.logical_not(read_rec['ctx'].mask)            # unmasked sites
 
         if np.any(site_flag):                                       # contain methylable bases
             arr_idx  = 2
@@ -315,7 +324,7 @@ class BSReadSim:
 
     def set_context_state(self, read_rec):
         '''set the context methylation state'''
-        if self.pair_end: #overlappd
+        if self.pair_end:
             if read_rec[0]['inner_dist'] <= 0: # overlapped read pair: merge meth, get state, split
                 overlap_idx = np.where(read_rec[0]['pos'] == read_rec[1]['pos'][0])
                 if np.any(overlap_idx):
@@ -325,7 +334,8 @@ class BSReadSim:
                             break
                 else:
                     idx = self.read_len
-                comb_meth = np.concatenate(read_rec[0]['meth'][:idx],read_rec[1]['meth'])
+                # it's okay to have idx=0, or np.where returns null
+                comb_meth = np.concatenate((read_rec[0]['meth'][:idx],read_rec[1]['meth']), axis=0)
                 comb_state= self.fetch_meth_state(comb_meth)
                 read_rec[0]['ctx'][np.where(comb_state[:self.read_len])] +=1
                 read_rec[1]['ctx'][np.where(comb_state[-self.read_len:])]+=1
@@ -345,8 +355,9 @@ class BSReadSim:
             # generate methylation pattern according to read_meth and distance
             pass
         else:
-            meth_states = bernoulli.rvs(read_meth, size = len(read_meth))
-            #read_ctx[np.where(meth_states)] += 1 # context increased by 1 if methylated
+            meth_states = np.zeros(len(read_meth))
+            nonzero_idx = np.where(read_meth)
+            meth_states[nonzero_idx] = bernoulli.rvs(read_meth[nonzero_idx], size = len(nonzero_idx))
         return meth_states
 
 
@@ -360,71 +371,63 @@ class BSReadSim:
         read_rec['cgr'][unconv_idx]= 4
 
 
+    def rev_complement(self, read_rec, read_flip):
+        '''reverse complementary for pair_end'''
+        read_rec['cgr'] = np.flip(read_rec['cgr'])
+        read_rec['seq'] = 3 - np.flip(read_rec['seq'])
+
+
     def add_seq_err(self, read_rec):
         ''' introduce sequencing error'''
         if self.random_err:
-            err_states = bernoulli.rvs(self.seq_err, size = self.read_len)
-            err_idx    = np.where(err_states)
-            if err_idx:
+            err_idx = np.where(bernoulli.rvs(self.seq_err, size = self.read_len))
+            if np.any(err_idx):
                 base_set = {0,1,2,3}
                 for idx in err_idx:
-                    base_ori = read_rec[idx]
+                    base_ori = read_rec['seq'][idx]
                     base_alt = np.ramdon.choice(base_set.difference(base_ori), size = 1)
-                    read_rec['cgr_str'][idx] = "e" if (base_ori, base_alt) in {(1,3), (2,0)} else "E"
+                    read_rec['seq'][idx] = base_alt
+                    read_rec['cgr_str'][idx] = "e" if (base_ori, base_alt) in {(1,3), (2,0)} and conv_type else "E" # problem here
         else:
             # generate sequencing error based on a profile
             pass
 
 
-    def add_qual_score(self, read_rec, qual_uniform = True):
-        '''add quality scores for the read'''
-        if qual_uniform:
+    def add_qual_score(self, read_rec):
+        '''add quality scores'''
+        if self.qual_uniform:
             qual_arr = np.full(self.read_len, chr(read_rec['qual']))
             read_rec['qual'] = qual_arr
         else:
             # generate quality score from a profile
-            pass 
+            pass
 
 
     def output_reads(self, read_pair, read_flip, read1_sub):
+        read_lines = []
+        for idx in range(1+int(self.pair_end)):
+            read_id  = f'{read_pair[idx]["read_id"]}/{idx+1}'
+            read_seq = ''.join("ACGT"[i] for i in read_pair[idx]['seq'])
+            read_sub = ('C2T', 'G2A')[read_pair[idx]['sub']]
+            read_strd= ('W','C')[read_pair[idx]['flip']]
+            read_cmt = f'+{read_pair[idx]["cgr_str"]}:{read_strd}_{read_sub}'
+            read_qual= ''.join(read_pair[idx]['qual'])
+
+            read_lines.append(f'{read_id}\n{read_seq}\n{read_cmt}\n{read_qual}\n')
+        self.write_file(read_lines)
+
+
+    def write_file(self, read_lines):
         """write bisulfite reads to disk"""
-        if self.pair_end:
-            self.rev_complement(read_pair[1])
-
-            if read_flip:
-                read_pair[0], read_pair[1] = read_pair[1], read_pair[0]
-
-            conv_tag = ('G2A', 'C2T') if read1_sub else ('C2T', 'G2A')
-            for idx, read_rec in enumerate(read_pair):
-                conv_pattern = conv_tag[idx]
-                
-        else:
-            
-            
-        
-        # format reads
-        conversion_1, conversion_2 = ('C2T', 'G2A') if sim_data[0][0]['sub_base'] == sub_base else ('G2A', 'C2T')
-        reverse_read = 1 if sub_base == 'C' else 0
-        sim_data[reverse_read][1] = reverse_complement(sim_data[reverse_read][1]) #seq
-        sim_data[reverse_read][3] = sim_data[reverse_read][3][::-1] #qual
-        sim_data[reverse_read][0]['cigar'] = sim_data[reverse_read][0]['cigar'][::-1] #cigar
-        read_label = f'@{sim_data[0][0]["read_id"]}_{sim_data[0][0]["chrom"]}/1'
-        read_comment = f'+{sim_data[0][0]["chrom"]}:{sim_data[0][0]["start"]+1}:' \
-                       f'{sim_data[0][0]["end"]}:{sim_data[0][0]["cigar"]}:{ref_strand}{conversion_1}'
-        read = f'{read_label}\n{sim_data[0][1].upper()}\n{read_comment}\n{sim_data[0][3]}\n'
-        self.output_obj[0].write(read)
-        if self.pair_end:
-            read_label = f'@{sim_data[1][0]["read_id"]}_{sim_data[1][0]["chrom"]}/2'
-            read_comment = f'+{sim_data[1][0]["chrom"]}:{sim_data[1][0]["start"]+1}:' \
-                           f'{sim_data[1][0]["end"]}:{sim_data[1][0]["cigar"]}:{ref_strand}{conversion_2}'
-            read = f'{read_label}\n{sim_data[1][1].upper()}\n{read_comment}\n{sim_data[1][3]}\n'
-            self.output_obj[1].write(read)
+        with self.writeLock:
+            for idx, line in enumerate(read_lines):
+                self.output_fastq[idx].write(read_lines[idx])
 
 
     @property
     def progress_bar(self):
         '''show the progress of read simulaiton'''
-        with self.countlock:
+        with self.countLock:
             self.tqdm_count[0] += 2 if self.pair_end else 1
 
         incre_amount = self.tqdm_count[0] - self.tqdm_count[1]

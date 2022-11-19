@@ -1,5 +1,5 @@
-import subprocess
 import numpy as np
+import subprocess
 
 from typing import Dict
 from UtilityFunctions import retrieve_iupac
@@ -8,7 +8,7 @@ from UtilityFunctions import retrieve_iupac
 class StreamWGSIM:
     '''
     stream WGSIM output for bisulfite reads generation
-    :param str sim_cmd: WGSIM commands for simulation
+    :param str  sim_cmd : WGSIM commands for simulation
     :param bool pair_end: pair_end or not
     :rtype None
     '''
@@ -80,6 +80,7 @@ class StreamWGSIM:
         else:
             return line
 
+
     @staticmethod
     def process_variant_line(line: str) -> Dict:
         '''parse variant lines'''
@@ -100,6 +101,7 @@ class StreamWGSIM:
                 alt    = list(set(iupac) - set(ref))[0]
             return dict(chrom=chrom, pos=int(pos), ref=ref, alt=alt,
                         offset=offset, heter=heter, indel=indel, iupac=iupac)
+
 
     @staticmethod
     def process_read_lines(sim_iter, line = None, skip = False):
