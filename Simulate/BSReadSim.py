@@ -1,6 +1,7 @@
 import os
 import random
 import numpy as np
+import subprocess
 
 from tqdm import tqdm
 from scipy.stats import bernoulli
@@ -9,8 +10,8 @@ from threading import Lock
 from concurrent.futures import ThreadPoolExecutor
 
 from SetMethylation import SetMethylation
-from StreamWGSIM import StreamWGSIM
 from StreamMethDB import StreamMethDB
+from StreamWGSIM import StreamWGSIM
 from UtilityFunctions import get_wgsim_path
 
 
@@ -117,7 +118,7 @@ class BSReadSim:
                        collect_ch=collect_ch,
                        update_boundary=update_boundary,
                        overwrite_db=overwrite_db,
-                       verbose=verbose, 
+                       verbose=verbose,
                        seed = None if seed < 0 else seed)
         self.meth_db  = StreamMethDB()
 
@@ -156,7 +157,8 @@ class BSReadSim:
         self.variant_profile= None
 
         # prepare output
-        self.fastq_list     = None
+        self.output_fastq   = []
+        self.creata_fastq()
         self.gzip           = gzip
         self.shuffle        = shuffle
         self.verbose        = verbose
@@ -182,9 +184,9 @@ class BSReadSim:
                 var_contig, sim_data= next(read_gen)                                    # the first element is the variants
                 self.current_contig = var_contig                                        # update the profiles
                 self.pos_map, self.meth_arr, _ = self.meth_db.load_contig(var_contig)   # 3 items list, pos_map, meth_arr, status, need to consider
-                self.variant_profile= self.meth_db.set_var_meth(var_contig, sim_data) # a dict, can be empty
-                if self.pair_end:
-                    job_arr = [executor.submit(self.process_read_pair, read_pair) for read_pair in read_gen] #what if read_gen is empty at very beginning
+                self.variant_profile= self.meth_db.set_var_meth(var_contig, sim_data)   # a dict, can be empty
+                if self.pair_end:                                                       # what if read_gen is empty at very beginning
+                    job_arr = [executor.submit(self.process_read_pair, read_pair) for read_pair in read_gen]
                 else:
                     job_arr = [executor.submit(self.process_read, read_pair) for read_pair in read_gen]
 
@@ -193,8 +195,8 @@ class BSReadSim:
                         job.add_done_callback(self.progress_bar)
 
 
-        for output in self.output_obj:      # close the fastq object
-            output.close()
+        for output_obj in self.output_fastq:# close the fastq object
+            output_obj.close()
 
         if self.verbose:                    # close the progress bar
             self.tqdm_pbar.close()
@@ -436,6 +438,53 @@ class BSReadSim:
         if incre_amount > self.tqdm_count[2]:
             self.tqdm_pbar.update(incre_amount)
             self.tqdm_count[1] = self.tqdm_count[0]
+
+
+    def creata_fastq(self):
+        """Return io object for fastq writing"""
+        fastq1 = f'{self.outdir}/{self.prefix}_1.fastq'
+        fastq2 = f'{self.outdir}/{self.prefix}_2.fastq'
+        if self.pair_end:
+            self.fastq_list = [fastq1, fastq2]
+        else:
+            self.fastq_list = [fastq1]
+
+        for fastq_file in self.fastq_list:
+            # check if the file exists
+            self.output_fastq.append(open(fastq_file, 'a'))
+
+
+    @staticmethod
+    def shuffle_read(fastq_file: str = None, random_source: str = None):
+        '''
+        shuffle the reads randomly, if false, the reads will be segemented by contigs
+        the number of simulated reads should not exceed the number of bits in the reference genome.
+        for HG, should be less than 8*3G < 2.4*10^10 (average DEPTH should be less than read_len*8)
+        from link: https://www.biostars.org/p/9764/
+        '''
+        print(f"shuffle reads {fastq_file}")
+        
+        prefix_split    = os.path.splitext(fastq_file)[0].split("_")
+        fastq_shuffle   = "_".join(prefix_split[:-1]) + "_shuffle_" + prefix_split[-1] + ".fastq"
+        shuf_cmd_list   = ["awk", "'{OFS=\"\t\"; getline seq; getline sep; getline qual; print $0,seq,sep,qual}'",
+                         fastq_file, "|", "shuf --random-source", random_source, "|",
+                         "awk", "'{OFS=\"\n\"; print $1,$2,$3,$4}'", ">", fastq_shuffle]
+        shuffle_run     = subprocess.Popen(shuf_cmd_list,  stdout=subprocess.PIPE, universal_newlines=True)
+        stdout, stderr  = shuffle_run.communicate()
+        
+        rename_cmd_list = ["mv", fastq_shuffle, fastq_file]
+        rename_run      = subprocess.Popen(rename_cmd_list,stdout=subprocess.PIPE, universal_newlines=True)
+        stdout, stderr  = rename_run.communicate()
+
+
+    @staticmethod
+    def gzip_read(fastq_file):
+        '''gzip the output reads to fastq.gz format'''
+        print(f"gzip reads {fastq_file}")
+        
+        gzip_cmd_list   = ["gzip", fastq_file]
+        gzip_run        = subprocess.Popen(gzip_cmd_list,  stdout=subprocess.PIPE, universal_newlines=True)
+        stdout, stderr  = gzip_run.communicate()
 
 
 # column context, row cigar
