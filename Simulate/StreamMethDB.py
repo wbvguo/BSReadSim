@@ -40,10 +40,14 @@ class StreamMethDB:
 
 
     def save_ref(self, ref_dict):
-        pass
+        with open(self.pkl_dir + 'ref_dict.pkl', 'wb') as file:
+            pickle.dump(ref_dict, file)
+
 
     def load_ref(self):
-        pass
+        with open(self.pkl_dir + 'ref_dict.pkl', 'rb') as file:
+            self.ref_dict = pickle.load(file)
+
 
     def output_contig(self, contig_id, contig_profile, is_variant=False):
         '''output methylation or variants'''
