@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from SetMethylation import SetMethylation
 from StreamWGSIM import StreamWGSIM
-from StreamReads import StreamReads
+from StreamMethDB import StreamMethDB
 from UtilityFunctions import get_wgsim_path
 
 
@@ -18,22 +18,22 @@ class BSReadSim:
     """
     The bisulfite sequencing simulation works as follows:
     1. construct the meth_db:
-        - parse the reference fasta to initiate a methylation database (using array and Series)
-        - fill in the methylaiton value, which can be obtained from the following 3 aspects:
-            a. reference CGmap, either pool randomly or assign to correponding sites
-            b. beta distribution (prarameters can be estimated from CGmap file and set by users)
-            c. from the ASM file, especially estimated from the ASM simulation
+        a. parse the reference fasta to initiate a methylation database (using array and Series)
+        b. fill in the methylaiton value, which can be obtained from the following 3 aspects:
+            - reference CGmap, either pool randomly or assign to correponding sites
+            - beta distribution (prarameters can be estimated from CGmap file and set by users)
+            - from the ASM file, especially estimated from the ASM simulation
     2. modified WGSIM module is invoked to simulate pair-end Illumina sequencing reads and variants
-        - if run in single end mode, the second read is not processed nor output, correspondingly 
+        a. if run in single end mode, the second read is not processed nor output, correspondingly 
           the number of reads simulated is doubled to get desired depth
-        - the output of 2 reads from WGSIM is always the watson 5' to 3' and error-free,the 
+        b. the output of 2 reads from WGSIM is always the watson 5' to 3' and error-free,the 
           strandness/orientation is determined in the python module
-        - update meth_db: the variant's methylable base (also the boundary methylable bases whose 
+        c. update meth_db: the variant's methylable base (also the boundary methylable bases whose 
         context is changed by variants) is set using beta distribution according to their context
     3. For each read, methylation values are retrived from meth_db for methylable bases (C or G),
        methylation states is simulated either using the naive independent bernoulli distribution or
        using RNN-GAN model for site-site dependency consideration. [TODO]
-    4. Allelic methylation is permitted if specified
+    4. Allelic methylation is permitted if the asm_file specified
     5. Reads are bisulfite converted (with a conversion rate) and sequencing error can be introduced
 
     # parameters
@@ -109,16 +109,18 @@ class BSReadSim:
 
         # prepare the methylation reference
         print('Initiating methylation profile:\n')
-        self.meth_db  = SetMethylation(ref_fasta=ref_fasta, outdir=outdir,
-                                       meth_db_path=meth_db_path,
-                                       cgmap_file=cgmap_file, cgmap_pool=cgmap_pool,
-                                       asm_file=asm_file,
-                                       beta_params=beta_params,
-                                       collect_ch=collect_ch,
-                                       update_boundary=update_boundary,
-                                       overwrite_db=overwrite_db,
-                                       verbose=verbose,
-                                       seed = None if seed < 0 else seed)
+        SetMethylation(ref_fasta=ref_fasta, outdir=outdir,
+                       meth_db_path=meth_db_path,
+                       cgmap_file=cgmap_file, cgmap_pool=cgmap_pool,
+                       asm_file=asm_file,
+                       beta_params=beta_params,
+                       collect_ch=collect_ch,
+                       update_boundary=update_boundary,
+                       overwrite_db=overwrite_db,
+                       verbose=verbose, 
+                       seed = None if seed < 0 else seed)
+        self.meth_db  = StreamMethDB()
+
 
         # prepare wgsim command
         wgsim_args    = [get_wgsim_path(), ref_fasta]
@@ -177,10 +179,10 @@ class BSReadSim:
             for contig_id in self.meth_db.ref_dict.keys():
                 sim_cmd  = self.sim_cmd_part + ['-c', contig_id]
                 read_gen = StreamWGSIM(sim_cmd=sim_cmd, pair_end=self.pair_end)         # should make it thread-safe?
-                var_contig, sim_data = next(read_gen)                                   # the first element is the variants
+                var_contig, sim_data= next(read_gen)                                    # the first element is the variants
                 self.current_contig = var_contig                                        # update the profiles
-                self.pos_map, self.meth_arr, _ = self.meth_db.load_contig(var_contig)   # 3 items list, pos_map, meth_arr, status
-                self.variant_profile= self.meth_db.set_var_meth(var_contig, sim_data)   # a dict, can be empty
+                self.pos_map, self.meth_arr, _ = self.meth_db.load_contig(var_contig)   # 3 items list, pos_map, meth_arr, status, need to consider
+                self.variant_profile= self.meth_db.set_var_meth(var_contig, sim_data) # a dict, can be empty
                 if self.pair_end:
                     job_arr = [executor.submit(self.process_read_pair, read_pair) for read_pair in read_gen] #what if read_gen is empty at very beginning
                 else:
