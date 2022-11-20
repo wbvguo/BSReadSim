@@ -7,9 +7,8 @@ import numpy as np
 from Bio import SeqIO
 from scipy.stats import beta
 from tqdm import tqdm
-from typing import Dict, List
 
-from StreamOutput import StreamOutput
+from StreamMethDB import StreamMethDB
 from UtilityFunctions import parseCGmap, parseASM
 
 
@@ -72,10 +71,10 @@ class SetMethylation:
         if self.asm_sim and not os.path.exists(asm_file):
             raise ValueError('Please specify allelic specific methylation file correctly for ASM simulation!')
 
-        self.meth_db = StreamOutput(outdir=self.outdir, overwrite_db=self.overwrite_db)
-        self.meth_db.check_outdir()
         self.ref_dict= SeqIO.to_dict(SeqIO.parse(ref_fasta, "fasta"))
-        self.genome_len = sum([len(seq) for _, seq in self.ref_dict.items()])
+        self.meth_db = StreamMethDB(outdir=self.outdir, overwrite_db=self.overwrite_db)
+        self.meth_db.check_outdir()
+        self.meth_db.save_ref(self.ref_dict)
 
         # initiate
         if meth_db_path:
@@ -270,80 +269,6 @@ class SetMethylation:
         self.meth_arr[idx_nan, 4] = self.meth_arr[idx_nan, 2]
 
 
-    def set_var_meth(self, contig_id, sim_data, update_boundary=True) -> Dict[str, List]:
-        '''set random methylation due to variants are random, update the meth_arr on the boundary'''
-        if not sim_data: # can have no variant
-            return None
-        self.update_boundary = update_boundary
-        if update_boundary:
-            self.pos_map, self.meth_arr, _ = self.meth_db.load_contig(contig_id)
-        var_meth_dict = {}
-
-        seq = self.ref_dict[contig_id].seq.upper()
-        seq_len = len(seq)
-        for pos, variant_info in sim_data.items():
-            if pos<2 or pos>(seq_len-2):
-                continue
-            if variant_info['indel'] == -1:  # deletion starts at pos
-                offset = variant_info['offset']
-                local_seq = f'{seq[(pos-2):(pos)]}{seq[(pos+offset):(pos+offset+2)]}'
-                pos_list  = [pos-2, pos-1, pos+offset, pos+offset+1]
-                self.handle_boundary(pos_list, local_seq)
-                continue
-            elif variant_info['indel'] == 1:  # insertion starts at pos
-                offset = variant_info['offset']
-                local_seq = f'{seq[(pos-2):(pos)]}{variant_info["alt"]}{seq[(pos):(pos+2)]}'
-                pos_list  = [pos-2, pos-1, pos, pos+1]
-                self.handle_boundary(pos_list, local_seq)
-
-                ins_meth_arr = np.zeros(offset)
-                ins_ctx_arr  = np.zeros(offset)
-                for ins_idx, base in enumerate(variant_info['alt']):
-                    if base not in {'C', 'G'}:
-                        continue
-                    updown  = 1 if base == "C" else -1  # whether to go upstream or downstream
-                    base_d1 = local_seq[1*updown+ins_idx+2]
-                    base_d2 = local_seq[2*updown+ins_idx+2]
-                    context = self.get_cg_context(base, base_d1, base_d2)
-                    ins_meth_arr[ins_idx]= self.simu_beta_dist(context=context)[0] # base,3,context
-                    ins_ctx_arr[ins_idx] = context
-
-                if np.any(ins_ctx_arr):
-                    variant_info['meth'] = ins_meth_arr
-                    variant_info['ctx']  = ins_ctx_arr
-                    var_meth_dict[pos]   = (ins_meth_arr, ins_ctx_arr)
-            else: # substitution
-                base = variant_info['alt']
-                local_seq = f'{seq[(pos-2):pos]}{variant_info["alt"]}{seq[(pos+1):(pos+3)]}'
-                pos_list  = [pos-2, pos-1, pos+1, pos+2]
-                self.handle_boundary(pos_list, local_seq)
-
-                if base not in {'C', 'G'}:
-                    continue
-                updown  = 1 if base == "C" else -1
-                base_d1 = local_seq[1*updown+2]
-                base_d2 = local_seq[2*updown+2]
-                context = self.get_cg_context(base, base_d1, base_d2)
-                snp_meth= self.simu_beta_dist(context=context)[0]
-                variant_info['meth'] = snp_meth
-                variant_info['ctx']  = context
-                var_meth_dict[pos]   = (snp_meth, context)
-            sim_data[pos] = variant_info
-        self.meth_db.output_contig(contig_id, sim_data, is_variant=True)
-        if self.update_boundary:
-            self.meth_db.output_contig(contig_id, [self.pos_map, self.meth_arr, 1], is_variant=False)
-        return var_meth_dict
-
-
-    def simu_beta_dist(self, context = "CG", size = 1):
-        '''output the values accordig to the context using beta distribution'''
-        if isinstance(context, int):
-            context = self.context_dict[context]
-        return beta.rvs(a=self.beta_params[context][0],
-                        b=self.beta_params[context][1],
-                        size=size, random_state=self.seed).astype(np.float16)
-
-
     def get_cgmap_pool(self, contig_id):
         '''get the pool of cgmaps, return a list of size 3'''
         ctx_idx_dict = {'CG':1, 'CHG':2, 'CHH':3}
@@ -374,6 +299,17 @@ class SetMethylation:
         return beta_param_estimate
 
 
+    @classmethod
+    def simu_beta_dist(self, context = "CG", size = 1):
+        '''output the values accordig to the context using beta distribution'''
+        if isinstance(context, int):
+            context = self.context_dict[context]
+        return beta.rvs(a=self.beta_params[context][0],
+                        b=self.beta_params[context][1],
+                        size=size, random_state=self.seed).astype(np.float16)
+
+
+    @classmethod
     def get_cg_context(self, base, base_d1, base_d2):
         '''input the base and surrounding, output context'''
         if base == "C":
@@ -386,22 +322,3 @@ class SetMethylation:
             return None
         return self.base_context_table[base][flag_d1, flag_d2]
 
-
-    def handle_boundary(self, pos_list, local_seq):
-        '''accomandate the boundary of the mutations'''
-        if self.update_boundary:
-            ptr_list = [0, 1, -2, -1]
-            assert len(pos_list) == 4 and len(local_seq) >= 4
-            for idx, ptr in enumerate(ptr_list):
-                base = local_seq[ptr]
-                if ptr >= 0 and base == "C":
-                    base_d1 = local_seq[ptr+1]
-                    base_d2 = local_seq[ptr+2]
-                elif ptr <0 and base == "G":
-                    base_d1 = local_seq[ptr-1]
-                    base_d2 = local_seq[ptr-2]
-                else:
-                    continue
-                context     = self.get_cg_context(base, base_d1, base_d2)
-                change_pos  = pos_list[idx]
-                self.meth_arr[self.pos_map[change_pos], 4] = self.simu_beta_dist(context=context)[0]

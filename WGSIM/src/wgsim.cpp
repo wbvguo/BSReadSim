@@ -508,6 +508,9 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 
     fp_fa = gzopen(fn, "r");
     ks = kseq_init(fp_fa);
+    // if fasta is non-existing
+    if (!fp_fa) { fprintf (stderr, "ERROR: gzopen of '%s' failed: %s. Exit... \n", fn, strerror (errno)); exit (EXIT_FAILURE);}
+
     tot_len = n_ref = 0;
     tot_sub = tot_indel = tot_err = tot_pairs = 0;
     bool bool_contig = false; 
@@ -518,11 +521,10 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
         ++n_ref;
         if (strcmp(contig_id, ks->name.s)==0){ bool_contig = true; contig_len = l;}
     }
-    // if fasta is non-existing or empty
-    if (!fp_fa) { fprintf (stderr, "ERROR: gzopen of '%s' failed: %s. Exit... \n", fn, strerror (errno)); exit (EXIT_FAILURE);}
+    // if fasta is empty
     if (!n_ref) { fprintf (stderr, "ERROR: Input fasta is empty: %s. Exit... \n", fn); exit (EXIT_FAILURE);}
     fprintf(stderr, "[%s] %d contig sequences, total length: %lu\n", __func__, n_ref, tot_len);
-    
+
     // check input contig_id
     if (strcmp(contig_id, "None") == 0 || strlen(contig_id) == 0) {
         if (contig_N > 0 ) {fprintf(stderr, "ERROR: -n is specified but not -c, exit...(please note the difference of -n and -N)\n"); exit(1);}

@@ -833,27 +833,33 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 static int simu_usage()
 {
     fprintf(stderr, "\n");
-    fprintf(stderr, "Forked wgsim (short read simulator) for simulating WGS or WGBS reads\n");
+    fprintf(stderr, "Forked wgsim (short read simulator) for simulating WGS or WGBS, RRBS, TBS reads\n");
     fprintf(stderr, "Version: %s\n", PACKAGE_VERSION);
     fprintf(stderr, "Contact: Wenbin Guo <wbguo@ucla.edu>; \n\n");
     fprintf(stderr, "Usage:   wgsim [options] <in.ref.fa> \n\n");
-    fprintf(stderr, "Options: -e FLOAT      base error rate [%.3f]\n", ERR_RATE);
+    fprintf(stderr, "Options:\n");
+    fprintf(stderr, "==================== general setting ====================\n");
+    fprintf(stderr, "         -e FLOAT      base error rate (only used for WGS) [%.3f]\n", ERR_RATE);
     fprintf(stderr, "         -d INT        outer distance between the two ends [500]\n");
     fprintf(stderr, "         -s INT        standard deviation [50]\n");
     fprintf(stderr, "         -N INT        number of read pairs [1000000]\n");
     fprintf(stderr, "         -1 INT        length of the first read [70]\n");
     fprintf(stderr, "         -2 INT        length of the second read [70]\n");
+    fprintf(stderr, "         -c STRING     contig name, default is all contigs [None]\n");
+    fprintf(stderr, "         -n INT        number of read pairs for specified contig [-1]\n");
+    fprintf(stderr, "         -A FLOAT      disgard if the fraction of ambiguous bases higher than FLOAT [%.2f]\n", MAX_N_RATIO);
+    fprintf(stderr, "         -m INT        output mode: 0 for letters; 1 for ascii numbers (for Bisulfite simulaiton) [0]\n");
+    fprintf(stderr, "==================== mutation setting ====================\n");
+    fprintf(stderr, "         -g STRING     path to the genetic variant file (vcf/vcf.gz) [None]\n");
     fprintf(stderr, "         -r FLOAT      rate of mutations [%.4f]\n", MUT_RATE);
     fprintf(stderr, "         -R FLOAT      fraction of indels [%.2f]\n", INDEL_FRAC);
     fprintf(stderr, "         -X FLOAT      probability an indel is extended [%.2f]\n", INDEL_EXTEND);
     fprintf(stderr, "         -S INT        seed for random generator [-1]\n");
-    fprintf(stderr, "         -A FLOAT      disgard if the fraction of ambiguous bases higher than FLOAT [%.2f]\n", MAX_N_RATIO);
     fprintf(stderr, "         -h INT        haplotype mode: 0 for No; non-zero for Yes [0]\n");
+    fprintf(stderr, "==================== technology setting ====================\n");
     fprintf(stderr, "         -T INT        technology: 0 for WGBS; 1 for RRBS; 2 for TBS [0]\n");
-    fprintf(stderr, "         -m INT        output mode: 0 for letters; 1 for numbers (for Bisulfite simulaiton) [0]\n");
-    fprintf(stderr, "         -g STRING     path to the genetic variant file (vcf.gz) [None]\n");
-    fprintf(stderr, "         -c STRING     contig name [None]\n");
-    fprintf(stderr, "         -n INT        number of read pairs for specified contig [-1]\n");
+    fprintf(stderr, "         -B STRING     enzyme cutting site string for reduced representation sequencing [None]\n");
+    fprintf(stderr, "         -b STRING     probe BED file for targeted sequencing (.bed) [None]\n");
     fprintf(stderr, "\n");
     return 1;
 }
@@ -866,6 +872,8 @@ int main(int argc, char *argv[])
     int tech_mode, output_mode = 0;
     char none_default[] = "None";
     char *vcf_file = none_default;
+    char *probe_bed= none_default;
+    char *cut_str  = none_default;
     char *contig_id= none_default; // checked, will not intefere with vcf_file
     int seed = -1;
 
