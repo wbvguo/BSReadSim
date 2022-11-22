@@ -62,9 +62,9 @@ class parseASM:
                 line = asm.readline()
                 if not line:
                     break
-                # chr, base, pos, context, dinucleotide, meth, snp_pos, REF, ALT, ref_meth, alt_meth, fold_change, pval
+                # chr, base, pos, context, dinucleotide, meth, snp_pos, REF, ALT, ref_meth, alt_meth, fold_change, pval, comment
                 # comment can be meth_count/tot_count;ref_meth_count/ref_tot_count;alt_meth_count/alt_tot_count
-                chr_id, base, pos, context, tot_meth, snp_pos, ref, alt, ref_meth, alt_meth, fold_change, p_val, comment = self.process_line(line)
+                chr_id, base, pos, context, diN, tot_meth, snp_pos, ref, alt, ref_meth, alt_meth, fold_change, p_val, comment = self.process_line(line)
                 if chr_id != self.contig_id:
                     continue
                 if not self.collect_ch and context != 'CG':
