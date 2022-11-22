@@ -110,23 +110,23 @@ class BSReadSim:
 
         # prepare the methylation reference
         print('Initiating methylation profile:\n')
-        SetMethylation(ref_fasta=ref_fasta, outdir=outdir,
-                       meth_db_path=meth_db_path,
-                       cgmap_file=cgmap_file, cgmap_pool=cgmap_pool,
-                       asm_file=asm_file,
-                       beta_params=beta_params,
-                       collect_ch=collect_ch,
-                       update_boundary=update_boundary,
-                       overwrite_db=overwrite_db,
-                       verbose=verbose,
-                       seed = None if seed < 0 else seed)
-        self.meth_db  = StreamMethDB()
+        self.meth_set = SetMethylation(ref_fasta=ref_fasta, outdir=outdir,
+                                       meth_db_path=meth_db_path,
+                                       cgmap_file=cgmap_file, cgmap_pool=cgmap_pool,
+                                       asm_file=asm_file,
+                                       beta_params=beta_params,
+                                       collect_ch=collect_ch,
+                                       update_boundary=update_boundary,
+                                       overwrite_db=overwrite_db,
+                                       verbose=verbose,
+                                       seed = None if seed < 0 else seed)
+        self.meth_db  = self.meth_set.meth_db
 
 
         # prepare wgsim command
         wgsim_args    = [get_wgsim_path(), ref_fasta]
         if not num_reads:
-            num_reads = int(self.meth_db.genome_len*depth/read_len/(1+int(pair_end)))
+            num_reads = int(self.meth_set.genome_len*depth/read_len/(1+int(pair_end)))
         wgsim_options = {'-d': insert_mean, '-s': insert_std,
                          '-1': read_len, '-2': read_len, '-N': num_reads,
                          '-g': vcf_file,
@@ -178,13 +178,13 @@ class BSReadSim:
         print(f'[CMD]: {" ".join(self.sim_cmd_part)} \n')
 
         with ThreadPoolExecutor(max_workers=self.n_threads) as executor:
-            for contig_id in self.meth_db.ref_dict.keys():
+            for contig_id in self.meth_set.ref_dict.keys():
                 sim_cmd  = self.sim_cmd_part + ['-c', contig_id]
                 read_gen = StreamWGSIM(sim_cmd=sim_cmd, pair_end=self.pair_end)         # should make it thread-safe?
                 var_contig, sim_data= next(read_gen)                                    # the first element is the variants
                 self.current_contig = var_contig                                        # update the profiles
                 self.pos_map, self.meth_arr, _ = self.meth_db.load_contig(var_contig)   # 3 items list, pos_map, meth_arr, status, need to consider
-                self.variant_profile= self.meth_db.set_var_meth(var_contig, sim_data)   # a dict, can be empty
+                self.variant_profile= self.meth_set.set_var_meth(var_contig, sim_data)   # a dict, can be empty
                 if self.pair_end:                                                       # what if read_gen is empty at very beginning
                     job_arr = [executor.submit(self.process_read_pair, read_pair) for read_pair in read_gen]
                 else:
@@ -195,8 +195,8 @@ class BSReadSim:
                         job.add_done_callback(self.progress_bar)
 
 
-        for output_obj in self.output_fastq:# close the fastq object
-            output_obj.close()
+        for output in self.output_fastq:# close the fastq object
+            output.close()
 
         if self.verbose:                    # close the progress bar
             self.tqdm_pbar.close()
