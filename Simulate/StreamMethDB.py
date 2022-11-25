@@ -1,6 +1,6 @@
 import os
 import pickle
-
+from typing import Dict
 
 class StreamMethDB:
     '''
@@ -11,10 +11,14 @@ class StreamMethDB:
     :rtype None
     '''
 
-    def __init__(self, outdir: str = None, overwrite_db: bool = False):
+    def __init__(self, outdir: str = None, overwrite_db: bool = False, ref_dict: Dict = None):
         self.outdir = outdir
         self.pkl_dir= f'{self.outdir}/pkl/'
         self.overwrite_db = overwrite_db
+        
+        self.create_outdir()
+        if ref_dict and overwrite_db:
+            self.save_ref(ref_dict)
 
 
     def create_outdir(self):
@@ -22,6 +26,7 @@ class StreamMethDB:
         if not os.path.isdir(self.outdir):
             os.makedirs(self.outdir, exist_ok=False)
             os.makedirs(self.pkl_dir, exist_ok=False)
+
 
     def check_outdir(self):
         '''check if we have existence and permission'''
