@@ -21,8 +21,8 @@
    SOFTWARE.
 */
 
-/* This program is based on WGSIM(v0.3.1-r13)[https://github.com/lh3/wgsim.git]
- * with modifications to simulate WGS or WGBS reads in BSReadSim for diploid organism */
+/* This program is based on WGSIM(v0.3.1-r13)[https://github.com/lh3/wgsim.git], with heavy 
+ * modifications to simulate WGS or WGBS/RRBS/TBS reads in BSReadSim for diploid organism */
 
 #include <stdlib.h>
 #include <math.h>
@@ -41,6 +41,7 @@
 KSEQ_INIT(gzFile, gzread)
 
 #define PACKAGE_VERSION "1.0.2"
+
 
 const uint8_t nst_nt4_table[256] = {
     4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4, 
@@ -64,14 +65,15 @@ const uint8_t nst_nt4_table[256] = {
 static uint8_t MATCH  = 0x00;
 static uint8_t SNV    = 0x01;
 static uint8_t INSR   = 0x03;
-//static uint8_t CONVT  = 0x05;
+static uint8_t CONVT  = 0x05; // not used
 static uint8_t SEQERR = 0x09;
-const uint8_t mut_table[16] = {
+const  uint8_t mut_table[16] = {
     0, 1, 0, 2, 
     0, 0, 0, 0, 
     0, 3, 3, 3, 
     3, 3, 3, 3
 }; // MXIE
+
 
 static uint8_t CG = 0x01; //5to3
 static uint8_t CHG= 0x03;
@@ -82,7 +84,7 @@ static uint8_t GDD= 0x0f;
 //0110**: 24-27; 01**10: 18, 22, 30; 01****: the rest of 16-31
 //1001**: 36-39; 10**01: 33, 41, 45; 10****: the rest of 32-47
 //encode not as 1,3,5; have problem with print 5 (or 13) when putc
-const uint8_t cg_context_table[64] = {
+const  uint8_t cg_context_table[64] = {
     0,   0,   0,   0,    0,   0,   0,   0, 
     0,   0,   0,   0,    0,   0,   0,   0, 
     CHH, CHH, CHG, CHH,  CHH, CHH, CHG, CHH, 
@@ -93,7 +95,15 @@ const uint8_t cg_context_table[64] = {
     0,   0,   0,   0,    0,   0,   0,   0, 
 };
 
-const uint8_t cg_table[4] = {1, 0, 0, 1}; // for cg check
+const  uint8_t cg_table[4] = {1, 0, 0, 1}; // for cg check
+
+
+static double ERR_RATE = 0.005;
+static double MUT_RATE = 0.01;
+static double INDEL_FRAC = 0.15;
+static double INDEL_EXTEND= 0.3;
+static double MAX_N_RATIO = 0.05;
+
 
 /* wgsim */
 // if the leftmost 4 bit is non-zero, then it must be snp or indel
@@ -106,25 +116,41 @@ typedef struct {
     mut_t *s; /* sequence */
 } mutseq_t;
 
-static double ERR_RATE = 0.005;
-static double MUT_RATE = 0.01;
-static double INDEL_FRAC = 0.15;
-static double INDEL_EXTEND= 0.3;
-static double MAX_N_RATIO = 0.05;
+typedef struct {
+    int pos, ref, alt, geno;
+} snp_rec;
+
+typedef struct {
+    int pos_l, pos_r, strand;
+    float score;
+} probe_rec;
+
+typedef struct {
+    char *name, *contig;
+} probe_rec_meta;
+
+typedef struct {
+    int len = -1;         /* length of cutting site */
+    int idx = -1;         /* cutting position on *seq */
+    std::vector<int> seq; /* sequence encoded by numbers*/
+} cut_t;
+
+typedef struct {
+    int pos_l, pos_r;
+    int cut_l, cut_r;
+    int len;
+} cut_frag;
+
 
 // to store vcf information
-std::vector<int> pos_vec;
-std::vector<int> ref_vec;
-std::vector<int> alt_vec;
-std::vector<int> geno_vec;
+std::vector<snp_rec> snp_vec;
+std::vector<probe_rec> probe_vec;
+
 
 void parse_vcf_chr(char *fname, char *chr_id)
 {
     //clean the container
-    pos_vec.clear();
-    ref_vec.clear();
-    alt_vec.clear();
-    geno_vec.clear();
+    snp_vec.clear();
 
     //open vcf file
     htsFile *fp    = hts_open(fname,"rb");
@@ -231,14 +257,13 @@ void parse_vcf_chr(char *fname, char *chr_id)
             }
 
             int geno_int = base_offset << 12 | ref_len << 8 | snp_hap2 << 6 | snp_hap1 << 4 | is_phased;
-            pos_vec.push_back(base_change_pos);
-            ref_vec.push_back(ref_int);
-            alt_vec.push_back(alt_int);
-            geno_vec.push_back(geno_int);
+            snp_rec tmp_snp = {.pos = base_change_pos, .ref = ref_int, .alt = alt_int, .geno = geno_int};
+            snp_vec.push_back(tmp_snp);
+            tmp_snp = {};
         }
     }
     
-    fprintf(stderr, "[%s] Finish collecting %lu SNP/INDEL from %s\n", __func__, pos_vec.size(), chr_id);
+    fprintf(stderr, "[%s] Finish collecting %lu SNP/INDEL from %s\n", __func__, snp_vec.size(), chr_id);
 
     free(gt);
     bcf_destroy(rec);
@@ -271,7 +296,7 @@ void wgsim_mut_vcf(const kseq_t *ks, char * vcf_file, mutseq_t *hap1, mutseq_t *
 
     for (i = 0; i != ks->seq.l; ++i){
         c = ret[0]->s[i] = ret[1]->s[i] = (mut_t)nst_nt4_table[(int)ks->seq.s[i]];
-        if (pos_vec.size() == 0){ continue;} // ignore the rest if there is no SNP
+        if (snp_vec.size() == 0){ continue;} // ignore the rest if there is no SNP
 
         if (deleting){
             if(deletion_count > 0){
@@ -283,8 +308,8 @@ void wgsim_mut_vcf(const kseq_t *ks, char * vcf_file, mutseq_t *hap1, mutseq_t *
             } else {deleting = 0;}
         }
 
-        if(vec_ptr < pos_vec.size() && i == pos_vec[vec_ptr] && c < 4){
-            int geno_int = geno_vec[vec_ptr];
+        if(vec_ptr < snp_vec.size() && i == snp_vec[vec_ptr].pos && c < 4){
+            int geno_int = snp_vec[vec_ptr].geno;
             int is_phased= geno_int & 0x000f;
             int snp_hap1 = (geno_int & 0x003f) >> 4;
             int snp_hap2 = (geno_int & 0x00ff) >> 6;
@@ -302,7 +327,7 @@ void wgsim_mut_vcf(const kseq_t *ks, char * vcf_file, mutseq_t *hap1, mutseq_t *
             }
 
             if(base_offset == 0 && ref_len == 1){ // SNP substitution
-                c = alt_vec[vec_ptr];
+                c = snp_vec[vec_ptr].alt;
 
                 if (snp_hap1 == 1 && snp_hap2 == 1){
                     ret[0]->s[i] = ret[1]->s[i] = SUBSTITUTE|c;
@@ -312,7 +337,7 @@ void wgsim_mut_vcf(const kseq_t *ks, char * vcf_file, mutseq_t *hap1, mutseq_t *
                     ret[1]->s[i] = SUBSTITUTE|c;
                 } else{continue;}
             } else if (base_offset < 0 ) { // deletion
-                c = ref_vec[vec_ptr];
+                c = snp_vec[vec_ptr].ref;
                 deletion_count = abs(base_offset) - 1; //minus one because here already delete one base
 
                 if (snp_hap1 == 1 && snp_hap2 == 1){
@@ -328,7 +353,7 @@ void wgsim_mut_vcf(const kseq_t *ks, char * vcf_file, mutseq_t *hap1, mutseq_t *
             } else if (base_offset > 0){ // inserstion
                 int num_ins = base_offset;
                 int ins_msk = (1 << (num_ins*2)) - 1;
-                int ins = alt_vec[vec_ptr] & ins_msk;
+                int ins = snp_vec[vec_ptr].alt & ins_msk;
                 //fprintf(stderr, "%d,%d,%d,%d\n", num_ins, ins_msk, alt_vec[vec_ptr], ins);
 
                 if (snp_hap1 == 1 && snp_hap2 == 1){
@@ -508,6 +533,9 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
 
     fp_fa = gzopen(fn, "r");
     ks = kseq_init(fp_fa);
+    // if fasta is non-existing
+    if (!fp_fa) { fprintf (stderr, "ERROR: gzopen of '%s' failed: %s. Exit... \n", fn, strerror (errno)); exit (EXIT_FAILURE);}
+
     tot_len = n_ref = 0;
     tot_sub = tot_indel = tot_err = tot_pairs = 0;
     bool bool_contig = false; 
@@ -518,8 +546,7 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
         ++n_ref;
         if (strcmp(contig_id, ks->name.s)==0){ bool_contig = true; contig_len = l;}
     }
-    // if fasta is non-existing or empty
-    if (!fp_fa) { fprintf (stderr, "ERROR: gzopen of '%s' failed: %s. Exit... \n", fn, strerror (errno)); exit (EXIT_FAILURE);}
+    // if fasta is empty
     if (!n_ref) { fprintf (stderr, "ERROR: Input fasta is empty: %s. Exit... \n", fn); exit (EXIT_FAILURE);}
     fprintf(stderr, "[%s] %d contig sequences, total length: %lu\n", __func__, n_ref, tot_len);
     
@@ -583,7 +610,7 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
         fprintf(stdout, "Contig Variant Start\n");
         if(bool_vcf){
             wgsim_mut_vcf(ks, vcf_file, rseq, rseq+1, site_flag_arr);
-            if(pos_vec.size() == 0){fprintf(stdout, "%s\n", ks->name.s);} //if no variants, print contig id
+            if(snp_vec.size() == 0){fprintf(stdout, "%s\n", ks->name.s);} //if no variants, print contig id
         } else {
             wgsim_mut_diref(ks, is_hap, rseq, rseq+1, site_flag_arr);
             if(MUT_RATE == 0.0){fprintf(stdout, "%s\n", ks->name.s);}
@@ -775,7 +802,7 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
                     }
                     fprintf(stdout, "\n");
                     // comment
-                    fprintf(stdout, "+:%d:%d:%d:%d:%d:%d:%d:%d:", start[jj]+1, end[jj]+1, cover_pos[jj], n_sub[jj], n_indel[jj], n_err[jj], end[1]-start[0], end[0]-start[1]);
+                    fprintf(stdout, "+:%d:%d:%d:%d:%d:%d:%d:%d:", start[jj]+1, end[jj]+1, cover_pos[jj], n_sub[jj], n_indel[jj], n_err[jj], end[1]-start[0], start[1]-end[0]);
                     for (i = 0; i < s[jj]; ++i) {
                         int c = (tmp_mutation[jj][i] & 0x0f);
                         fputc("MXIE"[mut_table[c]], stdout);
@@ -800,7 +827,7 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
                     }
                     fprintf(stdout, "\n");
                     // comment
-                    fprintf(stdout, "+:%d:%d:%d:%d:%d:%d:%d:", start[j], end[j], cover_pos[j], n_sub[j], n_indel[j], end[1]-start[0], end[0]-start[1]);
+                    fprintf(stdout, "+:%d:%d:%d:%d:%d:%d:%d:", start[j], end[j], cover_pos[j], n_sub[j], n_indel[j], end[1]-start[0], start[1]-end[0]);
                     const char *pad = "";
                     for (i = 0; i < s[j]; ++i) {
                         fprintf(stdout, "%s%d", pad, tmp_offset[j][i]);

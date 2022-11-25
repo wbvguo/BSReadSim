@@ -16,20 +16,21 @@ class StreamWGSIM:
         self.sim_cmd  = sim_cmd
         self.pair_end = pair_end
 
-
     def __iter__(self):
-        wgsim = subprocess.Popen(self.sim_cmd, stdout=subprocess.PIPE, universal_newlines=True)
-        sim_iter = iter(wgsim.stdout.readline, b'')
+        return self
 
-        line  = self.get_line(sim_iter) # line is None when EOF
+    def __next__(self):
+        wgsim = subprocess.Popen(self.sim_cmd, stdout=subprocess.PIPE, universal_newlines=True)
+        self.sim_iter = iter(wgsim.stdout.readline, b'')
+        line  = self.get_line(self.sim_iter) # line is None when EOF
         while line:
             # collect all variant lines on the contig, after that sim_iter points to read lines
             if line == "Contig Variant Start":
-                variant_contig, variant_dict = self.collect_variants(sim_iter)
+                variant_contig, variant_dict = self.collect_variants(self.sim_iter)
                 yield variant_contig, variant_dict
 
             # collect read pairs
-            for collect_flag, read_pair in self.collect_reads(sim_iter):
+            for collect_flag, read_pair in self.collect_reads(self.sim_iter):
                 if collect_flag: # {1: collect_reads, 0: swith to collect_vars or EOF}
                     yield False, read_pair
                 else:
