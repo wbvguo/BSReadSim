@@ -16,13 +16,13 @@ typedef struct {
 typedef struct {
     char *name;
     char *contig;
-} probe_rec_meta;
+} probe_meta;
 
 std::vector<probe_rec> probe_vec;
 
 
 //parse_bed: https://github.com/dhspence/tagbam/blob/main/tagbam.c
-char *parse_bed(char *s, probe_rec *tmp_probe, probe_rec_meta *tmp_probe_meta)
+char *parse_bed(char *s, probe_rec *tmp_probe, probe_meta *tmp_probe_meta)
 {
 	char *p, *q, *contig_id, *name = 0;
     int i, start, end, strand;
@@ -70,7 +70,7 @@ int main() {
     
     int ret;
     kstring_t line = {0,0,0};
-    probe_rec tmp_probe; probe_rec_meta tmp_probe_meta;
+    probe_rec tmp_probe; probe_meta tmp_probe_meta;
     while ((ret = hts_getline(fp, KS_SEP_LINE, &line)) >= 0)
     {
         tmp_probe = {};

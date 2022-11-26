@@ -32,7 +32,7 @@ class SetMethylation:
 
     :var np.array meth_arr  : nx5 numpy array: context, flag, meth_avg, meth_ref, meth_alt
                               - flag: 0 from dist or pool, 1 from CGmap, 2 from ASM, -1 unintialized
-    :var pd.Series pos_map  : 1d numpy array (same length as contig), value is the row index of meth_arr
+    :var np.array pos_map   : 1d numpy array (same length as contig), value is the row index of meth_arr
     '''
 
 
@@ -296,7 +296,7 @@ class SetMethylation:
 
         seq = self.ref_dict[contig_id].seq.upper()
         seq_len = len(seq)
-        for pos, variant_info in sim_data.items():
+        for pos, variant_info in tqdm(sim_data.items()):
             if pos<2 or pos>(seq_len-2):
                 continue
             if variant_info['indel'] == -1:  # deletion starts at pos
@@ -311,8 +311,8 @@ class SetMethylation:
                 pos_list  = [pos-2, pos-1, pos, pos+1]
                 self.handle_boundary(pos_list, local_seq)
 
-                ins_meth_arr = np.zeros(offset)
-                ins_ctx_arr  = np.zeros(offset)
+                ins_meth_arr = np.zeros(offset, dtype=np.float16)
+                ins_ctx_arr  = np.zeros(offset, dtype=np.int16)
                 for ins_idx, base in enumerate(variant_info['alt']):
                     if base not in {'C', 'G'}:
                         continue
@@ -408,5 +408,5 @@ class SetMethylation:
             flag_d2 = int(base_d2 == "C")
         else:
             return None
-        return self.base_context_table[base][flag_d1, flag_d2]
+        return int(self.base_context_table[base][flag_d1, flag_d2])
 

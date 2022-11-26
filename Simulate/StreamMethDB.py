@@ -81,4 +81,3 @@ class StreamMethDB:
         else:
             return contig_profile
 
-
