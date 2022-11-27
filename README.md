@@ -3,12 +3,12 @@ BSReadSim is a fast and flexible <u>B</u>isulfite <u>S</u>equencing <u>Read</u> 
 
 Features | Sherman | BSBolt | BSReadSim
 ----| ---- | ---- | ---- |
-variable bisulfite conversion rate | yes | no | yes
+bisulfite conversion rate | yes | no | yes
 methylation profile input | no | $\textsf{yes}^*$ | yes
 genetic variant input | no   | no | yes
-alleclic-specific methylation simulation | no | no | yes
-site-site dependency | no | no | [todo]
 multi-thread support | no | no | yes
+alleclic-specific methylation | no | no | yes
+site-site dependency | no | no | [todo]
 
 ( $\textsf{yes}^*$ : BSBolt allows users to input the methylation reference. But during simulation, it **randomly** picks a methylation value from this reference pool. As a result, for a paticular CG site, the simulated data and the reference profile will likely have different methylation level)
 
@@ -35,10 +35,11 @@ pip install -e .
 bsreadsim ... [to add]
 ```
 
-## Input file format
+## Input file format  
 - reference genome: [FASTA](https://en.wikipedia.org/wiki/FASTA_format) format (`.fasta`, `.fa` or `.fa.gz`)
 - methylation profile: [CGmap](https://bsbolt.readthedocs.io/en/latest/methylation_calling/) format (`.CGmap` or `.CGmap.gz`)
-- genetic variants: [VCF](https://samtools.github.io/hts-specs/VCFv4.2.pdf) format, v4.0 or later(`.vcf` or `.vcf.gz`)
+- genetic variants: [VCF](https://samtools.github.io/hts-specs/VCFv4.2.pdf) format, v4.0 or later(`.vcf` or `.vcf.gz`), sorted by chromosome id
+- probes for targeted sequencing: [BED](https://genome.ucsc.edu/FAQ/FAQformat.html) format (`bed` or `.bed.gz`), contains at least 6 columns, sorted by chromosome id
 
 # 4. Contact
 Please raise up issues through the github [issue](https://github.com/wbvguo/BSReadSim/issues) page
