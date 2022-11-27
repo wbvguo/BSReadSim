@@ -93,6 +93,7 @@ class BSReadSim:
                  random_err= True, seq_err: float = 0.005,                                          # sequencing error
                  site_dependency: bool = False, conversion_rate: float = 0.998,                     # methylation setting
                  undirectional: bool = False, pair_end: bool = True,                                # sequencing protocol
+                 enzyme_cut_site: str = None, probe_bed_file: str = None,                           # sequencing technology
                  n_threads: int = 4, gzip: bool = True, shuffle: bool = True,                       # output setting
                  verbose: bool = True, collect_stats: bool = False, propN_cutoff: float = 0.05):
 
@@ -101,14 +102,16 @@ class BSReadSim:
             raise ValueError('Cannot find the reference file, please check!')
         if not outdir:
             raise ValueError('Please specify the output directory!')
+        if enzyme_cut_site and probe_bed_file:
+            raise ValueError('Please only specify only one mode for simulation!')        
 
         self.ref_fasta= ref_fasta
         self.outdir   = outdir
         self.prefix   = prefix
-        self.seed     = seed
+        self.seed     = None if seed < 0 else seed
         self.n_threads= n_threads
         self.countLock= Lock()
-        self.writeLock= Lock()
+
 
         # prepare the methylation reference
         print('Initiating methylation profile:\n')
@@ -121,24 +124,19 @@ class BSReadSim:
                                        update_boundary=update_boundary,
                                        overwrite_db=overwrite_db,
                                        verbose=verbose,
-                                       seed = None if seed < 0 else seed)
+                                       seed = self.seed)
         self.meth_db  = self.meth_set.meth_db
 
 
-        # prepare wgsim command
-        wgsim_args    = [get_wgsim_path(), ref_fasta]
-        if not num_reads:
-            num_reads = int(self.meth_set.genome_len*depth/read_len/(1+int(pair_end)))
-        wgsim_options = {'-d': insert_mean, '-s': insert_std,
-                         '-1': read_len, '-2': read_len, '-N': num_reads,
-                         '-g': vcf_file,
-                         '-r': mut_rate, '-h': int(haplo_mode), '-S': seed,
-                         '-R': mut_indel_frac, '-X': indel_ext_prob,
-                         '-A': propN_cutoff, '-e': 0, '-m': 1}
-
-        self.wgsim_args     = wgsim_args
-        self.wgsim_options  = wgsim_options
-        self.sim_cmd_part   = wgsim_args + [str(item) for key_val in wgsim_options.items() for item in key_val]
+        # technology settings
+        self.enzyme_cut_site= enzyme_cut_site
+        self.probe_bed_file = probe_bed_file
+        if self.probe_bed_file:
+            self.tech_mode  = 2
+        elif self.enzyme_cut_site:
+            self.tech_mode  = 1
+        else:
+            self.tech_mode  = 0
 
         # sequencing settings
         self.read_len       = read_len
@@ -157,12 +155,48 @@ class BSReadSim:
         self.pos_map        = None
         self.meth_arr       = None
         self.variant_profile= None
+        self.read_count_dict= {}
+
 
         # prepare output
         self.fastq_writer   = StreamReads(outdir=outdir, prefix=prefix, 
                                           pair_end=pair_end,
                                           gzip=gzip, shuffle=shuffle)
         self.verbose        = verbose
+
+
+        # prepare wgsim command
+        wgsim_args    = [get_wgsim_path(), ref_fasta]
+        wgsim_options = {'-d': insert_mean, '-s': insert_std,
+                         '-1': read_len, '-2': read_len, 
+                         '-g': vcf_file,
+                         '-r': mut_rate, '-h': int(haplo_mode), '-S': seed,
+                         '-R': mut_indel_frac, '-X': indel_ext_prob,
+                         '-A': propN_cutoff, '-e': 0, '-m': 1}
+        self.sim_cmd_part   = wgsim_args + [str(item) for key_val in wgsim_options.items() for item in key_val]
+
+
+        # prepare read count for each contig
+        if self.tech_mode  == 2:
+            if not num_reads:
+                # calculate the effective length of each contig
+                pass
+        elif self.tech_mode== 1:
+            if not num_reads:
+                # calculate the effective length of each contig
+                pass
+        else:
+            if not num_reads:
+                num_reads = int(self.meth_set.genome_len*depth/read_len/(1+int(pair_end)))
+
+            for contig_id in self.meth_set.ref_dict.keys():
+                contig_len  = self.meth_set.ref_dict[contig_id]
+                self.read_count_dict[contig_id] = int(contig_len*num_reads/self.meth_set.genome_len)
+        
+        wgsim_options['-N'] = num_reads
+        self.wgsim_args     = wgsim_args
+        self.wgsim_options  = wgsim_options
+
 
         # progress
         if verbose:
@@ -180,7 +214,7 @@ class BSReadSim:
 
         with ThreadPoolExecutor(max_workers=self.n_threads) as executor:
             for contig_id in self.meth_set.ref_dict.keys():
-                sim_cmd  = self.sim_cmd_part + ['-c', contig_id]
+                sim_cmd  = self.sim_cmd_part + ['-c', contig_id] + ['-n', self.read_count_dict[contig_id]]
                 read_gen = LockedIterator(StreamWGSIM(sim_cmd=sim_cmd, pair_end=self.pair_end))
                 var_contig, sim_data= next(read_gen)                                    # the first element is the variants
                 self.current_contig = var_contig                                        # update the profiles
