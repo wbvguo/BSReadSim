@@ -1,16 +1,17 @@
 # 1. Introduction
 BSReadSim is a fast and flexible <u>B</u>isulfite <u>S</u>equencing <u>Read</u> <u>Sim</u>ulator that allows for profile-based read simulation. To our best knowledge, BSReadSim is the only bisulfite sequencing read simulator that allows user to incooperate the genetic variant and methylation profile with high fidelity. As a result, it can generate more realistic bisulfite sequencing reads compared to other bisulfite read simulators. The following table summarized the difference between BSReadSim and other tools:
 
-Features | Sherman | BSBolt | BSReadSim
-----| ---- | ---- | ---- |
-bisulfite conversion rate | yes | no | yes
-methylation profile input | no | $\textsf{yes}^*$ | yes
-genetic variant input | no   | no | yes
-multi-thread support | no | no | yes
-alleclic-specific methylation | no | no | yes
-site-site dependency | no | no | [todo]
+Features | Sherman | BSBolt | BSSim | BSReadSim
+----| ---- | ---- | ---- | ---- |
+bisulfite conversion rate | yes | no | yes |yes
+methylation profile input | no | $\textsf{yes}^*$ | no | yes
+genetic variant input | no   | no | $\textsf{yes}^*$ | yes
+Haplotype-aware | no   | no | no | yes
+multi-thread support | no | no | yes | yes
+alleclic-specific methylation | no | no | no | yes
+site-site dependency | no | no | no| [todo]
 
-( $\textsf{yes}^*$ : BSBolt allows users to input the methylation reference. But during simulation, it **randomly** picks a methylation value from this reference pool. As a result, for a paticular CG site, the simulated data and the reference profile will likely have different methylation level)
+( $\textsf{yes}^*$ : BSBolt allows users to input the methylation reference. But during simulation, it **randomly** picks a methylation value from this reference pool. As a result, for a paticular CG site, the simulated data and the reference profile will likely have different methylation level; BSSim only accept snps input using a frequency table, it cannot handle indel variants)
 
 # 2. Installation
 ## Dependency
@@ -36,10 +37,10 @@ bsreadsim ... [to add]
 ```
 
 ## Input file format  
-- reference genome: [FASTA](https://en.wikipedia.org/wiki/FASTA_format) format (`.fasta`, `.fa` or `.fa.gz`)
-- methylation profile: [CGmap](https://bsbolt.readthedocs.io/en/latest/methylation_calling/) format (`.CGmap` or `.CGmap.gz`)
-- genetic variants: [VCF](https://samtools.github.io/hts-specs/VCFv4.2.pdf) format, v4.0 or later(`.vcf` or `.vcf.gz`), sorted by chromosome id
-- probes for targeted sequencing: [BED](https://genome.ucsc.edu/FAQ/FAQformat.html) format (`bed` or `.bed.gz`), contains at least 6 columns, sorted by chromosome id
+- reference genome: [FASTA](https://en.wikipedia.org/wiki/FASTA_format) format ( `.fasta`, `.fa` or `.fa.gz` )
+- methylation profile: [CGmap](https://bsbolt.readthedocs.io/en/latest/methylation_calling/) format ( `.CGmap` or `.CGmap.gz` )
+- genetic variants: [VCF](https://samtools.github.io/hts-specs/VCFv4.2.pdf) format, v4.0 or later, sorted by chromosome id ( `.vcf` or `.vcf.gz` )
+- probes for targeted sequencing: [BED](https://genome.ucsc.edu/FAQ/FAQformat.html) format, contains at least 6 columns, sorted by chromosome id ( `bed` or `.bed.gz` )
 
 # 4. Contact
 Please raise up issues through the github [issue](https://github.com/wbvguo/BSReadSim/issues) page
@@ -48,3 +49,5 @@ Please raise up issues through the github [issue](https://github.com/wbvguo/BSRe
 [1] Sherman: https://www.bioinformatics.babraham.ac.uk/projects/sherman/
 
 [2] Farrell, C., Thompson, M., Tosevska, A., Oyetunde, A., & Pellegrini, M. (2021). BiSulfite Bolt: A bisulfite sequencing analysis platform. GigaScience, 10(5), giab033.
+
+[3] Xie, Q., Liu, Q., Mao, F., Cai, W., Wu, H., You, M., ... & Wu, J. (2014). A Bayesian framework to identify methylcytosines from high-throughput bisulfite sequencing data. PLoS computational biology, 10(9), e1003853.

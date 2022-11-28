@@ -22,6 +22,7 @@ std::vector<probe_rec> probe_vec;
 
 
 //parse_bed: https://github.com/dhspence/tagbam/blob/main/tagbam.c
+//additional https://github.com/lh3/cgranges/blob/6da7237627f37ebec6a4e0524a5cf29c28e251be/test/bedcov-itree.cpp
 char *parse_bed(char *s, probe_rec *tmp_probe, probe_meta *tmp_probe_meta)
 {
 	char *p, *q, *contig_id, *name = 0;
