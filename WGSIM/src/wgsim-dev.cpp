@@ -138,8 +138,8 @@ typedef struct {
 
 typedef struct {
     int pos_l, pos_r;
-    int cut_l, cut_r;
     int len;
+    uint8_t cut_l, cut_r;
 } cut_frag;
 
 typedef struct {
@@ -150,7 +150,6 @@ typedef struct {
 
 std::vector<snp_rec> snp_vec;
 std::vector<cut_site> site_vec;
-std::vector<cut_pos> cutpos_vec;
 std::vector<cut_frag> frag_vec;
 std::vector<probe_rec> probe_vec;
 
@@ -179,28 +178,26 @@ void parse_cut_site(char *cut_str)
     if(tmp_site.idx >=0){tmp_site.len = idx; site_vec.push_back(tmp_site);}
 }
 
-void gen_cut_frag(const kseq_t *ks, mutseq_t *hap1, mutseq_t *hap2){
-    
-    int i, j = 0; // j keeps the end of the last deletion
-    for (i = 0; i != ks->seq.l; ++i) {
-        int c[3];
-        c[0] = nst_nt4_table[(int)ks->seq.s[i]];
-        c[1] = hap1->s[i]; c[2] = hap2->s[i];
-        if (c[0] >= 4) continue;
+void gen_cut_frag(const kseq_t *ks, int MIN_FRAG_LEN, int MAX_FRAG_LEN){
+    std::vector<mut_t> rseq_ref(ks->seq.l);
+    std::vector<cut_pos> cutpos_vec;
+
+    for (int i = 0; i != ks->seq.l; ++i) {
+        rseq_ref.push_back((mut_t)nst_nt4_table[(int)ks->seq.s[i]]);
     }
 
-    int *ptr_begin = std::begin(hap1->s);
-    int *ptr_end = std::end(hap1->s);
-    int *iter = std::begin(hap1);
-    int *iter2= std::begin(hap1);
-    int *iter3= std::begin(hap1);
-    // printf("%d %d\n", ptr_begin, ptr_end);
+    auto ptr_begin = rseq_ref.begin();
+    auto ptr_end   = rseq_ref.end();
+    auto iter_curr = rseq_ref.begin(); // current
+    auto iter_temp = rseq_ref.begin(); // temp
+    auto iter_save = rseq_ref.begin(); // save
+    //printf("%d %d\n", ptr_begin, ptr_end);
 
-    int count = 0;
-    while (iter < ptr_end)
+    int count = 0; cut_pos tmp_cutpos;
+    while (iter_curr < ptr_end)
     {
         // printf("========%i========\n", count);
-        // printf("%d %d %d\n", iter, iter2, iter3);
+        // printf("%d %d %d\n", iter_curr, iter_temp, iter_save);
         //initiate
         int min_pos = ptr_end - ptr_begin;
         int site_pos= min_pos;
@@ -208,79 +205,74 @@ void gen_cut_frag(const kseq_t *ks, mutseq_t *hap1, mutseq_t *hap2){
 
         // printf("[%d %d %d]\n", min_pos, site_pos, type_idx);
         for (int j = 0; j < site_vec.size(); j++) {
-            iter2 = std::search(iter, ptr_end, site_vec[j].seq.begin(), site_vec[j].seq.end());
-            // printf("[[%d %d]]\n", iter, iter2);
-            site_pos = iter2 - ptr_begin;
+            iter_temp = std::search(iter_curr, ptr_end, site_vec[j].seq.begin(), site_vec[j].seq.end());
+            // printf("%d %d %d\n", iter_curr, iter_temp);
+            site_pos = iter_temp - ptr_begin;
             if(site_pos < min_pos){
                 min_pos = site_pos;
                 type_idx= j;
-                iter3   = iter2;
+                iter_save= iter_temp;
             }
         }
         // printf("[%d %d %d]\n", min_pos, site_pos, type_idx);
-        // printf("%d %d %d\n", iter, iter2, iter3);
+        // printf("%d %d %d\n", iter_curr, iter_temp, iter_save);
 
         if(type_idx >=0){
-            cut_pos.push_back(min_pos + cut_site[type_idx].idx);
-            cut_type.push_back(type_idx);
-            iter = iter3 + cut_site[type_idx].len; // need to check for other int types
+            tmp_cutpos = {};
+            tmp_cutpos.pos = min_pos + site_vec[type_idx].idx;
+            tmp_cutpos.type= type_idx;
+            cutpos_vec.push_back(tmp_cutpos);
+            iter_curr = iter_save + site_vec[type_idx].len; // need to check for other int types
         }
-        // printf("%d %d %d\n", iter, iter2, iter3);
+        // printf("%d %d %d\n", iter_curr, iter_temp, iter_save);
         // ++count;
         // if(count >= 20){
         //     break;
         // }
     }
-
-    // generate potential intervals
-    std::vector<cut_frag> frag_vec;
-    cut_frag tmp_frag;
-    int MIN_FRAG_LEN = 0;
-    int MAX_FRAG_LEN = 50;
-    int contig_len = sizeof(array)/sizeof(array[0]);
+    std::vector<mut_t>().swap(rseq_ref);
     //printf("%ld\n", cut_pos.size());
-    printf("hello\n");
-    
+    // generate potential intervals
 
-    for (int i = -1; i <= int(cut_pos.size()); i++){
-        printf("%d\n", i);
-        if(i==-1 || i == cut_pos.size()){ //append the first and last fragments
+    cut_frag tmp_frag;
+    for (int i = -1; i <= int(cutpos_vec.size()); i++){
+        if(i==-1 || i == int(cutpos_vec.size())){ //append the first and last fragments
+            tmp_frag = {};
             if(i==-1){
                 tmp_frag.pos_l = 0;
                 tmp_frag.cut_l = -1;
-                tmp_frag.pos_r = cut_pos[0];
-                tmp_frag.cut_r = cut_type[0];
-                tmp_frag.len   = cut_pos[0] - 0;
+                tmp_frag.pos_r = cutpos_vec[0].pos;
+                tmp_frag.cut_r = cutpos_vec[0].type;
+                tmp_frag.len   = cutpos_vec[0].pos - 0;
             }else{
-                tmp_frag.pos_l = cut_pos[i-1];
-                tmp_frag.cut_l = cut_type[i-1];
-                tmp_frag.pos_r = contig_len;
+                tmp_frag.pos_l = cutpos_vec[i-1].pos;
+                tmp_frag.cut_l = cutpos_vec[i-1].type;
+                tmp_frag.pos_r = ks->seq.l;
                 tmp_frag.cut_r = -1;
-                tmp_frag.len   = contig_len - cut_pos[i-1];
+                tmp_frag.len   = ks->seq.l - cutpos_vec[i-1].pos;
             }
             frag_vec.push_back(tmp_frag);
-            tmp_frag = {};
             continue;
         }
-        for(int j=i+1; j < cut_pos.size(); j++){
-            int frag_len = cut_pos[j] - cut_pos[i];
+        for(int j=i+1; j < cutpos_vec.size(); j++){
+            int frag_len = cutpos_vec[j].pos - cutpos_vec[i].pos;
             if (frag_len > MIN_FRAG_LEN && frag_len < MAX_FRAG_LEN){
-                tmp_frag.pos_l = cut_pos[i];
-                tmp_frag.cut_l = cut_type[i];
-                tmp_frag.pos_r = cut_pos[j];
-                tmp_frag.cut_r = cut_type[j];
+                tmp_frag = {};
+                tmp_frag.pos_l = cutpos_vec[i].pos;
+                tmp_frag.cut_l = cutpos_vec[i].type;
+                tmp_frag.pos_r = cutpos_vec[j].pos;
+                tmp_frag.cut_r = cutpos_vec[j].type;
                 tmp_frag.len   = frag_len;
 
                 frag_vec.push_back(tmp_frag);
-                tmp_frag = {};
             }
         }
     }
 }
 
-char *parse_bed_fmt(char *s, probe_rec *tmp_probe, probe_meta *tmp_probe_meta)
+void parse_bed_fmt(char *s, char *contig_id, probe_rec *tmp_probe, probe_meta *tmp_probe_meta)
 {
-	char *p, *q, *contig_id, *name = 0;
+	char *p, *q, *name = 0;
     int i, start, end, strand;
 	float score;
 
@@ -308,7 +300,7 @@ char *parse_bed_fmt(char *s, probe_rec *tmp_probe, probe_meta *tmp_probe_meta)
     
     tmp_probe_meta->contig = contig_id;
     tmp_probe_meta->name = name;
-	return i >= 4? contig_id : 0;
+	if(i < 4){contig_id = 0;}
 }
 
 void parse_bed_chr(char *fname, char *chr_id){
@@ -327,7 +319,7 @@ void parse_bed_chr(char *fname, char *chr_id){
         if (collect_present == false && collect_previous == true) { break; } // finished collecting
         // a new round, save last status
         collect_previous= collect_present;
-        chr_current = parse_bed_fmt(line.s, &tmp_probe, &tmp_probe_meta);
+        parse_bed_fmt(line.s, chr_current, &tmp_probe, &tmp_probe_meta); //might need to test
 
         if (strcmp(chr_current, chr_id) != 0){
             collect_present = false;
@@ -472,7 +464,7 @@ void parse_vcf_chr(char *fname, char *chr_id)
     }
 }
 
-void wgsim_mut_vcf(const kseq_t *ks, char * vcf_file, mutseq_t *hap1, mutseq_t *hap2, uint8_t *site_flag_arr)
+void sim_mut_vcf(const kseq_t *ks, char * vcf_file, mutseq_t *hap1, mutseq_t *hap2, uint8_t *site_flag_arr)
 {
     // initiate
     mutseq_t *ret[2];
@@ -566,7 +558,7 @@ void wgsim_mut_vcf(const kseq_t *ks, char * vcf_file, mutseq_t *hap1, mutseq_t *
     }
 }
 
-void wgsim_mut_diref(const kseq_t *ks, int is_hap, mutseq_t *hap1, mutseq_t *hap2, uint8_t *site_flag_arr)
+void sim_mut_diref(const kseq_t *ks, int is_hap, mutseq_t *hap1, mutseq_t *hap2, uint8_t *site_flag_arr)
 {
     int i, deleting = 0;
     mutseq_t *ret[2];
@@ -624,7 +616,7 @@ void wgsim_mut_diref(const kseq_t *ks, int is_hap, mutseq_t *hap1, mutseq_t *hap
     }
 }
 
-void wgsim_print_mutref(const char *name, const kseq_t *ks, mutseq_t *hap1, mutseq_t *hap2)
+void sim_print_mutref(const char *name, const kseq_t *ks, mutseq_t *hap1, mutseq_t *hap2)
 {
     int i, j = 0; // j keeps the end of the last deletion
     for (i = 0; i != ks->seq.l; ++i) {
@@ -694,7 +686,7 @@ void wgsim_print_mutref(const char *name, const kseq_t *ks, mutseq_t *hap1, muts
     }
 }
 
-void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, int size_l, int size_r, int output_mode, char *vcf_file, char *contig_id, int64_t contig_N)
+void sim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, int size_l, int size_r, int output_mode, char *vcf_file, char *contig_id, int64_t contig_N)
 {
     kseq_t *ks;
     mutseq_t rseq[2];
@@ -743,6 +735,10 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
         ++n_ref;
         if (strcmp(contig_id, ks->name.s)==0){ bool_contig = true; contig_len = l;}
     }
+    kseq_destroy(ks);
+    gzclose(fp_fa);
+
+
     // check if fasta is empty
     if (!n_ref) { fprintf (stderr, "ERROR: Input fasta is empty: %s. Exit... \n", fn); exit (EXIT_FAILURE);}
     fprintf(stderr, "[%s] %d contig sequences, total length: %lu\n", __func__, n_ref, tot_len);
@@ -757,9 +753,6 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
     } else {
         fprintf(stderr, "ERROR: Contig id '%s' is not found in the fasta, please check!\n", contig_id); exit(1);
     }
-
-    kseq_destroy(ks);
-    gzclose(fp_fa);
 
     // check input vcf file
     FILE *vcf;
@@ -802,17 +795,16 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
         // introduce mutations and print them to stdout
         fprintf(stdout, "Contig Variant Start\n");
         if(bool_vcf){
-            wgsim_mut_vcf(ks, vcf_file, rseq, rseq+1, site_flag_arr);
+            sim_mut_vcf(ks, vcf_file, rseq, rseq+1, site_flag_arr);
             if(snp_vec.size() == 0){fprintf(stdout, "%s\n", ks->name.s);} //if no variants, print contig id
         } else {
-            wgsim_mut_diref(ks, is_hap, rseq, rseq+1, site_flag_arr);
+            sim_mut_diref(ks, is_hap, rseq, rseq+1, site_flag_arr);
             if(MUT_RATE == 0.0){fprintf(stdout, "%s\n", ks->name.s);}
         }
-        wgsim_print_mutref(ks->name.s, ks, rseq, rseq+1);
+        sim_print_mutref(ks->name.s, ks, rseq, rseq+1);
         fprintf(stdout, "Contig Variant End\n");
 
         for (ii = 0; ii != n_pairs; ++ii) { // the core loop
-            double ran;
             int pos;
             int s[2], n_sub[2], n_indel[2], n_err[2], ext_coor[2], cover_pos[2], j, k, ix;
             //cover_pos hold if the read covers a snp *position* (the read don't have to contain the ALT allele)
@@ -1034,12 +1026,35 @@ void wgsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, i
     free(tmp_seq[0]); free(tmp_seq[1]);
 }
 
-void rrsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, int size_l, int size_r, int output_mode, char *vcf_file, char *contig_id, int64_t contig_N)
+
+void wgsim_core()
+{
+    // initialize random number generator to generate read positions
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    // pull from truncated distribution to ensure read doesn't pass boundary 
+    std::uniform_int_distribution<int> dis(2, ks->seq.l - max_inner - 2*max_size -2); //add 2 base offset
+
+    uint64_t n_pairs = (uint64_t)((long double)l / tot_len * N + 0.5);
+    if (bool_contig_N){n_pairs = contig_N;}
+
+    tot_pairs += n_pairs;
+    // initialise random normal for insert size simulation 
+    std::random_device rn;  //Will be used to obtain a seed for the random number engine
+    std::mt19937 gen_rn(rn()); //Standard mersenne_twister_engine seeded with rd()
+    std::normal_distribution<float> dis_rn(0.0, 1.0);
+    if (l < dist + 3 * std_dev) {
+        fprintf(stderr, "[%s] skip sequence '%s' as it is shorter than %d!\n", __func__, ks->name.s, dist + 3 * std_dev);
+        continue;
+    }
+}
+
+void rrsim_core()
 {
 // to add
 }
 
-void tsim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, int size_l, int size_r, int output_mode, char *vcf_file, char *contig_id, int64_t contig_N)
+void tsim_core()
 {
 // to add
 }
@@ -1148,7 +1163,7 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Simulating whole genome reads\n");
         fprintf(stderr, "[wgsim] seed = %d\n", seed);
         srand48(seed);
-        wgsim_core(argv[optind], is_hap, N, dist, std_dev, size_l, size_r, output_mode, vcf_file, contig_id, contig_N);
+        sim_core(argv[optind], is_hap, N, dist, std_dev, size_l, size_r, output_mode, vcf_file, contig_id, contig_N);
     }
 
 
