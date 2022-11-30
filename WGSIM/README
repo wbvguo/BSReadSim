@@ -1,6 +1,8 @@
-This tool is derived (but very heavily modified) from WGSIM to generate short reads for diploid organisms. It used the HTSLIB library to read and process VCF file, as a result it can generate realistic sequencing reads with either randomly generated mutations or variants from a user-specified reference VCF file (in other words, it enables profile-based simulation). Noteably, when conducting the profile-based simulation, the tool is haplotype-aware, that when the VCF file is phased, the haplotype information is kept and can be reflected in the reads.
+This tool is based on WGSIM framework but heavily modified to generate short reads for diploid organisms. 
 
-The tool can be used to simulate WGS reads (by default), or deliver intedimedate data to the BSReadSim python module for bisulfite sequencing reads simulation (when specifying -m 1).
+The tool used the HTSLIB library to read and process VCF/BED file, as a result it can generate realistic sequencing reads with either randomly generated mutations or variants from a user-specified reference VCF file (in other words, it enables profile-based simulation). Noteably, when conducting the profile-based simulation, the tool is haplotype-aware, that when the VCF file is phased, the haplotype information is kept and can be reflected in the reads.
+
+The tool can be used to simulate WGS reads (by default), or deliver intedimedate data to the BSReadSim python module for bisulfite sequencing reads simulation WGBS/TBS/RRBS (when specifying -m 1).
 
 The tool is written in C++, which makes the read simulation very fast.
 
