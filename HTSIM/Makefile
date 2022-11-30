@@ -28,19 +28,20 @@
 #HTSLIB=		-I../HTSLIB/htslib/ -L../HTSLIB/ -lhts -Wl,-rpath ../HTSLIB
 BASE_PATH = $(shell pwd | xargs dirname)
 
-EXE=		wgsim
+EXE=		htsim
 LIBS=		-Bstatic -lz 
 HTSLIB=		-I$(BASE_PATH)/HTSLIB/htslib/ -L$(BASE_PATH)/HTSLIB/ -lhts -Wl,-rpath $(BASE_PATH)/HTSLIB
 CXX=c++
 
 CXXFLAGS=	-g -O3 -fpermissive $(ARCH_FLAGS) #-Wall ##-xSSE2
 
-wgsim:
-	$(CXX) $(CXXFLAGS) src/wgsim.cpp -o $(EXE) $(LIBS) $(HTSLIB) 
+htsim:
+	$(CXX) $(CXXFLAGS) src/htsim.cpp -o $(EXE) $(LIBS) $(HTSLIB) 
 
 
 clean:
-	rm wgsim
+	rm htsim
 
 depend:
 	(LC_ALL=C; export LC_ALL; makedepend -Y -- $(CXXFLAGS) $(CPPFLAGS) -I. -- src/*.cpp)
+

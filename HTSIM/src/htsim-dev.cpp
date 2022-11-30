@@ -22,7 +22,7 @@
 */
 
 /* This program is based on WGSIM(v0.3.1-r13)[https://github.com/lh3/wgsim.git], with heavy 
- * modifications to simulate WGS or WGBS/RRBS/TBS reads in BSReadSim for diploid organism */
+ * modifications to simulate WGS/RRS/TS or WGBS/RRBS/TBS reads in BSReadSim for diploid organism */
 
 #include <stdlib.h>
 #include <math.h>
