@@ -178,7 +178,8 @@ void parse_cut_site(char *cut_str)
     if(tmp_site.idx >=0){tmp_site.len = idx; site_vec.push_back(tmp_site);}
 }
 
-void gen_cut_frag(const kseq_t *ks, int MIN_FRAG_LEN, int MAX_FRAG_LEN){
+void gen_cut_frag(const kseq_t *ks, int MIN_FRAG_LEN, int MAX_FRAG_LEN)
+{
     std::vector<mut_t> rseq_ref(ks->seq.l);
     std::vector<cut_pos> cutpos_vec;
 
@@ -235,6 +236,7 @@ void gen_cut_frag(const kseq_t *ks, int MIN_FRAG_LEN, int MAX_FRAG_LEN){
     // generate potential intervals
 
     cut_frag tmp_frag;
+    uint64_t eff_len = 0;
     for (int i = -1; i <= int(cutpos_vec.size()); i++){
         if(i==-1 || i == int(cutpos_vec.size())){ //append the first and last fragments
             tmp_frag = {};
@@ -251,6 +253,7 @@ void gen_cut_frag(const kseq_t *ks, int MIN_FRAG_LEN, int MAX_FRAG_LEN){
                 tmp_frag.cut_r = -1;
                 tmp_frag.len   = ks->seq.l - cutpos_vec[i-1].pos;
             }
+            eff_len += tmp_frag.len;
             frag_vec.push_back(tmp_frag);
             continue;
         }
@@ -264,6 +267,7 @@ void gen_cut_frag(const kseq_t *ks, int MIN_FRAG_LEN, int MAX_FRAG_LEN){
                 tmp_frag.cut_r = cutpos_vec[j].type;
                 tmp_frag.len   = frag_len;
 
+                eff_len += tmp_frag.len;
                 frag_vec.push_back(tmp_frag);
             }
         }
@@ -303,7 +307,8 @@ void parse_bed_fmt(char *s, char *contig_id, probe_rec *tmp_probe, probe_meta *t
 	if(i < 4){contig_id = 0;}
 }
 
-void parse_bed_chr(char *fname, char *chr_id){
+void parse_bed_chr(char *fname, char *chr_id)
+{
     htsFile *fp    = hts_open(fname,"rb");
     if(fp == 0 ){ fprintf(stderr,"cannot open bed file: %s\n",fname); exit (EXIT_FAILURE);}
     
@@ -359,7 +364,7 @@ void parse_vcf_chr(char *fname, char *chr_id)
     int nsmpl = bcf_hdr_nsamples(hdr); // number of sample
     if (nsmpl != 1) {
         fprintf(stderr, "ERROR: [%s] Currently only support single-sample simulation, please check the vcf file! Exiting...\n", __func__);
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
     while (bcf_read(fp, hdr, rec)>=0) {	
@@ -690,33 +695,32 @@ void sim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, int
 {
     kseq_t *ks;
     mutseq_t rseq[2];
-    gzFile fp_fa;
-    uint64_t tot_len, contig_len, ii;
-    uint64_t tot_sub, tot_indel, tot_err, tot_pairs;
-    int i, l, n_ref;
-    char *qstr;
-    int size[2], Q, max_size;
+    gzFile   fp_fa;
+    uint64_t tot_len = 0, contig_len= 0, l = 0, ii = 0;
+    uint64_t tot_sub = 0, tot_indel = 0, tot_err = 0, tot_pairs = 0;
     uint8_t *tmp_seq[2];    	// save sequence
+    int8_t  *tmp_offset[2]; 	// save offset per base
     uint8_t *tmp_context[2];	// save context (CG, CHG, CHH)
     uint8_t *tmp_mutation[2];	// save mutation status
-    int8_t  *tmp_offset[2]; 	// save offset per base
     mut_t *target;
-    
+    char *qstr;
+    int size[2], Q, max_size, n_ref = 0;
+
     max_size = std::max(size_l, size_r);
     qstr = (char*)calloc(max_size+1, 1);
     tmp_seq[0] = (uint8_t*)calloc(max_size+2, 1);
     tmp_seq[1] = (uint8_t*)calloc(max_size+2, 1);
+    tmp_offset[0]= (int8_t*)calloc(max_size+2, 1);
+    tmp_offset[1]= (int8_t*)calloc(max_size+2, 1);
     tmp_context[0] = (uint8_t*)calloc(max_size+2, 1);
     tmp_context[1] = (uint8_t*)calloc(max_size+2, 1);
     tmp_mutation[0]= (uint8_t*)calloc(max_size+2, 1);
     tmp_mutation[1]= (uint8_t*)calloc(max_size+2, 1);
-    tmp_offset[0]  = (int8_t*)calloc(max_size+2, 1);
-    tmp_offset[1]  = (int8_t*)calloc(max_size+2, 1);
     size[0] = size_l; size[1] = size_r;
-    
+
     int min_inner, max_inner, inner_dist;
-    min_inner = -1 * std::min(size_l, size_r); //when the one read's start is the other read's end
-    max_inner = 600 - 2* max_size; // observed from real data, max insert size is ~600
+    min_inner = -1 * std::min(size_l, size_r);  //when the one read's start is the other read's end
+    max_inner = 600 - 2* max_size;              // observed from real data, max insert size is ~600
 
     Q = (ERR_RATE == 0.0)? 'I' : (int)(-10.0 * log(ERR_RATE) / log(10.0) + 0.499) + 33;
 
@@ -725,10 +729,7 @@ void sim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, int
     // check if fasta is non-existing
     if (!fp_fa) { fprintf (stderr, "ERROR: gzopen of '%s' failed: %s. Exit... \n", fn, strerror (errno)); exit (EXIT_FAILURE);}
 
-    tot_len = n_ref = 0;
-    tot_sub = tot_indel = tot_err = tot_pairs = 0;
-    bool bool_contig = false; 
-    bool bool_contig_N = false;
+    bool bool_contig = false, bool_contig_N = false; 
     fprintf(stderr, "[%s] calculating the total length of the reference sequence...\n", __func__);
     while ((l = kseq_read(ks)) >= 0) {
         tot_len += l;
@@ -738,20 +739,19 @@ void sim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, int
     kseq_destroy(ks);
     gzclose(fp_fa);
 
-
     // check if fasta is empty
     if (!n_ref) { fprintf (stderr, "ERROR: Input fasta is empty: %s. Exit... \n", fn); exit (EXIT_FAILURE);}
     fprintf(stderr, "[%s] %d contig sequences, total length: %lu\n", __func__, n_ref, tot_len);
-    
+
     // check input contig_id
     if (bool_contig && contig_N <= 0) {
-        contig_N = int64_t((long double)contig_len / tot_len * N + 0.5);
+        contig_N = int64_t(contig_len / tot_len * N + 0.5);
         fprintf(stderr, "[%s] Simulate %ld reads from contig %s (calculate from -N, as -n is not specified)...\n", __func__, contig_N, contig_id);
     } else if (bool_contig && contig_N > 0) {
         fprintf(stderr, "[%s] Simulate %ld reads from contig %s\n", __func__, contig_N, contig_id);
         bool_contig_N = true;
     } else {
-        fprintf(stderr, "ERROR: Contig id '%s' is not found in the fasta, please check!\n", contig_id); exit(1);
+        fprintf(stderr, "ERROR: Contig id '%s' is not found in the fasta, please check!\n", contig_id); exit(EXIT_FAILURE);
     }
 
     // check input vcf file
@@ -764,34 +764,47 @@ void sim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, int
         bool_vcf = true;
         fclose(vcf);
     } else {
-        fprintf(stderr, "ERROR: The specified VCF file does not exist, please check!\n");
-        exit(1);
+        fprintf(stderr, "ERROR: The specified VCF file does not exist, please check!\n"); exit(EXIT_FAILURE);
     }
 
+
+    // start simulate
     fp_fa = gzopen(fn, "r");
     ks = kseq_init(fp_fa);
-    while ((l = kseq_read(ks)) >= 0) {//here l is the chromosome length
+
+    // initialise random normal for insert size simulation 
+    std::random_device rn;  //Will be used to obtain a seed for the random number engine
+    std::mt19937 gen_rn(rn()); //Standard mersenne_twister_engine seeded with rd()
+    std::normal_distribution<float> dis_rn(0.0, 1.0);
+
+    while ((l = kseq_read(ks)) >= 0) {  //here l is the chromosome length
         if (bool_contig) {if (strcmp(contig_id, ks->name.s)!=0){continue;}}
-        // initialize random number generator to generate read positions
-        std::random_device rd;
-        std::mt19937 gen(rd());
-        // pull from truncated distribution to ensure read doesn't pass boundary 
-        std::uniform_int_distribution<int> dis(2, ks->seq.l - max_inner - 2*max_size -2); //add 2 base offset
-
-        uint64_t n_pairs = (uint64_t)((long double)l / tot_len * N + 0.5);
-        if (bool_contig_N){n_pairs = contig_N;}
-
-        tot_pairs += n_pairs;
-        // initialise random normal for insert size simulation 
-        std::random_device rn;  //Will be used to obtain a seed for the random number engine
-        std::mt19937 gen_rn(rn()); //Standard mersenne_twister_engine seeded with rd()
-        std::normal_distribution<float> dis_rn(0.0, 1.0);
         if (l < dist + 3 * std_dev) {
             fprintf(stderr, "[%s] skip sequence '%s' as it is shorter than %d!\n", __func__, ks->name.s, dist + 3 * std_dev);
             continue;
         }
 
-        uint8_t site_flag_arr[ks->seq.l] = {0}; // record if the site is a SNP/INDEL position (the base can be REF)
+        uint64_t n_pairs = bool_contig_N? contig_N:(uint64_t)(l / tot_len * N + 0.5);
+        tot_pairs += n_pairs;
+
+        // initialize random number generator to generate read positions
+        int tool_type=0;
+        if (tool_type==1){
+
+        }
+
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        // pull from truncated distribution to ensure read doesn't pass boundary 
+        std::uniform_int_distribution<int> dis(2, ks->seq.l - max_inner - 2*max_size -2); //add 2 base offset
+        printf("%d", dis);
+
+        void *ptr;
+        ptr = &dis;
+
+        
+        
+        uint8_t site_flag_arr[ks->seq.l] = {0}; // record if the site is a SNP/INDEL position (the base can be either REF/ALT)
         // introduce mutations and print them to stdout
         fprintf(stdout, "Contig Variant Start\n");
         if(bool_vcf){
@@ -805,13 +818,13 @@ void sim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, int
         fprintf(stdout, "Contig Variant End\n");
 
         for (ii = 0; ii != n_pairs; ++ii) { // the core loop
-            int pos;
-            int s[2], n_sub[2], n_indel[2], n_err[2], ext_coor[2], cover_pos[2], j, k, ix;
+            int pos_l, pos_r;
+            int s[2], n_sub[2], n_indel[2], n_err[2], ext_coor[2], cover_pos[2], i, j, k, ix;
             //cover_pos hold if the read covers a snp *position* (the read don't have to contain the ALT allele)
             //j hold read1/read2, k hold the length of read, ix hold the cursor transversing read
 
             // random position generation
-            pos = dis(gen);
+            int pos = dis(gen);
             int insert_dev = (int)(std_dev * dis_rn(gen_rn));
             inner_dist = dist + insert_dev - size_l - size_r; //dist is the mean insert size
             inner_dist = std::max(min_inner, std::min(inner_dist, max_inner));
@@ -1024,39 +1037,52 @@ void sim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, int
     gzclose(fp_fa);
     free(qstr);
     free(tmp_seq[0]); free(tmp_seq[1]);
+    free(tmp_offset[0]); free(tmp_offset[1]);
+    free(tmp_context[0]); free(tmp_context[1]);
+    free(tmp_mutation[0]); free(tmp_mutation[1]);
 }
 
-
-void wgsim_core()
+void wgsim_rand(const kseq_t *ks, int max_inner, int max_size, bool is_uniform)
 {
+    // return the positions every time you call it
     // initialize random number generator to generate read positions
     std::random_device rd;
     std::mt19937 gen(rd());
-    // pull from truncated distribution to ensure read doesn't pass boundary 
-    std::uniform_int_distribution<int> dis(2, ks->seq.l - max_inner - 2*max_size -2); //add 2 base offset
+    if(is_uniform){
+        // pull from truncated distribution to ensure read doesn't pass boundary 
+        std::uniform_int_distribution<int> dis(2, ks->seq.l - max_inner - 2*max_size -2); //add 2 base offset
+        
+    } else {
+        std::vector<int> weights;
+        std::discrete_distribution<int> dis(weights.begin(), weights.end());
+        
+    }
+    
 
-    uint64_t n_pairs = (uint64_t)((long double)l / tot_len * N + 0.5);
-    if (bool_contig_N){n_pairs = contig_N;}
+}
 
-    tot_pairs += n_pairs;
-    // initialise random normal for insert size simulation 
-    std::random_device rn;  //Will be used to obtain a seed for the random number engine
-    std::mt19937 gen_rn(rn()); //Standard mersenne_twister_engine seeded with rd()
-    std::normal_distribution<float> dis_rn(0.0, 1.0);
-    if (l < dist + 3 * std_dev) {
-        fprintf(stderr, "[%s] skip sequence '%s' as it is shorter than %d!\n", __func__, ks->name.s, dist + 3 * std_dev);
-        continue;
+void rrsim_rand(bool is_uniform)
+{
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    if(is_uniform){
+        std::uniform_int_distribution<int> dis(0, frag_vec.size()-1); // might be empty
+    }else{
+        std::vector<int> weights;
+        std::discrete_distribution<int> dis(weights.begin(), weights.end());
     }
 }
 
-void rrsim_core()
+void tsim_rand(bool is_uniform)
 {
-// to add
-}
-
-void tsim_core()
-{
-// to add
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    if(is_uniform){
+        std::uniform_int_distribution<int> dis(0, frag_vec.size()-1); // might be empty
+    }else{
+        std::vector<int> weights;
+        std::discrete_distribution<int> dis(weights.begin(), weights.end());
+    }
 }
 
 
