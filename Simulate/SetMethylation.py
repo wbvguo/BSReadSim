@@ -32,7 +32,7 @@ class SetMethylation:
 
     :var np.array meth_arr  : nx5 numpy array: context, flag, meth_avg, meth_ref, meth_alt
                               - flag: 0 from dist or pool, 1 from CGmap, 2 from ASM, -1 unintialized
-    :var pd.Series pos_map  : 1d numpy array (same length as contig), value is the row index of meth_arr
+    :var np.array pos_map   : 1d numpy array (same length as contig), value is the row index of meth_arr
     '''
 
 
@@ -74,10 +74,9 @@ class SetMethylation:
         self.ref_dict   = SeqIO.to_dict(SeqIO.parse(ref_fasta, "fasta"))
         self.genome_len = sum([len(seq) for _, seq in self.ref_dict.items()])
         
-        self.meth_db = StreamMethDB(outdir=self.outdir, overwrite_db=self.overwrite_db)
+        self.meth_db = StreamMethDB(outdir=self.outdir, overwrite_db=self.overwrite_db, ref_dict=self.ref_dict)
         self.meth_db.check_outdir()
-        self.meth_db.save_ref(self.ref_dict)
-
+        
         # initiate
         if meth_db_path:
             self.check_meth_db()
@@ -89,11 +88,12 @@ class SetMethylation:
         '''if use previous meth_db object, check if they align'''
         contig_id_list = self.ref_dict.keys()
         for contig_id in contig_id_list:
-            contig_profile = self.meth_db.load_contig(contig_id, values=True)
+            contig_profile = self.meth_db.load_contig(contig_id, is_variant=False)
             self.init_meth_db(contig_id)
-            not_comp_sites = np.where(self.pos_map!=4294967295).difference(np.where(contig_profile[0]!=4294967295))
+            ref_pos_set = set(np.where(self.pos_map!=4294967295)[0])
+            not_comp_sites = ref_pos_set.difference(set(np.where(contig_profile[0]!=4294967295)[0]))
             if len(not_comp_sites):
-                print(f'{contig_id}: sites in the meth_db is not the same as the reference')
+                print(f'{contig_id}: sites in the meth_db is not a subset of the reference')
 
 
     def create_meth_db(self):
@@ -296,7 +296,7 @@ class SetMethylation:
 
         seq = self.ref_dict[contig_id].seq.upper()
         seq_len = len(seq)
-        for pos, variant_info in sim_data.items():
+        for pos, variant_info in tqdm(sim_data.items()):
             if pos<2 or pos>(seq_len-2):
                 continue
             if variant_info['indel'] == -1:  # deletion starts at pos
@@ -311,8 +311,8 @@ class SetMethylation:
                 pos_list  = [pos-2, pos-1, pos, pos+1]
                 self.handle_boundary(pos_list, local_seq)
 
-                ins_meth_arr = np.zeros(offset)
-                ins_ctx_arr  = np.zeros(offset)
+                ins_meth_arr = np.zeros(offset, dtype=np.float16)
+                ins_ctx_arr  = np.zeros(offset, dtype=np.int16)
                 for ins_idx, base in enumerate(variant_info['alt']):
                     if base not in {'C', 'G'}:
                         continue
@@ -408,5 +408,5 @@ class SetMethylation:
             flag_d2 = int(base_d2 == "C")
         else:
             return None
-        return self.base_context_table[base][flag_d1, flag_d2]
+        return int(self.base_context_table[base][flag_d1, flag_d2])
 

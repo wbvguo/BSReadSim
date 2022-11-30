@@ -16,7 +16,6 @@ class StreamWGSIM:
         self.sim_cmd  = sim_cmd
         self.pair_end = pair_end
 
-
     def __iter__(self):
         wgsim = subprocess.Popen(self.sim_cmd, stdout=subprocess.PIPE, universal_newlines=True)
         sim_iter = iter(wgsim.stdout.readline, b'')

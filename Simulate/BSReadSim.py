@@ -9,8 +9,10 @@ from typing import Dict, Union, Tuple
 from threading import Lock
 from concurrent.futures import ThreadPoolExecutor
 
+from LockedIterator import LockedIterator
 from SetMethylation import SetMethylation
 from StreamMethDB import StreamMethDB
+from StreamReads import StreamReads
 from StreamWGSIM import StreamWGSIM
 from UtilityFunctions import get_wgsim_path
 
@@ -91,6 +93,7 @@ class BSReadSim:
                  random_err= True, seq_err: float = 0.005,                                          # sequencing error
                  site_dependency: bool = False, conversion_rate: float = 0.998,                     # methylation setting
                  undirectional: bool = False, pair_end: bool = True,                                # sequencing protocol
+                 enzyme_cut_site: str = None, probe_bed_file: str = None,                           # sequencing technology
                  n_threads: int = 4, gzip: bool = True, shuffle: bool = True,                       # output setting
                  verbose: bool = True, collect_stats: bool = False, propN_cutoff: float = 0.05):
 
@@ -99,14 +102,16 @@ class BSReadSim:
             raise ValueError('Cannot find the reference file, please check!')
         if not outdir:
             raise ValueError('Please specify the output directory!')
+        if enzyme_cut_site and probe_bed_file:
+            raise ValueError('Please only specify only one mode for simulation!')        
 
         self.ref_fasta= ref_fasta
         self.outdir   = outdir
         self.prefix   = prefix
-        self.seed     = seed
+        self.seed     = None if seed < 0 else seed
         self.n_threads= n_threads
         self.countLock= Lock()
-        self.writeLock= Lock()
+
 
         # prepare the methylation reference
         print('Initiating methylation profile:\n')
@@ -119,24 +124,19 @@ class BSReadSim:
                                        update_boundary=update_boundary,
                                        overwrite_db=overwrite_db,
                                        verbose=verbose,
-                                       seed = None if seed < 0 else seed)
+                                       seed = self.seed)
         self.meth_db  = self.meth_set.meth_db
 
 
-        # prepare wgsim command
-        wgsim_args    = [get_wgsim_path(), ref_fasta]
-        if not num_reads:
-            num_reads = int(self.meth_set.genome_len*depth/read_len/(1+int(pair_end)))
-        wgsim_options = {'-d': insert_mean, '-s': insert_std,
-                         '-1': read_len, '-2': read_len, '-N': num_reads,
-                         '-g': vcf_file,
-                         '-r': mut_rate, '-h': int(haplo_mode), '-S': seed,
-                         '-R': mut_indel_frac, '-X': indel_ext_prob,
-                         '-A': propN_cutoff, '-e': 0, '-m': 1}
-
-        self.wgsim_args     = wgsim_args
-        self.wgsim_options  = wgsim_options
-        self.sim_cmd_part   = wgsim_args + [str(item) for key_val in wgsim_options.items() for item in key_val]
+        # technology settings
+        self.enzyme_cut_site= enzyme_cut_site
+        self.probe_bed_file = probe_bed_file
+        if self.probe_bed_file:
+            self.tech_mode  = 2
+        elif self.enzyme_cut_site:
+            self.tech_mode  = 1
+        else:
+            self.tech_mode  = 0
 
         # sequencing settings
         self.read_len       = read_len
@@ -155,13 +155,48 @@ class BSReadSim:
         self.pos_map        = None
         self.meth_arr       = None
         self.variant_profile= None
+        self.read_count_dict= {}
+
 
         # prepare output
-        self.output_fastq   = []
-        self.creata_fastq()
-        self.gzip           = gzip
-        self.shuffle        = shuffle
+        self.fastq_writer   = StreamReads(outdir=outdir, prefix=prefix, 
+                                          pair_end=pair_end,
+                                          gzip=gzip, shuffle=shuffle)
         self.verbose        = verbose
+
+
+        # prepare wgsim command
+        wgsim_args    = [get_wgsim_path(), ref_fasta]
+        wgsim_options = {'-d': insert_mean, '-s': insert_std,
+                         '-1': read_len, '-2': read_len, 
+                         '-g': vcf_file,
+                         '-r': mut_rate, '-h': int(haplo_mode), '-S': seed,
+                         '-R': mut_indel_frac, '-X': indel_ext_prob,
+                         '-A': propN_cutoff, '-e': 0, '-m': 1}
+        self.sim_cmd_part   = wgsim_args + [str(item) for key_val in wgsim_options.items() for item in key_val]
+
+
+        # prepare read count for each contig
+        if self.tech_mode  == 2:
+            if not num_reads:
+                # calculate the effective length of each contig
+                pass
+        elif self.tech_mode== 1:
+            if not num_reads:
+                # calculate the effective length of each contig
+                pass
+        else:
+            if not num_reads:
+                num_reads = int(self.meth_set.genome_len*depth/read_len/(1+int(pair_end)))
+
+            for contig_id in self.meth_set.ref_dict.keys():
+                contig_len  = self.meth_set.ref_dict[contig_id]
+                self.read_count_dict[contig_id] = int(contig_len*num_reads/self.meth_set.genome_len)
+        
+        wgsim_options['-N'] = num_reads
+        self.wgsim_args     = wgsim_args
+        self.wgsim_options  = wgsim_options
+
 
         # progress
         if verbose:
@@ -179,12 +214,12 @@ class BSReadSim:
 
         with ThreadPoolExecutor(max_workers=self.n_threads) as executor:
             for contig_id in self.meth_set.ref_dict.keys():
-                sim_cmd  = self.sim_cmd_part + ['-c', contig_id]
-                read_gen = StreamWGSIM(sim_cmd=sim_cmd, pair_end=self.pair_end)         # should make it thread-safe?
+                sim_cmd  = self.sim_cmd_part + ['-c', contig_id] + ['-n', self.read_count_dict[contig_id]]
+                read_gen = LockedIterator(StreamWGSIM(sim_cmd=sim_cmd, pair_end=self.pair_end))
                 var_contig, sim_data= next(read_gen)                                    # the first element is the variants
                 self.current_contig = var_contig                                        # update the profiles
-                self.pos_map, self.meth_arr, _ = self.meth_db.load_contig(var_contig)   # 3 items list, pos_map, meth_arr, status, need to consider
-                self.variant_profile= self.meth_set.set_var_meth(var_contig, sim_data)   # a dict, can be empty
+                self.pos_map, self.meth_arr, _ = self.meth_db.load_contig(var_contig)   # [pos_map, meth_arr, status]
+                self.variant_profile= self.meth_set.set_var_meth(var_contig, sim_data)  # a dict, can be empty
                 if self.pair_end:                                                       # what if read_gen is empty at very beginning
                     job_arr = [executor.submit(self.process_read_pair, read_pair) for read_pair in read_gen]
                 else:
@@ -195,18 +230,10 @@ class BSReadSim:
                         job.add_done_callback(self.progress_bar)
 
 
-        for output in self.output_fastq:# close the fastq object
-            output.close()
-
         if self.verbose:                    # close the progress bar
             self.tqdm_pbar.close()
 
-        for fastq in self.fastq_list:       # shuffle or gzip reads
-            if self.shuffle:
-                self.shuffle_read(fastq, self.ref_fasta)
-            if self.gzip:
-                self.gzip_read(fastq)
-
+        self.fastq_writer.close()
         print('Simulation Finished!\n')
 
 
@@ -222,7 +249,7 @@ class BSReadSim:
         self.rev_complement(read_pair[0], read_flip)
         self.add_seq_err(read_pair[0])
         self.add_qual_score(read_pair[0])
-        self.output_reads(read_pair, read_flip, read1_sub)
+        self.fastq_writer.output_reads(read_pair, read_flip, read1_sub)
 
 
     def process_read_pair(self, read_pair):
@@ -264,7 +291,7 @@ class BSReadSim:
         self.add_qual_score(read_pair[1])
 
         # output
-        self.output_reads(read_pair, read_flip, read1_sub)
+        self.fastq_writer.output_reads(read_pair, read_flip, read1_sub)
 
 
     def mask_context(self, read_rec, read_sub):
@@ -407,27 +434,6 @@ class BSReadSim:
             pass
 
 
-    def output_reads(self, read_pair, read_flip, read1_sub):
-        read_lines = []
-        for idx in range(1+int(self.pair_end)):
-            read_id  = f'{read_pair[idx]["read_id"]}/{idx+1}'
-            read_seq = ''.join("ACGT"[i] for i in read_pair[idx]['seq'])
-            read_sub = ('C2T', 'G2A')[read_pair[idx]['sub']]
-            read_strd= ('W','C')[read_pair[idx]['flip']]
-            read_cmt = f'+{read_pair[idx]["cgr_str"]}:{read_strd}_{read_sub}'
-            read_qual= ''.join(read_pair[idx]['qual'])
-
-            read_lines.append(f'{read_id}\n{read_seq}\n{read_cmt}\n{read_qual}\n')
-        self.write_file(read_lines)
-
-
-    def write_file(self, read_lines):
-        """write bisulfite reads to disk"""
-        with self.writeLock:
-            for idx, line in enumerate(read_lines):
-                self.output_fastq[idx].write(read_lines[idx])
-
-
     @property
     def progress_bar(self):
         '''show the progress of read simulaiton'''
@@ -438,53 +444,6 @@ class BSReadSim:
         if incre_amount > self.tqdm_count[2]:
             self.tqdm_pbar.update(incre_amount)
             self.tqdm_count[1] = self.tqdm_count[0]
-
-
-    def creata_fastq(self):
-        """Return io object for fastq writing"""
-        fastq1 = f'{self.outdir}/{self.prefix}_1.fastq'
-        fastq2 = f'{self.outdir}/{self.prefix}_2.fastq'
-        if self.pair_end:
-            self.fastq_list = [fastq1, fastq2]
-        else:
-            self.fastq_list = [fastq1]
-
-        for fastq_file in self.fastq_list:
-            # check if the file exists
-            self.output_fastq.append(open(fastq_file, 'a'))
-
-
-    @staticmethod
-    def shuffle_read(fastq_file: str = None, random_source: str = None):
-        '''
-        shuffle the reads randomly, if false, the reads will be segemented by contigs
-        the number of simulated reads should not exceed the number of bits in the reference genome.
-        for HG, should be less than 8*3G < 2.4*10^10 (average DEPTH should be less than read_len*8)
-        from link: https://www.biostars.org/p/9764/
-        '''
-        print(f"shuffle reads {fastq_file}")
-        
-        prefix_split    = os.path.splitext(fastq_file)[0].split("_")
-        fastq_shuffle   = "_".join(prefix_split[:-1]) + "_shuffle_" + prefix_split[-1] + ".fastq"
-        shuf_cmd_list   = ["awk", "'{OFS=\"\t\"; getline seq; getline sep; getline qual; print $0,seq,sep,qual}'",
-                         fastq_file, "|", "shuf --random-source", random_source, "|",
-                         "awk", "'{OFS=\"\n\"; print $1,$2,$3,$4}'", ">", fastq_shuffle]
-        shuffle_run     = subprocess.Popen(shuf_cmd_list,  stdout=subprocess.PIPE, universal_newlines=True)
-        stdout, stderr  = shuffle_run.communicate()
-        
-        rename_cmd_list = ["mv", fastq_shuffle, fastq_file]
-        rename_run      = subprocess.Popen(rename_cmd_list,stdout=subprocess.PIPE, universal_newlines=True)
-        stdout, stderr  = rename_run.communicate()
-
-
-    @staticmethod
-    def gzip_read(fastq_file):
-        '''gzip the output reads to fastq.gz format'''
-        print(f"gzip reads {fastq_file}")
-        
-        gzip_cmd_list   = ["gzip", fastq_file]
-        gzip_run        = subprocess.Popen(gzip_cmd_list,  stdout=subprocess.PIPE, universal_newlines=True)
-        stdout, stderr  = gzip_run.communicate()
 
 
 # column context, row cigar

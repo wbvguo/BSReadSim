@@ -134,3 +134,4 @@ dmypy.json
 */.ipynb_checkpoints/
 .gitignore
 *temp/
+Simulate/*_copy*
