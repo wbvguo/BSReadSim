@@ -2,6 +2,7 @@
    Copyright (c) 2008 Genome Research Ltd (GRL).
                  2011 Heng Li <lh3@live.co.uk>
                  2022 Wenbin Guo <wbguo@ucla.edu>
+
    Permission is hereby granted, free of charge, to any person obtaining
    a copy of this software and associated documentation files (the
    "Software"), to deal in the Software without restriction, including
@@ -22,7 +23,7 @@
 */
 
 /* This program is based on WGSIM(v0.3.1-r13)[https://github.com/lh3/wgsim.git], with heavy 
- * modifications to simulate WGS/RRS/TS or WGBS/RRBS/TBS reads in BSReadSim for diploid organism */
+ * modifications to simulate WGS/RRS/TS or WGBS/RRBS/TBS reads in BSReadSim for diploid organisms */
 
 #include <stdlib.h>
 #include <math.h>
@@ -39,6 +40,7 @@
 #include <algorithm>
 #include "kseq.h"
 #include "vcf.h"
+#include "htsim.h"
 KSEQ_INIT(gzFile, gzread)
 
 #define PACKAGE_VERSION "1.0.2"
@@ -62,6 +64,7 @@ const uint8_t nst_nt4_table[256] = {
     4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4, 
     4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4
 };
+
 
 static double ERR_RATE = 0.005;
 static double MUT_RATE = 0.01;
@@ -103,8 +106,9 @@ const  uint8_t cg_context_table[64] = {
     0,   0,   0,   0,    0,   0,   0,   0, 
 };
 
-const  uint8_t cg_table[4] = {1, 0, 0, 1}; // for cg check
 
+const  uint8_t cg_table[4] = {0, 1, 1, 0}; // for cg check
+int dist, std_dev, size_l, size_r; // global variables, only changed at program start
 
 /* wgsim */
 // if the leftmost 4 bit is non-zero, then it must be snp or indel
@@ -122,36 +126,54 @@ typedef struct {
 } snp_rec;
 
 typedef struct {
-    int pos_l, pos_r, strand;
+    int pos_l, pos_r;
     float score;
+    int8_t strand;
 } probe_rec;
 
 typedef struct {
-    char *name, *contig;
+    char *name, *chr_id;
 } probe_meta;
 
 typedef struct {
-    int len = -1;         /* length of cutting site */
-    int idx = -1;         /* cutting position on *seq */
-    std::vector<int> seq; /* sequence encoded by numbers*/
+    int len = -1;           /* length of cutting site */
+    int idx = -1;           /* cutting position on *seq */
+    std::vector<int> seq;   /* sequence encoded by numbers*/
 } cut_site;
+
+typedef struct {
+    int pos;
+    int8_t type = -1;
+} cut_pos;
 
 typedef struct {
     int pos_l, pos_r;
     int len;
-    uint8_t cut_l, cut_r;
-} cut_frag;
-
-typedef struct {
-    int pos;
-    uint8_t type;
-} cut_pos;
+    int8_t cut_l = -1;
+    int8_t cut_r = -1;
+    int8_t strand= 0;       /* each struct take <= 16 bytes*/
+} fragment;
 
 
 std::vector<snp_rec> snp_vec;
 std::vector<cut_site> site_vec;
-std::vector<cut_frag> frag_vec;
+std::vector<fragment> frag_vec;
 std::vector<probe_rec> probe_vec;
+std::vector<float> cgbias_vec(128);
+float ratio_step = 1/128;
+
+
+// initialize random generator for read position simulation
+std::random_device rd;
+std::mt19937 gen(rd());
+// initialize random normal for insert size simulation 
+std::random_device rn;  //Will be used to obtain a seed for the random number engine
+std::mt19937 gen_rn(rn()); //Standard mersenne_twister_engine seeded with rd()
+std::normal_distribution<float> dis_rn(0.0, 1.0);
+// initialize random generator for cg bias
+std::random_device ru;
+std::mt19937 gen_ru(ru());
+std::uniform_real_distribution<float> dis_ru(0.0,1.0);
 
 
 void parse_cut_site(char *cut_str)
@@ -180,7 +202,7 @@ void parse_cut_site(char *cut_str)
 
 void gen_cut_frag(const kseq_t *ks, int MIN_FRAG_LEN, int MAX_FRAG_LEN)
 {
-    std::vector<mut_t> rseq_ref(ks->seq.l);
+    std::vector<mut_t> rseq_ref(ks->seq.l); // TODO: create cut_pos without create rseq_ref
     std::vector<cut_pos> cutpos_vec;
 
     for (int i = 0; i != ks->seq.l; ++i) {
@@ -194,7 +216,8 @@ void gen_cut_frag(const kseq_t *ks, int MIN_FRAG_LEN, int MAX_FRAG_LEN)
     auto iter_save = rseq_ref.begin(); // save
     //printf("%d %d\n", ptr_begin, ptr_end);
 
-    int count = 0; cut_pos tmp_cutpos;
+    int count = 0; 
+    cut_pos tmp_cutpos;
     while (iter_curr < ptr_end)
     {
         // printf("========%i========\n", count);
@@ -235,8 +258,7 @@ void gen_cut_frag(const kseq_t *ks, int MIN_FRAG_LEN, int MAX_FRAG_LEN)
     //printf("%ld\n", cut_pos.size());
     // generate potential intervals
 
-    cut_frag tmp_frag;
-    uint64_t eff_len = 0;
+    fragment tmp_frag;
     for (int i = -1; i <= int(cutpos_vec.size()); i++){
         if(i==-1 || i == int(cutpos_vec.size())){ //append the first and last fragments
             tmp_frag = {};
@@ -253,7 +275,7 @@ void gen_cut_frag(const kseq_t *ks, int MIN_FRAG_LEN, int MAX_FRAG_LEN)
                 tmp_frag.cut_r = -1;
                 tmp_frag.len   = ks->seq.l - cutpos_vec[i-1].pos;
             }
-            eff_len += tmp_frag.len;
+
             frag_vec.push_back(tmp_frag);
             continue;
         }
@@ -267,29 +289,28 @@ void gen_cut_frag(const kseq_t *ks, int MIN_FRAG_LEN, int MAX_FRAG_LEN)
                 tmp_frag.cut_r = cutpos_vec[j].type;
                 tmp_frag.len   = frag_len;
 
-                eff_len += tmp_frag.len;
                 frag_vec.push_back(tmp_frag);
             }
         }
     }
 }
 
-void parse_bed_fmt(char *s, char *contig_id, probe_rec *tmp_probe, probe_meta *tmp_probe_meta)
+void parse_bed_line(char *line, char *chr_id, probe_rec *tmp_probe, probe_meta *tmp_probe_meta)
 {
 	char *p, *q, *name = 0;
     int i, start, end, strand;
 	float score;
 
-	for (i = 0, p = q = s;; ++q) {
+	for (i = 0, p = q = line;; ++q) {
 		if (*q == '\t' || *q == '\0') {
 			int c = *q;
 			*q = 0;
             switch (i) {
-            case 0: contig_id = p; break;
-            case 1: start= atoi(p); break;
-            case 2: end  = atoi(p); break;
-            case 3: name = strdup(p); break;
-            case 4: score= atof(p); break; // what if score is .
+            case 0: chr_id = p; break;
+            case 1: start  = atoi(p); break;
+            case 2: end    = atoi(p); break;
+            case 3: name   = strdup(p); break;
+            case 4: score  = atof(p); break; // what if score is .
             case 5: strand = int(strcmp(p,"+")==0)-int(strcmp(p,"-")==0); break;
             default: break;}
 			++i, p = q + 1;
@@ -302,9 +323,9 @@ void parse_bed_fmt(char *s, char *contig_id, probe_rec *tmp_probe, probe_meta *t
     tmp_probe->score = score;
     tmp_probe->strand= strand;
     
-    tmp_probe_meta->contig = contig_id;
-    tmp_probe_meta->name = name;
-	if(i < 4){contig_id = 0;}
+    tmp_probe_meta->chr_id = chr_id;
+    tmp_probe_meta->name   = name;
+	if(i < 4){chr_id = 0;}
 }
 
 void parse_bed_chr(char *fname, char *chr_id)
@@ -313,7 +334,8 @@ void parse_bed_chr(char *fname, char *chr_id)
     if(fp == 0 ){ fprintf(stderr,"cannot open bed file: %s\n",fname); exit (EXIT_FAILURE);}
     
     kstring_t line = {0,0,0};
-    probe_rec tmp_probe;  probe_meta tmp_probe_meta;
+    probe_rec tmp_probe;  
+    probe_meta tmp_probe_meta;
 
     int ret;
     char *chr_current;
@@ -324,16 +346,16 @@ void parse_bed_chr(char *fname, char *chr_id)
         if (collect_present == false && collect_previous == true) { break; } // finished collecting
         // a new round, save last status
         collect_previous= collect_present;
-        parse_bed_fmt(line.s, chr_current, &tmp_probe, &tmp_probe_meta); //might need to test
+        parse_bed_line(line.s, chr_current, &tmp_probe, &tmp_probe_meta); //might need to test
 
         if (strcmp(chr_current, chr_id) != 0){
             collect_present = false;
             continue;
         } else {
-            if (!chr_current){fprintf(stderr, "Skip invalid probe: chr %s, name %s...\n", tmp_probe_meta.contig, tmpprobe_meta.name);}
+            if (!chr_current){fprintf(stderr, "Skip invalid probe: chr %s, name %s...\n", tmp_probe_meta.chr_id, tmp_probe_meta.name);}
             probe_vec.push_back(tmp_probe);
-            tmp_probe       = {};
-            tmp_probe_meta  = {};
+            tmp_probe      = {};
+            tmp_probe_meta = {};
         }
     }
     free(line.s);
@@ -343,13 +365,12 @@ void parse_bed_chr(char *fname, char *chr_id)
 
 void parse_vcf_chr(char *fname, char *chr_id)
 {
-    //clean the container
-    snp_vec.clear();
+    snp_vec.clear(); //clean the container
 
     //open vcf file
-    htsFile *fp    = hts_open(fname,"rb");
+    htsFile   *fp  = hts_open(fname,"rb");
     bcf_hdr_t *hdr = bcf_hdr_read(fp);
-    bcf1_t *rec    = bcf_init();
+    bcf1_t    *rec = bcf_init();
     
     //collect control
     int ngt_arr = 0;
@@ -691,12 +712,12 @@ void sim_print_mutref(const char *name, const kseq_t *ks, mutseq_t *hap1, mutseq
     }
 }
 
-void sim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, int size_l, int size_r, int output_mode, char *vcf_file, char *contig_id, int64_t contig_N)
+void sim_core(const char *fn, int is_hap, uint64_t N, int tech_mode, int output_mode, char *vcf_file, char *chr_id, int64_t contig_N)
 {
     kseq_t *ks;
     mutseq_t rseq[2];
     gzFile   fp_fa;
-    uint64_t tot_len = 0, contig_len= 0, l = 0, ii = 0;
+    uint64_t tot_len = 0, l = 0, ii = 0;
     uint64_t tot_sub = 0, tot_indel = 0, tot_err = 0, tot_pairs = 0;
     uint8_t *tmp_seq[2];    	// save sequence
     int8_t  *tmp_offset[2]; 	// save offset per base
@@ -724,61 +745,13 @@ void sim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, int
 
     Q = (ERR_RATE == 0.0)? 'I' : (int)(-10.0 * log(ERR_RATE) / log(10.0) + 0.499) + 33;
 
-    fp_fa = gzopen(fn, "r");
-    ks = kseq_init(fp_fa);
-    // check if fasta is non-existing
-    if (!fp_fa) { fprintf (stderr, "ERROR: gzopen of '%s' failed: %s. Exit... \n", fn, strerror (errno)); exit (EXIT_FAILURE);}
-
-    bool bool_contig = false, bool_contig_N = false; 
-    fprintf(stderr, "[%s] calculating the total length of the reference sequence...\n", __func__);
-    while ((l = kseq_read(ks)) >= 0) {
-        tot_len += l;
-        ++n_ref;
-        if (strcmp(contig_id, ks->name.s)==0){ bool_contig = true; contig_len = l;}
-    }
-    kseq_destroy(ks);
-    gzclose(fp_fa);
-
-    // check if fasta is empty
-    if (!n_ref) { fprintf (stderr, "ERROR: Input fasta is empty: %s. Exit... \n", fn); exit (EXIT_FAILURE);}
-    fprintf(stderr, "[%s] %d contig sequences, total length: %lu\n", __func__, n_ref, tot_len);
-
-    // check input contig_id
-    if (bool_contig && contig_N <= 0) {
-        contig_N = int64_t(contig_len / tot_len * N + 0.5);
-        fprintf(stderr, "[%s] Simulate %ld reads from contig %s (calculate from -N, as -n is not specified)...\n", __func__, contig_N, contig_id);
-    } else if (bool_contig && contig_N > 0) {
-        fprintf(stderr, "[%s] Simulate %ld reads from contig %s\n", __func__, contig_N, contig_id);
-        bool_contig_N = true;
-    } else {
-        fprintf(stderr, "ERROR: Contig id '%s' is not found in the fasta, please check!\n", contig_id); exit(EXIT_FAILURE);
-    }
-
-    // check input vcf file
-    FILE *vcf;
-    bool bool_vcf = false;
-    if (strcmp(vcf_file, "None") == 0 || strlen(vcf_file) == 0) {
-        fprintf(stderr, "[%s] No VCF input, will generate SNP randomly if mutation rate is nonzero\n", __func__);
-    } else if(vcf=fopen(vcf_file,"r")) {
-        fprintf(stderr, "[%s] VCF file exists, use it to simulate reads\n", __func__);
-        bool_vcf = true;
-        fclose(vcf);
-    } else {
-        fprintf(stderr, "ERROR: The specified VCF file does not exist, please check!\n"); exit(EXIT_FAILURE);
-    }
-
 
     // start simulate
     fp_fa = gzopen(fn, "r");
     ks = kseq_init(fp_fa);
 
-    // initialise random normal for insert size simulation 
-    std::random_device rn;  //Will be used to obtain a seed for the random number engine
-    std::mt19937 gen_rn(rn()); //Standard mersenne_twister_engine seeded with rd()
-    std::normal_distribution<float> dis_rn(0.0, 1.0);
-
     while ((l = kseq_read(ks)) >= 0) {  //here l is the chromosome length
-        if (bool_contig) {if (strcmp(contig_id, ks->name.s)!=0){continue;}}
+        if (bool_contig) {if (strcmp(chr_id, ks->name.s)!=0){continue;}}
         if (l < dist + 3 * std_dev) {
             fprintf(stderr, "[%s] skip sequence '%s' as it is shorter than %d!\n", __func__, ks->name.s, dist + 3 * std_dev);
             continue;
@@ -788,21 +761,33 @@ void sim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, int
         tot_pairs += n_pairs;
 
         // initialize random number generator to generate read positions
-        int tool_type=0;
-        if (tool_type==1){
+        int tool_type=0; 
+        bool is_uniform=true;
 
+        if (tool_type==1){
+            if(is_uniform){
+                std::uniform_int_distribution<int> dis(0, frag_vec.size()-1); // might be empty
+            }else{
+                std::vector<int> weights;
+                std::discrete_distribution<int> dis(weights.begin(), weights.end());
+            }
+        }else if (tool_type==2){
+            if(is_uniform){
+                std::uniform_int_distribution<int> dis(0, frag_vec.size()-1); // might be empty
+            }else{
+                std::vector<int> weights;
+                std::discrete_distribution<int> dis(weights.begin(), weights.end());
+            }
+        }else{
+            if(is_uniform){
+                // pull from truncated distribution to ensure read doesn't pass boundary
+                std::uniform_int_distribution<int> dis(2, ks->seq.l - max_inner - 2*max_size -2); //add 2 base offset
+            } else {
+                std::vector<int> weights;
+                std::discrete_distribution<int> dis(weights.begin(), weights.end());
+            }
         }
 
-        std::random_device rd;
-        std::mt19937 gen(rd());
-        // pull from truncated distribution to ensure read doesn't pass boundary 
-        std::uniform_int_distribution<int> dis(2, ks->seq.l - max_inner - 2*max_size -2); //add 2 base offset
-        printf("%d", dis);
-
-        void *ptr;
-        ptr = &dis;
-
-        
         
         uint8_t site_flag_arr[ks->seq.l] = {0}; // record if the site is a SNP/INDEL position (the base can be either REF/ALT)
         // introduce mutations and print them to stdout
@@ -819,104 +804,104 @@ void sim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, int
 
         for (ii = 0; ii != n_pairs; ++ii) { // the core loop
             int pos_l, pos_r;
-            int s[2], n_sub[2], n_indel[2], n_err[2], ext_coor[2], cover_pos[2], i, j, k, ix;
+            int n_sub[2]={0,0}, n_indel[2]={0,0}, n_err[2]={0,0}, cover_pos[2]={0,0}; 
+            int ext_coor[2], i, j, k, ix;
             //cover_pos hold if the read covers a snp *position* (the read don't have to contain the ALT allele)
             //j hold read1/read2, k hold the length of read, ix hold the cursor transversing read
 
             // random position generation
-            int pos = dis(gen);
+            // int pos = dis(gen);
             int insert_dev = (int)(std_dev * dis_rn(gen_rn));
             inner_dist = dist + insert_dev - size_l - size_r; //dist is the mean insert size
             inner_dist = std::max(min_inner, std::min(inner_dist, max_inner));
-            s[0] = size[0]; s[1] = size[1];
 
             // generate the read sequences
             target = rseq[drand48()<0.5?0:1].s; // haplotype from which the reads are generated
-            n_sub[0] = n_sub[1] = n_indel[0] = n_indel[1] = n_err[0] = n_err[1] = cover_pos[0] = cover_pos[1] =0;
             int start[2] = {pos, pos + inner_dist + size_l};
             int end[2] = {start[0], start[1]};
             int offset[2] = {0, 0};
 
             // x: select read1 or read2; ext_coor: extend corrdinates;
-            #define __gen_read(x, start_pos, iter) do {                 \
-                /* generate reads assign mutation flag; */              \
-                for (i = (start_pos), k = 0, ext_coor[x] = -10; i >= 0 && i < ks->seq.l && k < s[x]; iter) { \
-                    int c = target[i], mut_type = c & mutmsk;           \
-                    if (ext_coor[x] < 0) {                              \
-                        /* avoid indel as the first base */             \
+            #define __gen_read(x, start_pos, iter) do {                     \
+                /* generate reads assign mutation flag; */                  \
+                for (i = (start_pos), k = 0, ext_coor[x] = -10; i >= 0 && i < ks->seq.l && k < size[x]; iter) { \
+                    int c = target[i], mut_type = c & mutmsk;               \
+                    if (ext_coor[x] < 0) {                                  \
+                        /* avoid indel as the first base */                 \
                         if (mut_type != NOCHANGE && mut_type != SUBSTITUTE) continue; \
-                        start[x] = i;                                   \
-                        end[x] = i;                                     \
-                        ext_coor[x] = i;                                \
-                    }                                                   \
-                    if (mut_type == DELETE){                            \
-                        ++offset[x];                                    \
-                        ++end[x];                                       \
-                        ++n_indel[x];                                   \
-                    }                                                   \
+                        start[x] = i;                                       \
+                        end[x] = i;                                         \
+                        ext_coor[x] = i;                                    \
+                    }                                                       \
+                    if (mut_type == DELETE){                                \
+                        ++offset[x];                                        \
+                        ++end[x];                                           \
+                        ++n_indel[x];                                       \
+                    }                                                       \
                     else if (mut_type == NOCHANGE || mut_type == SUBSTITUTE) { \
-                        /* context: 0x00 Match, 0x01 SNP, 0x03 INSERT   \
-                                    0x01 CG, 0x03 CHG, 0x07 CHH (>>)    \
-                                    0x09 GC, 0x0b GDC, 0x0f GDD (<<) */ \
-                        tmp_seq[x][k] = c & 0xf;                        \
-                        tmp_offset[x][k] = offset[x];                   \
-                        if (mut_type == SUBSTITUTE) {                   \
-                            ++n_sub[x];                                 \
-                            tmp_mutation[x][k] = SNV;                   \
-                        } else {                                        \
-                            tmp_mutation[x][k] = MATCH;                 \
-                        }                                               \
-                        ++end[x];                                       \
-                        ++k;                                            \
-                    } else {                                            \
-                        tmp_seq[x][k] = c & 0xf;                        \
-                        tmp_offset[x][k] = offset[x];                   \
-                        tmp_mutation[x][k] = MATCH;/*The base is ref*/  \
-                        ++n_indel[x];                                   \
-                        ++end[x];                                       \
-                        ++k;                                            \
-                        int num_ins, ins;                               \
-                        for (num_ins = mut_type>>12, ins = c>>4; num_ins > 0 && k < s[x]; --num_ins, ins >>= 2){ \
-                            --offset[x];                                \
-                            tmp_seq[x][k] = ins & 0x3;                  \
-                            tmp_offset[x][k] = offset[x];               \
-                            tmp_mutation[x][k] = INSR;                  \
-                            ++k;                                        \
-                        }                                               \
-                    }                                                   \
-                    cover_pos[x] |= site_flag_arr[i];                   \
-                }                                                       \
-                /* append CG context flag;                              \
-                   currently not handling bounday context by indel*/    \
-                for (ix=0; ix < k; ++ix) {                              \
-                    int c_d1, c_d2;                                     \
-                    int c = tmp_seq[x][ix];                             \
-                    if (cg_table[(uint8_t) c]) continue;                \
-                    if (c == 1) {                                       \
-                        /*handle the last 2 base*/                      \
-                        if(ix > k-3){                                   \
-                            int ix_ext = k - ix; /*think if ix=k-1*/    \
-                            c_d1 = target[end[x]+ix_ext];               \
-                            c_d2 = target[end[x]+ix_ext+1];             \
-                        } else {                                        \
-                            c_d1 = tmp_seq[x][ix+1];                    \
-                            c_d2 = tmp_seq[x][ix+2];                    \
-                        }                                               \
-                    } else {                                            \
-                        /*handle the first 2 base*/                     \
-                        if(ix < 2){                                     \
-                            int ix_ext = 2 - ix; /*think if ix=1 */     \
-                            c_d1 = target[start[x]-ix_ext+1];           \
-                            c_d2 = target[start[x]-ix_ext];             \
-                        } else {                                        \
-                            c_d1 = tmp_seq[x][ix-1];                    \
-                            c_d2 = tmp_seq[x][ix-2];                    \
-                        }                                               \
-                    }                                                   \
-                    uint8_t context_idx = c << 4 | c_d1 <<2 | c_d2;     \
-                    tmp_context[x][ix] = cg_context_table[context_idx]; \
-                }                                                       \
-                if (k != s[x]) ext_coor[x] = -10;                       \
+                        /* context: 0x00 Match, 0x01 SNP, 0x03 INSERT       \
+                                    0x01 CG, 0x03 CHG, 0x07 CHH (>>)        \
+                                    0x09 GC, 0x0b GDC, 0x0f GDD (<<) */     \
+                        tmp_seq[x][k] = c & 0xf;                            \
+                        tmp_offset[x][k] = offset[x];                       \
+                        if (mut_type == SUBSTITUTE) {                       \
+                            ++n_sub[x];                                     \
+                            tmp_mutation[x][k] = SNV;                       \
+                        } else {                                            \
+                            tmp_mutation[x][k] = MATCH;                     \
+                        }                                                   \
+                        ++end[x];                                           \
+                        ++k;                                                \
+                    } else {                                                \
+                        tmp_seq[x][k] = c & 0xf;                            \
+                        tmp_offset[x][k] = offset[x];                       \
+                        tmp_mutation[x][k] = MATCH;/*The base is ref*/      \
+                        ++n_indel[x];                                       \
+                        ++end[x];                                           \
+                        ++k;                                                \
+                        int num_ins, ins;                                   \
+                        for (num_ins = mut_type>>12, ins = c>>4; num_ins > 0 && k < size[x]; --num_ins, ins >>= 2){ \
+                            --offset[x];                                    \
+                            tmp_seq[x][k] = ins & 0x3;                      \
+                            tmp_offset[x][k] = offset[x];                   \
+                            tmp_mutation[x][k] = INSR;                      \
+                            ++k;                                            \
+                        }                                                   \
+                    }                                                       \
+                    cover_pos[x] |= site_flag_arr[i];                       \
+                }                                                           \
+                /* append CG context flag;                                  \
+                   currently not handling bounday context by indel*/        \
+                for (ix=0; ix < k; ++ix) {                                  \
+                    int c_d1, c_d2;                                         \
+                    int c = tmp_seq[x][ix];                                 \
+                    if (cg_table[(uint8_t) c]){                             \
+                        if (c == 1) {                                       \
+                            /*handle the last 2 base*/                      \
+                            if(ix > k-3){                                   \
+                                int ix_ext = k - ix; /*think if ix=k-1*/    \
+                                c_d1 = target[end[x]+ix_ext];               \
+                                c_d2 = target[end[x]+ix_ext+1];             \
+                            } else {                                        \
+                                c_d1 = tmp_seq[x][ix+1];                    \
+                                c_d2 = tmp_seq[x][ix+2];                    \
+                            }                                               \
+                        } else {                                            \
+                            /*handle the first 2 base*/                     \
+                            if(ix < 2){                                     \
+                                int ix_ext = 2 - ix; /*think if ix=1 */     \
+                                c_d1 = target[start[x]-ix_ext+1];           \
+                                c_d2 = target[start[x]-ix_ext];             \
+                            } else {                                        \
+                                c_d1 = tmp_seq[x][ix-1];                    \
+                                c_d2 = tmp_seq[x][ix-2];                    \
+                            }                                               \
+                        }                                                   \
+                        uint8_t context_idx = c << 4 | c_d1 <<2 | c_d2;     \
+                        tmp_context[x][ix] = cg_context_table[context_idx]; \
+                    }                                                       \
+                }                                                           \
+                if (k != size[x]) {ext_coor[x] = -10;}                      \
             } while (0)
 
             __gen_read(0, pos, ++i);
@@ -928,7 +913,7 @@ void sim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, int
             }
             for(j = 0; j < 2; ++j){ //check the number of Ns
                 int n_n =0;
-                for (i = 0; i < s[j]; ++i) {
+                for (i = 0; i < size[j]; ++i) {
                     int c = tmp_seq[j][i];
                     if (c >= 4) { // actually c should be never larger than 4 if everything is correct
                         ++n_n; 
@@ -937,7 +922,7 @@ void sim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, int
                     qstr[i] = Q; // generate the quality score
                 }
                 qstr[i] = 0;
-                if ((double)n_n / s[j] > MAX_N_RATIO) break;
+                if ((double)n_n / size[j] > MAX_N_RATIO) break;
             }
             if (j < 2) { // too many ambiguous bases on one of the reads
                 --ii;
@@ -955,14 +940,14 @@ void sim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, int
             if(output_mode == 0){
                 // flip and get the reverse complementary
                 int is_flip = drand48() < 0.5? 0 : 1;
-                for (k = 0; k < s[1]; ++k) { 
-                    if (k <= int(s[1]/2)) { // reverse
+                for (k = 0; k < size[1]; ++k) { 
+                    if (k <= int(size[1]/2)) { // reverse
                         int tmp_base  = tmp_seq[1][k];
-                        tmp_seq[1][k] = tmp_seq[1][s[1]-k];
-                        tmp_seq[1][s[1]-k] = tmp_base;
+                        tmp_seq[1][k] = tmp_seq[1][size[1]-k];
+                        tmp_seq[1][size[1]-k] = tmp_base;
                         int tmp_cigar = tmp_mutation[1][k];
-                        tmp_mutation[1][k] = tmp_mutation[1][s[1]-k];
-                        tmp_mutation[1][s[1]-k] = tmp_cigar;
+                        tmp_mutation[1][k] = tmp_mutation[1][size[1]-k];
+                        tmp_mutation[1][size[1]-k] = tmp_cigar;
                     }
                     tmp_seq[1][k] = tmp_seq[1][k] < 4? 3 - tmp_seq[1][k] : 4; // complement
                 }
@@ -971,7 +956,7 @@ void sim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, int
                     // header: 1-based coordinates for string output
                     fprintf(stdout, "@%s:%d:%d:%llx:%d:%d:%d/%d\n", ks->name.s, start[0]+1, end[1]+1, (long long)ii, flag_pos, flag_mut, flag_indel, j+1);
                     // sequence (introduce random sequencing error)
-                    for (i = 0; i < s[jj]; ++i) {
+                    for (i = 0; i < size[jj]; ++i) {
                         int c = tmp_seq[jj][i];
                         if (drand48() < ERR_RATE){
                             // c = (c + (int)(drand48() * 3.0 + 1)) & 3; // random sequencing errors
@@ -985,7 +970,7 @@ void sim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, int
                     fprintf(stdout, "\n");
                     // comment
                     fprintf(stdout, "+:%d:%d:%d:%d:%d:%d:%d:%d:", start[jj]+1, end[jj]+1, cover_pos[jj], n_sub[jj], n_indel[jj], n_err[jj], end[1]-start[0], start[1]-end[0]);
-                    for (i = 0; i < s[jj]; ++i) {
+                    for (i = 0; i < size[jj]; ++i) {
                         int c = (tmp_mutation[jj][i] & 0x0f);
                         fputc("MXIE"[mut_table[c]], stdout);
                     }
@@ -997,13 +982,13 @@ void sim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, int
                 for (j = 0; j < 2; ++j) {
                     // header: 0-based coordinates for number output
                     fprintf(stdout, "@%s:%d:%d:%llx %d %d %d %d %d ", ks->name.s, start[0]+1, end[1]+1, (long long)ii, j, flag_pos, flag_mut, flag_indel, Q); 
-                    for (i = 0; i < s[j]; ++i) {
+                    for (i = 0; i < size[j]; ++i) {
                         //fprintf(stdout, "%x", tmp_mutation[j][i]); //this will output the hex number, below line will output the ascii
                         fputc(tmp_mutation[j][i], stdout);
                     }
                     fprintf(stdout, "\n");
                     // sequence (no sequencing error, represented by 0-4)
-                    for (i = 0; i < s[j]; ++i) {
+                    for (i = 0; i < size[j]; ++i) {
                         //fprintf(stdout, "%d", tmp_seq[j][i]);
                         fputc(tmp_seq[j][i], stdout);
                     }
@@ -1011,13 +996,13 @@ void sim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, int
                     // comment
                     fprintf(stdout, "+:%d:%d:%d:%d:%d:%d:%d:", start[j], end[j], cover_pos[j], n_sub[j], n_indel[j], end[1]-start[0], start[1]-end[0]);
                     const char *pad = "";
-                    for (i = 0; i < s[j]; ++i) {
+                    for (i = 0; i < size[j]; ++i) {
                         fprintf(stdout, "%s%d", pad, tmp_offset[j][i]);
                         pad = ",";
                     }
                     fprintf(stdout, "\n");
                     // quality
-                    for (i = 0; i < s[j]; ++i) {
+                    for (i = 0; i < size[j]; ++i) {
                         //fprintf(stdout, "%x", tmp_context[j][i]);
                         fputc(tmp_context[j][i], stdout);
                     }
@@ -1042,80 +1027,92 @@ void sim_core(const char *fn, int is_hap, uint64_t N, int dist, int std_dev, int
     free(tmp_mutation[0]); free(tmp_mutation[1]);
 }
 
-void wgsim_rand(const kseq_t *ks, int max_inner, int max_size, bool is_uniform)
+bool wgsim_rand(auto dis, fragment *tmp_frag, mut_t *target, bool is_uniform, int tot_size, int min_insert_size, int max_insert_size)
 {
-    // return the positions every time you call it
-    // initialize random number generator to generate read positions
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    if(is_uniform){
-        // pull from truncated distribution to ensure read doesn't pass boundary 
-        std::uniform_int_distribution<int> dis(2, ks->seq.l - max_inner - 2*max_size -2); //add 2 base offset
-        
-    } else {
-        std::vector<int> weights;
-        std::discrete_distribution<int> dis(weights.begin(), weights.end());
-        
-    }
-    
 
-}
+    // return the left and right most positon of the insert fragment
+    int pos_l = (*dis)(gen);
+    int insert_dev = (int)(std_dev * dis_rn(gen_rn));
+    int insert_len = std::max(min_insert_size, std::min(dist + insert_dev, max_insert_size));
+    int pos_r = std::min(pos_l + insert_len, tot_size -2);
+    tmp_frag->pos_l= pos_l;
+    tmp_frag->pos_r= pos_r;
+    tmp_frag->len  = pos_r - pos_l;
 
-void rrsim_rand(bool is_uniform)
-{
-    std::random_device rd;
-    std::mt19937 gen(rd());
     if(is_uniform){
-        std::uniform_int_distribution<int> dis(0, frag_vec.size()-1); // might be empty
-    }else{
-        std::vector<int> weights;
-        std::discrete_distribution<int> dis(weights.begin(), weights.end());
+        return true;
+    }else{//calculate CG cotents
+        int cg_count =0;
+        for(int kk = pos_l; kk <= pos_r; ++kk){
+            cg_count += cg_table[(uint8_t)(target[kk]& 0x3)]; // I know it's not perfect, but fine enough
+        }
+        float cg_ratio = cg_count/(pos_r - pos_l);
+        float cg_prob  = cgbias_vec[round(cg_ratio/ratio_step)];
+        return(dis_ru(gen_ru) <= cg_prob);
     }
 }
 
-void tsim_rand(bool is_uniform)
+bool rrsim_rand(auto dis, fragment *tmp_frag, mut_t *target, bool is_uniform, int tot_size, int min_insert_size, int max_insert_size)
 {
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    if(is_uniform){
-        std::uniform_int_distribution<int> dis(0, frag_vec.size()-1); // might be empty
-    }else{
-        std::vector<int> weights;
-        std::discrete_distribution<int> dis(weights.begin(), weights.end());
-    }
+    int frag_idx = (*dis)(gen);
+    tmp_frag = frag_vec[frag_idx];
+
+    return true;
+}
+
+bool tsim_rand(auto dis, fragment *tmp_frag, mut_t *target, bool is_uniform, int tot_size, int min_insert_size, int max_insert_size)
+{
+    int frag_idx = (*dis)(gen);
+    probe_rec tmp_probe = probe_vec[frag_idx];
+    tmp_frag->strand = tmp_probe.strand;
+    int probe_center = (int) (tmp_probe.pos_l + tmp_probe.pos_r)/2;
+    int frag_center= probe_center + (int)(std_dev * dis_rn(gen_rn));
+    int insert_dev = (int)(std_dev * dis_rn(gen_rn));
+    int insert_len = std::max(min_insert_size, std::min(dist + insert_dev, max_insert_size));
+
+    int pos_l = frag_center - (int)insert_len/2;
+    int pos_r = frag_center + (int)insert_len/2; 
+    tmp_frag->pos_l = pos_l;
+    tmp_frag->pos_r = pos_r;
+
+    return true;
 }
 
 
 static int simu_usage()
 {
     fprintf(stderr, "\n");
-    fprintf(stderr, "Forked wgsim (short read simulator) for simulating WGS or WGBS/RRBS/TBS reads\n");
+    fprintf(stderr, "htsim (high throughput reads simulator) for WGS or WGBS/RRBS/TBS reads simulation\n");
     fprintf(stderr, "Version: %s\n", PACKAGE_VERSION);
     fprintf(stderr, "Contact: Wenbin Guo <wbguo@ucla.edu>; \n\n");
-    fprintf(stderr, "Usage:   wgsim [options] <in.ref.fa> \n\n");
+    fprintf(stderr, "Usage:   htsim [options] <in.ref.fa> \n\n");
     fprintf(stderr, "Options:\n");
     fprintf(stderr, "general setting:\n");
-    fprintf(stderr, "         -d INT        outer distance between the two ends [500]\n");
-    fprintf(stderr, "         -s INT        standard deviation [50]\n");
-    fprintf(stderr, "         -N INT        number of read pairs [1000000]\n");
+    fprintf(stderr, "         -i INT        mean insert size (outer distance between 2 ends) [500]\n");
+    fprintf(stderr, "         -I INT        standard deviation of insert size [50]\n");
+    fprintf(stderr, "         -m INT        minimum insert size [100]\n");
+    fprintf(stderr, "         -M INT        maximum insert size [1000]\n");
+    fprintf(stderr, "         -c STRING     contig name, default is to simulate n for all contigs [None]\n");
+    fprintf(stderr, "         -n INT        total number of read pairs to generate [1000000]\n");
+    fprintf(stderr, "         -d INT        average sequencing depth, only used when n is not specified [30]\n");
     fprintf(stderr, "         -1 INT        length of the first read [70]\n");
     fprintf(stderr, "         -2 INT        length of the second read [70]\n");
-    fprintf(stderr, "         -e FLOAT      base error rate (only used for WGS) [%.3f]\n", ERR_RATE);
-    fprintf(stderr, "         -c STRING     contig name, default is all contigs [None]\n");
-    fprintf(stderr, "         -n INT        number of read pairs for specified contig [-1]\n");
+    fprintf(stderr, "         -E FLOAT      base error rate (set 0 for bisulfite sequencing) [%.3f]\n", ERR_RATE);
     fprintf(stderr, "         -A FLOAT      disgard if the fraction of ambiguous bases higher than FLOAT [%.2f]\n", MAX_N_RATIO);
-    fprintf(stderr, "         -m INT        output mode: 0 for letters; 1 for ascii numbers (for Bisulfite simulaiton) [0]\n");
+    fprintf(stderr, "         -U INT        uniform coverage: 0 for No, nonzero for Yes [1]\n");
+    fprintf(stderr, "         -f INT        output format: 0 for letters; 1 for ascii numbers (for Bisulfite simulaitons) [0]\n");
     fprintf(stderr, "mutation setting:\n");
     fprintf(stderr, "         -g STRING     path to the genetic variant file (vcf/vcf.gz) [None]\n");
     fprintf(stderr, "         -r FLOAT      rate of mutations [%.4f]\n", MUT_RATE);
     fprintf(stderr, "         -R FLOAT      fraction of indels [%.2f]\n", INDEL_FRAC);
     fprintf(stderr, "         -X FLOAT      probability an indel is extended [%.2f]\n", INDEL_EXTEND);
-    fprintf(stderr, "         -S INT        seed for random generator [-1]\n");
-    fprintf(stderr, "         -h INT        haplotype mode: 0 for No; non-zero for Yes [0]\n");
+    fprintf(stderr, "         -h INT        haplotype mode: 0 for No, nonzero for Yes (all variants are homozygotes) [0]\n");
+    fprintf(stderr, "         -s INT        seed for random generator [-1]\n");
     fprintf(stderr, "technology setting\n");
-    fprintf(stderr, "         -T INT        technology: 0 for WGBS; 1 for RRBS; 2 for TBS [0]\n");
-    fprintf(stderr, "         -B STRING     enzyme cutting site string for reduced representation sequencing [None]\n");
-    fprintf(stderr, "         -b STRING     probe BED file for targeted sequencing (.bed) [None]\n");
+    fprintf(stderr, "         -T INT        technology: 0 for Whole genome; 1 for Reduced representation; 2 for Targeted [0]\n");
+    fprintf(stderr, "         -x STRING     enzyme cutting site string for reduced representation sequencing [None]\n");
+    fprintf(stderr, "         -e STRING     reduced representation enrichment profile file [None]\n");
+    fprintf(stderr, "         -b STRING     probe BED file for targeted sequencing [None]\n");
     fprintf(stderr, "\n");
     return 1;
 }
@@ -1124,18 +1121,18 @@ int main(int argc, char *argv[])
 {
     uint64_t N;
     int64_t contig_N;
-    int dist, std_dev, c, size_l, size_r, is_hap = 0;
+    int c, is_hap = 0;
     int tech_mode, output_mode = 0;
     int seed = -1;
 
     char none_default[] = "None";
-    char *contig_id= none_default;
-    char *vcf_file = none_default;
-    char *cut_str  = none_default;
-    char *probe_bed= none_default; // checked, will not intefere with vcf_file
+    char *chr_id    = none_default;
+    char *vcf_file  = none_default;
+    char *cut_str   = none_default;
+    char *probe_bed = none_default; // checked, will not intefere with vcf_file
 
-    N = 1000000; dist = 500; std_dev = 50; contig_N = -1; size_l = size_r = 70;
-    while ((c = getopt(argc, argv, "d:s:N:1:2:e:c:n:A:m:g:r:R:X:S:h:T:B:b:")) >= 0) {
+    N = 1000000; contig_N = -1; dist = 500; std_dev = 50; size_l = size_r = 70;
+    while ((c = getopt(argc, argv, "i:I:m:M:c:n:d:1:2:E:A:f:g:r:R:X:h:s:T:x:e:b:")) >= 0) {
         switch (c) {
         case 'd': dist = atoi(optarg); break;
         case 's': std_dev = atoi(optarg); break;
@@ -1143,7 +1140,7 @@ int main(int argc, char *argv[])
         case '1': size_l = atoi(optarg); break;
         case '2': size_r = atoi(optarg); break;
         case 'e': ERR_RATE = atof(optarg); break;
-        case 'c': contig_id= optarg; break;
+        case 'c': chr_id= optarg; break;
         case 'n': contig_N = atoi(optarg); break;
         case 'A': MAX_N_RATIO = atof(optarg); break;
         case 'm': output_mode = atoi(optarg); break;
@@ -1161,37 +1158,86 @@ int main(int argc, char *argv[])
     if (argc - optind < 1) return simu_usage();
     if (seed <= 0) seed = time(0)&0x7fffffff;
 
-    // // various check
-    // // check existence of fasta
-    // gzFile fp_fa = gzopen(argv[optind], "r");
-    // if (!fp_fa) { fprintf (stderr, "ERROR: gzopen of '%s' failed: %s. Exit... \n", argv[optind], strerror (errno)); exit(EXIT_FAILURE);}
-    // gzclose(fp_fa);
-    // check legal input contig_id or contig_N
-    if ((strcmp(contig_id, "None") == 0 || strlen(contig_id) == 0)) {
+    // various check
+    // check legal input chr_id or contig_N
+    if ((strcmp(chr_id, "None") == 0 || strlen(chr_id) == 0)) {
         if (contig_N > 0 ) {fprintf(stderr, "ERROR: -n is specified but not -c, exit...(please note the difference of -n and -N)\n");exit(EXIT_FAILURE);}
         fprintf(stderr, "[%s] No contig id specified, will generate %lu reads from all contigs\n", __func__, N);
     }
+
+
+    // check existence of fasta
+    kseq_t *ks;
+    gzFile fp_fa;
+    fp_fa = gzopen(argv[0], "r");
+    ks = kseq_init(fp_fa);
+    if (!fp_fa) { fprintf (stderr, "ERROR: gzopen of '%s' failed: %s. Exit... \n", argv[0], strerror (errno)); exit (EXIT_FAILURE);}
+
+    int n_ref = 0;
+    uint64_t contig_len= 0, tot_len = 0, eff_len = 0, l = 0;
+    bool bool_contig = false, bool_contig_N = false; 
+
+    fprintf(stderr, "[%s] calculating the total length of the reference sequence...\n", __func__);
+    while ((l = kseq_read(ks)) >= 0) {
+        tot_len += l;
+        ++n_ref;
+        if (strcmp(chr_id, ks->name.s)==0){ bool_contig = true; contig_len = l;}
+    }
+
+    // check if fasta is empty
+    if (!n_ref) { fprintf (stderr, "ERROR: Input fasta is empty: %s. Exit... \n", argv[0]); exit (EXIT_FAILURE);}
+    fprintf(stderr, "[%s] %d contig sequences, total length: %lu\n", __func__, n_ref, tot_len);
+
+    kseq_destroy(ks);
+    gzclose(fp_fa);
+
     // check legal input mode and corresponding files
     if (tech_mode==1){
         fprintf(stderr, "Simulating restricted enzyme cutting reads\n");
         if (strcmp(cut_str, "None") == 0 || strlen(cut_str)==0){fprintf(stderr, "Please specify enzyme cutting site\n");exit(EXIT_FAILURE);}
+
+
         parse_cut_site(cut_str);
-        fprintf(stderr, "[wgsim] seed = %d\n", seed);
-        srand48(seed);
-        rrsim_core(argv[optind], is_hap, N, dist, std_dev, size_l, size_r, output_mode, vcf_file, contig_id, contig_N);
     } else if (tech_mode==2){
         fprintf(stderr, "Simulating targeted sequencing reads\n");
         if (strcmp(probe_bed, "None") == 0 || strlen(probe_bed)==0){fprintf(stderr, "Please specify probe bed file path\n");exit(EXIT_FAILURE);}
-        fprintf(stderr, "[wgsim] seed = %d\n", seed);
-        srand48(seed);
-        tsim_core(argv[optind], is_hap, N, dist, std_dev, size_l, size_r, output_mode, vcf_file, contig_id, contig_N);
     } else {
         fprintf(stderr, "Simulating whole genome reads\n");
-        fprintf(stderr, "[wgsim] seed = %d\n", seed);
-        srand48(seed);
-        sim_core(argv[optind], is_hap, N, dist, std_dev, size_l, size_r, output_mode, vcf_file, contig_id, contig_N);
     }
 
+
+
+    // check input chr_id
+    if (bool_contig && contig_N <= 0) {
+        contig_N = int64_t(contig_len / tot_len * N + 0.5);
+        fprintf(stderr, "[%s] Simulate %ld reads from contig %s (calculate from -N, as -n is not specified)...\n", __func__, contig_N, chr_id);
+    } else if (bool_contig && contig_N > 0) {
+        fprintf(stderr, "[%s] Simulate %ld reads from contig %s\n", __func__, contig_N, chr_id);
+        bool_contig_N = true;
+    } else {
+        fprintf(stderr, "ERROR: Contig id '%s' is not found in the fasta, please check!\n", chr_id); exit(EXIT_FAILURE);
+    }
+
+    // check input vcf file
+    FILE *vcf;
+    bool bool_vcf = false;
+    if (strcmp(vcf_file, "None") == 0 || strlen(vcf_file) == 0) {
+        fprintf(stderr, "[%s] No VCF input, will generate SNP randomly if mutation rate is nonzero\n", __func__);
+    } else if(vcf=fopen(vcf_file,"r")) {
+        fprintf(stderr, "[%s] VCF file exists, use it to simulate reads\n", __func__);
+        bool_vcf = true;
+        fclose(vcf);
+    } else {
+        fprintf(stderr, "ERROR: The specified VCF file does not exist, please check!\n"); exit(EXIT_FAILURE);
+    }
+
+
+
+
+
+    fprintf(stderr, "[wgsim] seed = %d\n", seed);
+    srand48(seed);
+    sim_core(argv[optind], N, is_hap, tech_mode, output_mode, vcf_file, chr_id, contig_N);
 
     return 0;
 }

@@ -1,5 +1,5 @@
 # 1. Introduction
-BSReadSim is a fast and flexible <u>B</u>isulfite <u>S</u>equencing <u>Read</u> <u>Sim</u>ulator that allows for profile-based read simulation. To our best knowledge, BSReadSim is the only bisulfite sequencing read simulator that allows user to incooperate the genetic variant and methylation profile with high fidelity. As a result, it can generate more realistic bisulfite sequencing reads compared to other bisulfite read simulators. The following table summarized the difference between BSReadSim and other tools:
+BSReadSim is a fast and flexible <ins>**B**</ins>isulfite <ins>**S**</ins>equencing <ins>**Read**</ins> <ins>**Sim**</ins>ulator that allows for profile-based read simulation. To our best knowledge, BSReadSim is the only bisulfite sequencing read simulator that allows user to incooperate the genetic variant and methylation profile with high fidelity. As a result, it can generate more realistic bisulfite sequencing reads compared to other bisulfite read simulators. The following table summarized the difference between BSReadSim and other tools:
 
 Features | Sherman | BSBolt | BSSim | BSReadSim
 ----| ---- | ---- | ---- | ---- |
@@ -39,8 +39,8 @@ bsreadsim ... [to add]
 ## Input file format  
 - reference genome: [FASTA](https://en.wikipedia.org/wiki/FASTA_format) format ( `.fasta`, `.fa` or `.fa.gz` )
 - methylation profile: [CGmap](https://bsbolt.readthedocs.io/en/latest/methylation_calling/) format ( `.CGmap` or `.CGmap.gz` )
-- genetic variants: [VCF](https://samtools.github.io/hts-specs/VCFv4.2.pdf) format, v4.0 or later, sorted by chromosome id ( `.vcf` or `.vcf.gz` )
-- probes for targeted sequencing: [BED](https://genome.ucsc.edu/FAQ/FAQformat.html) format, contains at least 6 columns, sorted by chromosome id ( `bed` or `.bed.gz` )
+- genetic variants: [VCF](https://samtools.github.io/hts-specs/VCFv4.2.pdf) format, v4.0 or later, **sorted** by chromosome id and position ( `.vcf` or `.vcf.gz` )
+- probes for targeted sequencing: [BED](https://genome.ucsc.edu/FAQ/FAQformat.html) format, contains at least 6 columns, **sorted** by chromosome id and postion ( `bed` or `.bed.gz` )
 
 # 4. Contact
 Please raise up issues through the github [issue](https://github.com/wbvguo/BSReadSim/issues) page
