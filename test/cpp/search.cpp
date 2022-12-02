@@ -21,9 +21,9 @@ int main()
     
     
     // checking if iterator i1 contains end pointer of v1 or not
-    for(auto it:i1){
-        printf("%d\n", it);
-    }
+    // for(auto it:i1){
+    //     printf("%d\n", it);
+    // }
     // if (i1 != v1.end()) {
     //     cout << "vector2 is present at index \n" << (i1 - v1.begin());
     // } else {

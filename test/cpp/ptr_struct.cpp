@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <vector>
 
 typedef struct {
     int pos_l, pos_r;       /*int max value is 2147483647*/
@@ -10,6 +11,13 @@ typedef struct {
     int8_t index  = -1;     /*save for capture efficiency usage*/
     int8_t ns     = 0;      /*strand or # of cut sites contained*/
 } fragment;                 /*each struct take <= 16 bytes*/
+
+std::vector<fragment> frag_vec;
+
+
+void(fragment *tmp_frag, int value){
+    *tmp_frag
+}
 
 int main(){
     fragment tmp_frag;

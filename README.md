@@ -1,23 +1,28 @@
 # 1. Introduction
-BSReadSim is a fast and flexible <ins>**B**</ins>isulfite <ins>**S**</ins>equencing <ins>**Read**</ins> <ins>**Sim**</ins>ulator that allows for profile-based read simulation. To our best knowledge, BSReadSim is the only bisulfite sequencing read simulator that allows user to incooperate the genetic variant and methylation profile with high fidelity. As a result, it can generate more realistic bisulfite sequencing reads compared to other bisulfite read simulators. The following table summarized the difference between BSReadSim and other tools:
+**BSReadSim** is a fast and flexible <ins>**B**</ins>isulfite <ins>**S**</ins>equencing <ins>**Read**</ins> <ins>**Sim**</ins>ulator that allows for profile-based read simulation. To our best knowledge, BSReadSim is the only bisulfite sequencing read simulator that allows user to incooperate the genetic variant and methylation profile with high fidelity. As a result, it can generate more realistic bisulfite sequencing reads compared to other bisulfite read simulators. The following table summarized the difference between BSReadSim and other tools:
 
 Features | Sherman | BSBolt | BSSim | BSReadSim
 ----| ---- | ---- | ---- | ---- |
-bisulfite conversion rate | yes | no | yes |yes
-methylation profile input | no | $\textsf{yes}^*$ | no | yes
-genetic variant input | no   | no | $\textsf{yes}^*$ | yes
+sequencing technology support| WGBS | WGBS | WGBS | WGBS/RRBS/TBS
+adjustable bisulfite conversion rate | yes | no | yes | yes
+allow CG bias/nonuniform coverage| no | no | no | yes
+allow methylation profile input | no | $\textsf{yes}^*$ | no | yes
+allow genetic variant input | no   | no | $\textsf{yes}^*$ | yes
 Haplotype-aware | no   | no | no | yes
 multi-thread support | no | no | yes | yes
 alleclic-specific methylation | no | no | no | yes
 site-site dependency | no | no | no| [todo]
 
-( $\textsf{yes}^*$ : BSBolt allows users to input the methylation reference. But during simulation, it **randomly** picks a methylation value from this reference pool. As a result, for a paticular CG site, the simulated data and the reference profile will likely have different methylation level; BSSim only accept snps input using a frequency table, it cannot handle indel variants)
+( $\textsf{yes}^*$ : BSBolt allows users to input the methylation reference. But during simulation, it **randomly** picks a value from this methylation reference pool. As a result, for a paticular CG site, the simulated data and the reference profile will likely have different methylation level; BSSim only accept snps input using a frequency table, it cannot faithfully simulate the given genotypes or handle indel variants)
 
 # 2. Installation
 ## Dependency
 - Python 3.8 or later
 - Biopython
+- numpy
+- scipy
 - tqdm
+
 ## Install from conda
 ```
 Toadd
@@ -37,10 +42,35 @@ bsreadsim ... [to add]
 ```
 
 ## Input file format  
-- reference genome: [FASTA](https://en.wikipedia.org/wiki/FASTA_format) format ( `.fasta`, `.fa` or `.fa.gz` )
-- methylation profile: [CGmap](https://bsbolt.readthedocs.io/en/latest/methylation_calling/) format ( `.CGmap` or `.CGmap.gz` )
+click here to see the [example]() data
+- reference genome: [FASTA](https://en.wikipedia.org/wiki/FASTA_format) format ( `.fasta`, `.fa` or `.fa.gz` ) 
+- methylation profile: [CGmap](https://bsbolt.readthedocs.io/en/latest/methylation_calling/) format ( `.CGmap` or `.CGmap.gz` ) 
 - genetic variants: [VCF](https://samtools.github.io/hts-specs/VCFv4.2.pdf) format, v4.0 or later, **sorted** by chromosome id and position ( `.vcf` or `.vcf.gz` )
 - probes for targeted sequencing: [BED](https://genome.ucsc.edu/FAQ/FAQformat.html) format, contains at least 6 columns, **sorted** by chromosome id and postion ( `bed` or `.bed.gz` )
+
+
+## 3.1 Simulate WGBS data
+1. with randomly generated genetic variants and methylation levels
+```
+```
+
+2. with specified genetic variant profiles
+```
+```
+
+3. with specified methylation profiles
+```
+```
+
+4. simulate site-site dependency
+```
+```
+
+## 3.2 Simulate RRBS data
+
+
+## 3.3 Simulate TBS data
+
 
 # 4. Contact
 Please raise up issues through the github [issue](https://github.com/wbvguo/BSReadSim/issues) page
