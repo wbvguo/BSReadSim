@@ -37,7 +37,6 @@
 #include <zlib.h>
 #include <random>
 #include <vector>
-#include <map>
 #include <algorithm>
 #include "kseq.h"
 #include "vcf.h"
@@ -77,7 +76,7 @@ static double MAX_N_RATIO = 0.05;
 static uint8_t MATCH  = 0x00;
 static uint8_t SNV    = 0x01;
 static uint8_t INSR   = 0x03;
-static uint8_t CONVT  = 0x05; // not used
+static uint8_t CONVT  = 0x05; // saved, not used
 static uint8_t SEQERR = 0x09;
 const  uint8_t mut_table[16] = {
     0, 1, 0, 2, 
@@ -159,27 +158,28 @@ typedef struct {
 typedef struct {
     uint64_t tot_len;
     uint64_t eff_len;
+    char *name;
 } len_rec;
 
 
+std::vector<len_rec> len_vec;
 std::vector<snp_rec> snp_vec;
 std::vector<cut_site> site_vec;
 std::vector<fragment> frag_vec;
 std::vector<cut_pos>  cutpos_vec;
 std::vector<probe_rec> probe_vec;
-std::map<char*, len_rec> len_map;
 //BIN_SIZE=128 to save the enrichment efficiency
 std::vector<float> efficiency_vec(BIN_SIZE); 
 
 
-// initialize random generator for read position simulation
+// initialize random generator for general distributions
 std::random_device rd;
 std::mt19937 gen(rd());
-// initialize random normal for insert size simulation 
+// initialize random generator for standard normal distribution 
 std::random_device rn;  //Will be used to obtain a seed for the random number engine
 std::mt19937 gen_rn(rn()); //Standard mersenne_twister_engine seeded with rd()
 std::normal_distribution<float> dis_rn(0.0, 1.0);
-// initialize random generator for cg bias
+// initialize random generator for uniform distribution between [0,1]
 std::random_device ru;
 std::mt19937 gen_ru(ru());
 std::uniform_real_distribution<float> dis_ru(0.0,1.0);
@@ -381,46 +381,6 @@ void parse_bed_chr(char *fname, char *chr_id)
     free(line.s);
 
     if (ret=hts_close(fp)){fprintf(stderr,"ERROR: [%s] hts_close(%s): non-zero status %d\n", __func__, fname, ret); exit(ret);}
-}
-
-void cal_length_chr(kseq_t *ks, int tech_mode, char *bed_file){
-    len_map.clear();
-    uint64_t eff_len, l;
-    len_rec tmp_len;
-
-    while ((l = kseq_read(ks)) >= 0) {
-        eff_len = 0;
-        tmp_len = {};
-
-        if(tech_mode==2){                       // targeted sequencing
-            parse_bed_chr(bed_file, ks->name.s);
-            int pos_l, pos_r, len;
-            int pos_l_prev=0, pos_r_prev=0;
-            for (size_t i = 0; i < probe_vec.size(); ++i){
-                pos_l = probe_vec[i].pos_l;
-                pos_r = probe_vec[i].pos_r;
-                len   = pos_r - pos_r;
-                 // deal with overlap probes
-                if ((pos_l < pos_r_prev) && (pos_l > pos_l_prev)){ 
-                    len = (pos_r > pos_r_prev) ? (pos_r - pos_r_prev) : 0;
-                }
-                eff_len += len;
-                pos_l_prev = pos_l;
-                pos_r_prev = pos_r;
-            }
-        }else if (tech_mode==1){                // reduced representative sequencing 
-            gen_cut_pos(ks);
-            for (int i = -1 ; i < (int)cutpos_vec.size() -1; ++i){
-                int len = i==-1? cutpos_vec[i+1].pos : (cutpos_vec[i+1].pos - cutpos_vec[i].pos);
-                if(len >= min_insert && len <= max_insert){ eff_len += len;}
-            }
-        }else{                                  // whole genome
-            eff_len = l;
-        }
-        tmp_len.tot_len = l;
-        tmp_len.eff_len = eff_len;
-        len_map[ks->name.s] = tmp_len;
-    }
 }
 
 void parse_vcf_chr(char *fname, char *chr_id)
@@ -772,8 +732,52 @@ void sim_print_mutref(const char *name, const kseq_t *ks, mutseq_t *hap1, mutseq
     }
 }
 
-void wgsim_rand(auto dis, fragment *tmp_frag, mut_t *target, bool is_uniform, int tot_size)
+void cal_length_chr(kseq_t *ks, len_rec *tmp_len, int tech_mode, char *bed_file){
+    uint64_t eff_len;
+
+    if(tech_mode==2){                       // targeted sequencing
+        parse_bed_chr(bed_file, ks->name.s);
+        int pos_l, pos_r, len;
+        int pos_l_prev=0, pos_r_prev=0;
+        for (size_t i = 0; i < probe_vec.size(); ++i){
+            pos_l = probe_vec[i].pos_l;
+            pos_r = probe_vec[i].pos_r;
+            len   = pos_r - pos_r;
+            // deal with overlap probes
+            if ((pos_l < pos_r_prev) && (pos_l > pos_l_prev)){ 
+                len = (pos_r > pos_r_prev) ? (pos_r - pos_r_prev) : 0;
+            }
+            eff_len += len;
+            pos_l_prev = pos_l;
+            pos_r_prev = pos_r;
+        }
+    }else if (tech_mode==1){                // reduced representative sequencing 
+        gen_cut_pos(ks);
+        int len;
+        for (int i = -1 ; i <= (int)cutpos_vec.size(); ++i){
+            if(i == -1 || i == (int)cutpos_vec.size()){
+                if(i==-1){
+                    len = cutpos_vec[0].pos - 0;
+                }else{
+                    len = (int) ks->seq.l - cutpos_vec[i-1].pos;
+                }
+            }else{
+                len = cutpos_vec[i+1].pos - cutpos_vec[i].pos;
+            }
+            len = len >= min_insert && len <= max_insert? len : 0;
+            eff_len += len;
+        }
+    }else{                                  // whole genome
+        eff_len = ks->seq.l;
+    }
+    tmp_len->tot_len = ks->seq.l;
+    tmp_len->eff_len = eff_len;
+    tmp_len->name = ks->name.s;
+}
+
+void sim_rand(std::uniform_int_distribution<int> *dis, fragment *tmp_frag, mut_t *target, bool is_uniform, int tot_size)
 {
+    // for whole genome
     int pos_l, pos_r, insert_dev, insert_len;
     // decide the left and right-most positons of the insert fragment
     if(is_uniform){
@@ -800,25 +804,44 @@ void wgsim_rand(auto dis, fragment *tmp_frag, mut_t *target, bool is_uniform, in
     tmp_frag->pos_r= pos_r;
 }
 
-void rrsim_rand(auto dis, fragment *tmp_frag, mut_t *target, bool is_uniform, int tot_size)
+void sim_rand(std::uniform_int_distribution<int> *dis, fragment *tmp_frag, bool is_uniform)
 {
+    // for Reduced representative
     int frag_idx;
     if(is_uniform){
         frag_idx = (*dis)(gen);
-        tmp_frag = frag_vec[frag_idx];
+        *tmp_frag = frag_vec[frag_idx];
     }else{
         bool flag = true;
         while (flag) {
             frag_idx = (*dis)(gen);
-            tmp_frag = frag_vec[frag_idx];
+            *tmp_frag = frag_vec[frag_idx];
             float cap_prob = efficiency_vec[tmp_frag->index]; // make sure index is 0-127
             flag = dis_ru(gen_ru) > cap_prob;
         }
     }
 }
 
-void tsim_rand(auto dis, fragment *tmp_frag, mut_t *target, bool is_uniform, int tot_size)
+void sim_rand(std::uniform_int_distribution<int> *dis, fragment *tmp_frag)
 {
+    // targeted sequencing (uniform)
+    int frag_idx = (*dis)(gen);
+    probe_rec tmp_probe = probe_vec[frag_idx];
+    tmp_frag->ns = tmp_probe.strand;
+    int probe_center = (int) (tmp_probe.pos_l + tmp_probe.pos_r)/2;
+    int frag_center= probe_center + (int)(sd_center * dis_rn(gen_rn));
+    int insert_dev = (int)(sd_insert * dis_rn(gen_rn));
+    int insert_len = std::max(min_insert, std::min(mean_insert + insert_dev, max_insert));
+
+    int pos_l = frag_center - (int)insert_len/2;
+    int pos_r = frag_center + (int)insert_len/2; 
+    tmp_frag->pos_l = pos_l;
+    tmp_frag->pos_r = pos_r;
+}
+
+void sim_rand(std::discrete_distribution<int> *dis, fragment *tmp_frag)
+{
+    // targeted sequencing (discrete dist)
     int frag_idx = (*dis)(gen);
     probe_rec tmp_probe = probe_vec[frag_idx];
     tmp_frag->ns = tmp_probe.strand;
@@ -875,43 +898,44 @@ void sim_core(const char *fn, bool is_hap, bool is_uniform, uint64_t N, uint64_t
     ks = kseq_init(fp_fa);
 
     while ((l = kseq_read(ks)) >= 0) {  //here l is the chromosome length
+        fprintf(stderr, "%s\n", ks->name.s);
         if (bool_contig) {if (strcmp(chr_id, ks->name.s)!=0){continue;}}
         if (l < mean_insert + 3 * sd_insert) {
             fprintf(stderr, "[%s] skip sequence '%s' as it is shorter than %d!\n", __func__, ks->name.s, mean_insert + 3 * sd_insert);
             continue;
         }
+        if (bool_contig_N) {n_pairs = contig_N;}else{
+            for (size_t i = 0; i < len_vec.size(); i++){
+                if (strcmp(len_vec[i].name, ks->name.s)==0){contig_eff_len = len_vec[i].eff_len;}
+            }
+            n_pairs = (uint64_t)(contig_eff_len / tot_eff_len * N + 0.5);
+        }
 
-        contig_eff_len = len_map[ks->name.s].eff_len;
-        n_pairs = bool_contig_N? contig_N:(uint64_t)(contig_eff_len / tot_eff_len * N + 0.5);
         tot_pairs += n_pairs;
         fprintf(stderr, "[%s] contig '%s': simulate %ld reads...\n", __func__, ks->name.s, n_pairs);
 
         // initialize random number generator to generate read positions
+        uint64_t unif_begin, unif_end;
+
         if(tech_mode==2){
             if(is_uniform){
-                std::uniform_int_distribution<int> dis(0, probe_vec.size()-1); // might be empty
-                void (*ptr_func)(std::uniform_int_distribution<int>, fragment*, mut_t*, bool, int);
-                ptr_func = &tsim_rand;
+                unif_begin = 0;
+                unif_end = probe_vec.size()-1;     // might be empty
             }else{
                 std::vector<float> weights(probe_vec.size());
                 for(int i=0; i < probe_vec.size(); ++i){ weights.push_back(probe_vec[i].score);}
                 std::vector<float>().swap(weights);
-                std::discrete_distribution<float> dis(weights.begin(), weights.end());
-                void (*ptr_func)(std::discrete_distribution<float>, fragment*, mut_t*, bool, int);
-                ptr_func = &tsim_rand;
+                std::discrete_distribution<int> dis(weights.begin(), weights.end());
             }
         }else if(tech_mode==1){
-            std::uniform_int_distribution<int> dis(0, frag_vec.size()-1); // might be empty
-            void (*ptr_func)(std::uniform_int_distribution<int>, fragment*, mut_t*, bool, int );
-            ptr_func = &rrsim_rand;
+            unif_begin  = 0;
+            unif_end    = frag_vec.size()-1;          // might be empty
         }else{
-            // pull from truncated distribution to ensure read doesn't pass boundary
-            std::uniform_int_distribution<int> dis(2, ks->seq.l - max_inner - 2*max_size -2); //add 2 base offset
-            void (*ptr_func)(std::uniform_int_distribution<int>, fragment*, mut_t*, bool, int );
-            ptr_func = &wgsim_rand;
+            unif_begin  = 2;    // ensure read doesn't pass boundary with 2 base offset
+            unif_end    = ks->seq.l-max_inner-2*max_size-2;
         }
+        std::uniform_int_distribution<int> dis(unif_begin, unif_end);
 
-        
         uint8_t site_flag_arr[ks->seq.l] = {0}; // record if the site is a SNP/INDEL position (the base can be either REF/ALT)
         // introduce mutations and print them to stdout
         fprintf(stdout, "Contig Variant Start\n");
@@ -936,7 +960,13 @@ void sim_core(const char *fn, bool is_hap, bool is_uniform, uint64_t N, uint64_t
 
             // random position generation
             target = rseq[drand48()<0.5?0:1].s; // haplotype from which the reads are generated
-            ptr_func(dis, &tmp_frag, target, is_uniform, ks->seq.l);
+            if(tech_mode==2){
+                sim_rand(&dis, &tmp_frag);
+            }else if(tech_mode==1){
+                sim_rand(&dis, &tmp_frag, is_uniform);
+            }else{
+                sim_rand(&dis, &tmp_frag, target, is_uniform, ks->seq.l);
+            }
 
             // generate the read sequences
             int start[2] = {tmp_frag.pos_l, tmp_frag.pos_r - size_l};
@@ -1156,20 +1186,20 @@ static int simu_usage()
     fprintf(stderr, "htsim (high throughput reads simulator) for WGS or WGBS/RRBS/TBS reads simulation\n");
     fprintf(stderr, "Version: %s\n", PACKAGE_VERSION);
     fprintf(stderr, "Contact: Wenbin Guo <wbguo@ucla.edu>; \n\n");
-    fprintf(stderr, "Usage:   htsim [options] <in.ref.fa> \n\n");
+    fprintf(stderr, "Usage:   htsim [options] <ref.fa> \n\n");
     fprintf(stderr, "Options:\n");
     fprintf(stderr, "general setting:\n");
     fprintf(stderr, "         -i INT        mean insert size (outer distance between 2 ends) [500]\n");
     fprintf(stderr, "         -I INT        standard deviation of insert size [50]\n");
     fprintf(stderr, "         -m INT        minimum insert size [100]\n");
     fprintf(stderr, "         -M INT        maximum insert size [1000]\n");
-    fprintf(stderr, "         -c STRING     contig name, only output reads from this contig, default output all contigs [None]\n");
-    fprintf(stderr, "         -n INT        number of reads to generate for specified contig, default is disable [-1]\n");
-    fprintf(stderr, "         -N INT        total number of read pairs to generate, will caculate from depth when is 0 [0]\n");
+    fprintf(stderr, "         -c STRING     contig name, only output reads from this contig, default is to output all contigs [None]\n");
+    fprintf(stderr, "         -n INT        number of read pairs to generate for specified contig, disabled by default [0]\n");
+    fprintf(stderr, "         -N INT        total number of read pairs to generate, will caculate from depth when N is 0 [0]\n");
     fprintf(stderr, "         -d INT        average sequencing depth, only used when n/N is not specified [30]\n");
     fprintf(stderr, "         -1 INT        length of the first read [70]\n");
     fprintf(stderr, "         -2 INT        length of the second read [70]\n");
-    fprintf(stderr, "         -E FLOAT      base error rate (set 0 for bisulfite sequencing) [%.3f]\n", ERR_RATE);
+    fprintf(stderr, "         -E FLOAT      base error rate (set to be 0 for bisulfite sequencing) [%.3f]\n", ERR_RATE);
     fprintf(stderr, "         -A FLOAT      disgard if the fraction of ambiguous bases higher than FLOAT [%.2f]\n", MAX_N_RATIO);
     fprintf(stderr, "         -u INT        uniform coverage: 0 for No, nonzero for Yes [1]\n");
     fprintf(stderr, "         -f INT        output format: 0 for letters; 1 for ascii numbers (for Bisulfite simulaitons) [0]\n");
@@ -1180,7 +1210,7 @@ static int simu_usage()
     fprintf(stderr, "         -X FLOAT      probability an indel is extended [%.2f]\n", INDEL_EXTEND);
     fprintf(stderr, "         -h INT        haplotype mode: 0 for No, nonzeroz for Yes (all variants are homozygotes) [0]\n");
     fprintf(stderr, "         -s INT        seed for random generator [-1]\n");
-    fprintf(stderr, "technology setting\n");
+    fprintf(stderr, "technology setting:\n");
     fprintf(stderr, "         -T INT        technology: 0 for Whole genome; 1 for Reduced representation; 2 for Targeted [0]\n");
     fprintf(stderr, "         -x STRING     enzyme cutting site string for reduced representation sequencing [None]\n");
     fprintf(stderr, "         -e STRING     enrichment profile lookup file for reduced representation sequencing [None]\n");
@@ -1192,9 +1222,9 @@ static int simu_usage()
 
 int main(int argc, char *argv[])
 {
-    uint64_t N, contig_N;
+    uint64_t N=0, contig_N=0;
     int c = 0;
-    int tech_mode, output_fmt = 0;
+    int tech_mode=0, output_fmt = 0;
     int seed = -1;
     int min_insert, max_insert, depth = 20;
     bool is_hap = false, is_uniform = true;
@@ -1206,7 +1236,7 @@ int main(int argc, char *argv[])
     char *enrich_tsv= none_default;
     char *probe_bed = none_default; // checked, will not intefere with vcf_file
 
-    N = 0; mean_insert = 500; sd_insert = 50; sd_center = 50; size_l = size_r = 70;
+    mean_insert = 500; sd_insert = 50; sd_center = 50; size_l = size_r = 70;
     while ((c = getopt(argc, argv, "i:I:m:M:c:n:N:d:1:2:E:A:U:f:g:r:R:X:h:s:T:x:e:b:D:")) >= 0) {
         switch (c) {
             case 'i': mean_insert= atoi(optarg); break;
@@ -1241,52 +1271,60 @@ int main(int argc, char *argv[])
 
     // check legal input mode and corresponding files
     if (tech_mode==1){
-        fprintf(stderr, "Simulating restricted enzyme cutting reads\n");
+        fprintf(stderr, "Simulating restricted enzyme cutting reads: reference file\n");
         if (strcmp(cut_str, "None") == 0 || strlen(cut_str)==0){
             fprintf(stderr, "ERROR: Please specify enzyme cutting site\n");exit(EXIT_FAILURE);
         }
         parse_cut_site(cut_str);
     } else if (tech_mode==2){
-        fprintf(stderr, "Simulating targeted sequencing reads\n");
+        fprintf(stderr, "Simulating targeted sequencing reads:\n");
         if (strcmp(probe_bed, "None") == 0 || strlen(probe_bed)==0){
             fprintf(stderr, "ERROR: Please specify probe bed file path\n");exit(EXIT_FAILURE);
         }
-    } else { fprintf(stderr, "Simulating whole genome reads\n"); }
+    } else { fprintf(stderr, "Simulating whole genome reads:\n"); }
 
     // check existence of fasta, parse the length
     kseq_t *ks;
     gzFile fp_fa;
-    fp_fa = gzopen(argv[0], "r");
+    fp_fa = gzopen(argv[optind], "r");
     ks = kseq_init(fp_fa);
-    if (!fp_fa) { fprintf (stderr, "ERROR: gzopen of '%s' failed: %s. Exit... \n", argv[0], strerror (errno)); exit (EXIT_FAILURE);}
+    if (!fp_fa) { fprintf (stderr, "ERROR: gzopen of '%s' failed: %s. Exit... \n", argv[optind], strerror (errno)); exit (EXIT_FAILURE);}
+    fprintf(stderr, "Reference genome file: %s\n", argv[optind]);
 
-    fprintf(stderr, "[%s] calculating the total length and effective length of the reference sequence...\n", __func__);
-    cal_length_chr(ks, tech_mode, probe_bed);
-
+    fprintf(stderr, "[%s] Calculating the total length and effective length of the reference sequences...\n", __func__);
+    int l;
+    len_rec tmp_len;
+    while ((l = kseq_read(ks)) >= 0) {
+        tmp_len = {};
+        cal_length_chr(ks, &tmp_len, tech_mode, probe_bed);
+        len_vec.push_back(tmp_len);
+    }
     kseq_destroy(ks);
     gzclose(fp_fa);
 
     // check if fasta is empty
-    int n_ref = len_map.size();
-    if (!n_ref) { fprintf (stderr, "ERROR: Input fasta is empty: %s. Exit... \n", argv[0]); exit (EXIT_FAILURE);}
+    int n_ref = len_vec.size();
+    if (!n_ref) { fprintf (stderr, "ERROR: Input fasta is empty: %s. Exit... \n", argv[optind]); exit (EXIT_FAILURE);}
 
     // check input chr_id
     bool bool_contig_unset = strcmp(chr_id, "None") == 0 || strlen(chr_id) == 0;
     bool bool_contig_found = false;
-    uint64_t l, tot_len = 0, tot_eff_len = 0, contig_len=0, contig_eff_len=0;
-    for (auto iter = len_map.begin(); iter != len_map.end(); ++iter) {
-        tot_len += iter->second.tot_len;
-        tot_eff_len += iter->second.eff_len;
-        if (strcmp(chr_id, iter->first)==0){
+    //uint64_t l, tot_len = 0, tot_eff_len = 0, contig_len=0, contig_eff_len=0;
+    uint64_t tot_len = 0, tot_eff_len = 0, contig_len=0, contig_eff_len=0;
+
+    for (size_t i =0; i < len_vec.size(); ++i){
+        tot_len += len_vec[i].tot_len;
+        tot_eff_len += len_vec[i].eff_len;
+        if (strcmp(chr_id, len_vec[i].name)==0){
             bool_contig_found = true; 
-            contig_len = iter->second.tot_len; 
-            contig_eff_len =iter->second.eff_len;
+            contig_len = len_vec[i].tot_len;
+            contig_eff_len = len_vec[i].eff_len;
         }
     }
 
     if (bool_contig_unset) {
-        if (contig_N > 0) {fprintf(stderr, "ERROR: -n is specified but not -c, exit...(please note the difference of -n and -N)\n"); exit(EXIT_FAILURE);}
-        fprintf(stderr, "[%s] Detected %d contig sequences, total length: %lu, effective length: %lu\n", __func__, n_ref, tot_len, tot_eff_len);
+        if (contig_N > 0) {fprintf(stderr, "ERROR: -n is specified but not -c. Exit... (please note the difference of -n and -N)\n"); exit(EXIT_FAILURE);}
+        fprintf(stderr, "[%s] Found %d contig sequences, total length: %lu, effective length: %lu\n", __func__, n_ref, tot_len, tot_eff_len);
         N = N == 0? (tot_eff_len * depth)/(size_l + size_r) : N;
         fprintf(stderr, "[%s] No contig id specified, will generate %lu reads from all contigs\n", __func__, N);
     }else{
