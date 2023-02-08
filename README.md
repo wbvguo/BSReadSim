@@ -1,19 +1,22 @@
 # 1. Introduction
-**BSReadSim** is a fast and flexible <ins>**B**</ins>isulfite <ins>**S**</ins>equencing <ins>**Read**</ins> <ins>**Sim**</ins>ulator that allows for profile-based read simulation. To our best knowledge, BSReadSim is the only bisulfite sequencing read simulator that allows user to incooperate the genetic variant and methylation profile with high fidelity. As a result, it can generate more realistic bisulfite sequencing reads compared to other bisulfite read simulators. The following table summarized the difference between BSReadSim and other tools:
+**BSReadSim** is a efficient and flexible <ins>**B**</ins>isulfite <ins>**S**</ins>equencing <ins>**Read**</ins> <ins>**Sim**</ins>ulator that allows for profile-based read simulation. To our best knowledge, BSReadSim is the only bisulfite sequencing read simulator that allows user to incooperate the genetic variant and methylation profile with high fidelity. As a result, it can generate more realistic bisulfite sequencing reads compared to other bisulfite read simulators. The following table summarized the difference between BSReadSim and other tools:
 
 Features | Sherman | BSBolt | BSSim | BSReadSim
 ----| ---- | ---- | ---- | ---- |
 sequencing technology support| WGBS | WGBS | WGBS | WGBS/RRBS/TBS
 adjustable bisulfite conversion rate | yes | no | yes | yes
-allow CG bias/nonuniform coverage| no | no | no | yes
-allow methylation profile input | no | $\textsf{yes}^*$ | no | yes
+support multi-thread | no | no | yes | yes
 allow genetic variant input | no   | no | $\textsf{yes}^*$ | yes
-Haplotype-aware | no   | no | no | yes
-multi-thread support | no | no | yes | yes
-alleclic-specific methylation | no | no | no | yes
+allow methylation profile input | no |   $\textsf{yes}^*$ | no | yes
+allow alleclic-specific methylation | no | no | no | yes
+allow CG bias/nonuniform coverage| no | no | no | yes
+haplotype-aware | no   | no | no | yes
 site-site dependency | no | no | no| [todo]
 
-( $\textsf{yes}^*$ : BSBolt allows users to input the methylation reference. But during simulation, it **randomly** picks a value from this methylation reference pool. As a result, for a paticular CG site, the simulated data and the reference profile will likely have different methylation level; BSSim only accept snps input using a frequency table, it cannot faithfully simulate the given genotypes or handle indel variants)
+( $\textsf{yes}^*$: Limited support
+- BSSim only accept snps input using a frequency table, it cannot faithfully simulate given genotypes, preserve haplotype information, nor handle indel variants
+- BSBolt allows users to input the methylation reference. But during simulation, it **randomly** picks a value from this methylation reference pool. As a result, for a paticular CG site, the simulated data and the reference profile will likely have different methylation level)
+
 
 # 2. Installation
 ## Dependency
@@ -22,6 +25,7 @@ site-site dependency | no | no | no| [todo]
 - numpy
 - scipy
 - tqdm
+- GCC >= 9.4.0
 
 ## Install from conda
 ```

@@ -1,20 +1,19 @@
 #include <stdio.h>
 #include <random>
-#include <vector>
 
 std::random_device rd;    
 std::mt19937 gen(rd());
 
-class Solution{
-
-};
+int MAX_SIZE = 1000000;
 
 
 int main(int argc, const char** argv) {
-    std::discrete_distribution<int> *ptr1;
-    std::uniform_int_distribution<int> *ptr2;
-    std::discrete_distribution<int> dis({0,1,2,3,4,5});
-    std::uniform_int_distribution<int> dis(0,5);
-
+    std::discrete_distribution<int> dis(MAX_SIZE, 1, 1, std::bind2nd(std::plus<double>(),5.0));
+    printf("%ld\n", sizeof(dis));
+    for(int i =0; i< MAX_SIZE; ++i){
+        printf("%d\n", dis(gen));
+    }
     return 0;
 }
+
+//g++

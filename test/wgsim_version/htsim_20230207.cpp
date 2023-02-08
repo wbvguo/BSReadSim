@@ -43,7 +43,7 @@
 #include "htsim.h"
 KSEQ_INIT(gzFile, gzread)
 
-#define PACKAGE_VERSION "1.0.3"
+#define PACKAGE_VERSION "1.0.2"
 #define MAX_BIN 128 //MAX_BIN=128 to save the enrichment efficiency
 
 const uint8_t nst_nt4_table[256] = {
@@ -169,6 +169,7 @@ std::vector<fragment> frag_vec;
 std::vector<cut_pos>  cutpos_vec;
 std::vector<probe_rec> probe_vec;
 std::vector<float> eff_vec;
+std::vector<float> seq_score;
 
 
 // initialize random generator for general distributions
@@ -182,6 +183,7 @@ std::normal_distribution<float> dis_rn(0.0, 1.0);
 std::random_device ru;
 std::mt19937 gen_ru(ru());
 std::uniform_real_distribution<float> dis_ru(0.0,1.0);
+
 
 void parse_cut_site(char *cut_str)
 {
@@ -264,6 +266,53 @@ void gen_cut_pos(const kseq_t *ks)
     }
 }
 
+void gen_cut_frag(const kseq_t *ks)
+{
+    frag_vec.clear();
+    // generate potential intervals
+    fragment tmp_frag;
+    for (int i = -1; i <= int(cutpos_vec.size()); ++i){
+        if(i==-1 || i == int(cutpos_vec.size())){ //check the first and last fragments
+            tmp_frag = {};
+            if(i==-1){
+                int frag_len = cutpos_vec[0].pos;
+                if (frag_len > min_insert && frag_len < max_insert){
+                    tmp_frag.pos_l = 0;
+                    tmp_frag.cut_l = -1;
+                    tmp_frag.pos_r = cutpos_vec[0].pos;
+                    tmp_frag.cut_r = cutpos_vec[0].type;
+                    tmp_frag.ns = 0;
+                    frag_vec.push_back(tmp_frag);
+                }
+            }else{
+                int frag_len = ks->seq.l - cutpos_vec[i-1].pos;
+                if (frag_len > min_insert && frag_len < max_insert){
+                    tmp_frag.pos_l = cutpos_vec[i-1].pos;
+                    tmp_frag.cut_l = cutpos_vec[i-1].type;
+                    tmp_frag.pos_r = ks->seq.l;
+                    tmp_frag.cut_r = -1;
+                    tmp_frag.ns = 0;
+                    frag_vec.push_back(tmp_frag);
+                }
+            }
+            continue;
+        }
+        for(int j=i+1; j < cutpos_vec.size(); ++j){
+            int frag_len = cutpos_vec[j].pos - cutpos_vec[i].pos;
+            if (frag_len > min_insert && frag_len < max_insert){
+                tmp_frag = {};
+                tmp_frag.pos_l = cutpos_vec[i].pos;
+                tmp_frag.cut_l = cutpos_vec[i].type;
+                tmp_frag.pos_r = cutpos_vec[j].pos;
+                tmp_frag.cut_r = cutpos_vec[j].type;
+                // calculate the probability and index
+                tmp_frag.ns = (int8_t)j-(i+1);
+                frag_vec.push_back(tmp_frag);
+            }
+        }
+    }
+}
+
 void parse_bed_line(char *line, char *chr_id, probe_rec *tmp_probe, probe_meta *tmp_probe_meta)
 {
 	char *p, *q, *name = 0;
@@ -279,8 +328,8 @@ void parse_bed_line(char *line, char *chr_id, probe_rec *tmp_probe, probe_meta *
             case 1: start  = atoi(p); break;
             case 2: end    = atoi(p); break;
             case 3: name   = strdup(p); break;
-            case 4: score  = atof(p); break; // what if score is . 
-            case 5: strand = int(strcmp(p,"+")==0)-int(strcmp(p,"-")==0); break; //1,0,-1
+            case 4: score  = atof(p); break; // what if score is .
+            case 5: strand = int(strcmp(p,"+")==0)-int(strcmp(p,"-")==0); break;
             default: break;}
 			++i, p = q + 1;
 			if (i > 6 || c == '\0') break;
@@ -346,6 +395,7 @@ void parse_eff_file(char *fname)
     }
     fclose(fp);
 }
+
 
 void parse_vcf_chr(char *fname, char *chr_id)
 {
@@ -768,48 +818,54 @@ void sim_rand(std::uniform_int_distribution<int> *dis, fragment *tmp_frag, mut_t
     tmp_frag->pos_r= pos_r;
 }
 
-void sim_rand(std::uniform_int_distribution<int> *dis, fragment *tmp_frag, int tech_mode)
+void sim_rand(std::uniform_int_distribution<int> *dis, fragment *tmp_frag, bool is_uniform)
 {
-    // targeted/reduced-representative sequencing (uniform)
-    int frag_idx = (*dis)(gen);
-    int pos_l, pos_r;
-    probe_rec tmp_probe = probe_vec[frag_idx];
-
-    if(tech_mode == 1){ //Reduced representation
-        pos_l = tmp_probe.pos_l;
-        pos_r = tmp_probe.pos_r;
+    // for Reduced representative
+    int frag_idx;
+    if(is_uniform){
+        frag_idx = (*dis)(gen);
+        *tmp_frag = frag_vec[frag_idx];
     }else{
-        int probe_center = (int) (tmp_probe.pos_l + tmp_probe.pos_r)/2;
-        int frag_center= probe_center + (int)(sd_center * dis_rn(gen_rn));
-        int insert_dev = (int)(sd_insert * dis_rn(gen_rn));
-        int insert_len = std::max(min_insert, std::min(mean_insert + insert_dev, max_insert));
-        pos_l = frag_center - (int)insert_len/2;
-        pos_r = frag_center + (int)insert_len/2; 
+        bool flag = true;
+        while (flag) {
+            frag_idx = (*dis)(gen);
+            *tmp_frag = frag_vec[frag_idx];
+            float cap_prob = eff_vec[tmp_frag->index]; // make sure index is 0-127
+            flag = dis_ru(gen_ru) > cap_prob;
+        }
     }
+}
+
+void sim_rand(std::uniform_int_distribution<int> *dis, fragment *tmp_frag)
+{
+    // targeted sequencing (uniform)
+    int frag_idx = (*dis)(gen);
+    probe_rec tmp_probe = probe_vec[frag_idx];
     tmp_frag->ns = tmp_probe.strand;
+    int probe_center = (int) (tmp_probe.pos_l + tmp_probe.pos_r)/2;
+    int frag_center= probe_center + (int)(sd_center * dis_rn(gen_rn));
+    int insert_dev = (int)(sd_insert * dis_rn(gen_rn));
+    int insert_len = std::max(min_insert, std::min(mean_insert + insert_dev, max_insert));
+
+    int pos_l = frag_center - (int)insert_len/2;
+    int pos_r = frag_center + (int)insert_len/2; 
     tmp_frag->pos_l = pos_l;
     tmp_frag->pos_r = pos_r;
 }
 
-void sim_rand(std::discrete_distribution<int> *dis, fragment *tmp_frag, int tech_mode)
+void sim_rand(std::discrete_distribution<int> *dis, fragment *tmp_frag)
 {
-    // targeted/reduced-representative sequencing (uniform)
+    // targeted sequencing (non-uniform)
     int frag_idx = (*dis)(gen);
-    int pos_l, pos_r;
     probe_rec tmp_probe = probe_vec[frag_idx];
-
-    if(tech_mode == 1){ //Reduced representation
-        pos_l = tmp_probe.pos_l;
-        pos_r = tmp_probe.pos_r;
-    }else{
-        int probe_center = (int) (tmp_probe.pos_l + tmp_probe.pos_r)/2;
-        int frag_center= probe_center + (int)(sd_center * dis_rn(gen_rn));
-        int insert_dev = (int)(sd_insert * dis_rn(gen_rn));
-        int insert_len = std::max(min_insert, std::min(mean_insert + insert_dev, max_insert));
-        pos_l = frag_center - (int)insert_len/2;
-        pos_r = frag_center + (int)insert_len/2; 
-    }
     tmp_frag->ns = tmp_probe.strand;
+    int probe_center = (int) (tmp_probe.pos_l + tmp_probe.pos_r)/2;
+    int frag_center= probe_center + (int)(sd_center * dis_rn(gen_rn));
+    int insert_dev = (int)(sd_insert * dis_rn(gen_rn));
+    int insert_len = std::max(min_insert, std::min(mean_insert + insert_dev, max_insert));
+
+    int pos_l = frag_center - (int)insert_len/2;
+    int pos_r = frag_center + (int)insert_len/2; 
     tmp_frag->pos_l = pos_l;
     tmp_frag->pos_r = pos_r;
 }
@@ -873,7 +929,7 @@ void sim_core(const char *fn, bool is_hap, bool is_uniform, uint64_t N, uint64_t
         std::discrete_distribution<int> dis2;
         std::uniform_int_distribution<int> dis;
 
-        if(tech_mode){
+        if(tech_mode==2){
             parse_bed_chr(probe_bed, ks->name.s);
             if(probe_vec.size() == 0){continue;} // parse probe, skip if empty
             if(is_uniform){
@@ -884,8 +940,11 @@ void sim_core(const char *fn, bool is_hap, bool is_uniform, uint64_t N, uint64_t
                 std::discrete_distribution<int> dis2(weights.begin(), weights.end());
                 // std::vector<float>().swap(weights);
             }
-        }
-        else{
+        }else if(tech_mode==1){
+            gen_cut_pos(ks); gen_cut_frag(ks); 
+            if(frag_vec.size()==0){continue;}   // generate frags, skip if empty
+            std::uniform_int_distribution<int> dis(0, frag_vec.size()-1);
+        }else{
             // ensure read doesn't pass boundary with 2 base offset
             std::uniform_int_distribution<int> dis(2, ks->seq.l-max_insert-2);
         }
@@ -920,10 +979,10 @@ void sim_core(const char *fn, bool is_hap, bool is_uniform, uint64_t N, uint64_t
             // random position generation
             target = rseq[drand48()<0.5?0:1].s; // haplotype from which the reads are generated
             if(tech_mode==2){
-                sim_rand(&dis2, &tmp_frag, tech_mode);
+                sim_rand(&dis2, &tmp_frag);
                 start_2 = tmp_frag.pos_r - size_l;
             }else if(tech_mode==1){
-                sim_rand(&dis, &tmp_frag, tech_mode);
+                sim_rand(&dis, &tmp_frag, is_uniform);
                 start_2 = tmp_frag.pos_r;
                 // find out the start position for read2, also check if the boundaries satisfy
                 for(int k=0; k < size_r; k++){
@@ -1176,24 +1235,25 @@ static int simu_usage()
     fprintf(stderr, "         -c STRING     contig name, only output reads from this contig, default is to output all contigs [None]\n");
     fprintf(stderr, "         -n INT        number of read pairs to generate for specified contig, disabled by default [0]\n");
     fprintf(stderr, "         -N INT        total number of read pairs to generate, will caculate from depth when N is 0 [0]\n");
-    fprintf(stderr, "         -d INT        average sequencing depth, only used when n/N is not specified [10]\n");
+    fprintf(stderr, "         -d INT        average sequencing depth, only used when n/N is not specified [30]\n");
     fprintf(stderr, "         -1 INT        length of the first read [70]\n");
     fprintf(stderr, "         -2 INT        length of the second read [70]\n");
     fprintf(stderr, "         -E FLOAT      base error rate (set to be 0 for bisulfite sequencing) [%.3f]\n", ERR_RATE);
     fprintf(stderr, "         -A FLOAT      disgard if the fraction of ambiguous bases higher than FLOAT [%.2f]\n", MAX_N_RATIO);
     fprintf(stderr, "         -u INT        uniform coverage: 0 for No, nonzero for Yes [1]\n");
-    fprintf(stderr, "         -f INT        output format: 0 for letters; 1 for ascii numbers (for python module) [0]\n");
-    fprintf(stderr, "\nmutation setting:\n");
+    fprintf(stderr, "         -f INT        output format: 0 for letters; 1 for ascii numbers (for Bisulfite simulaitons) [0]\n");
+    fprintf(stderr, "mutation setting:\n");
     fprintf(stderr, "         -g STRING     path to the genetic variant file (vcf/vcf.gz) [None]\n");
     fprintf(stderr, "         -r FLOAT      rate of mutations [%.4f]\n", MUT_RATE);
     fprintf(stderr, "         -R FLOAT      fraction of indels [%.2f]\n", INDEL_FRAC);
     fprintf(stderr, "         -X FLOAT      probability an indel is extended [%.2f]\n", INDEL_EXTEND);
-    fprintf(stderr, "         -h INT        haplotype mode: 0 for No, nonzero for Yes (all variants are homozygotes) [0]\n");
+    fprintf(stderr, "         -h INT        haplotype mode: 0 for No, nonzeroz for Yes (all variants are homozygotes) [0]\n");
     fprintf(stderr, "         -s INT        seed for random generator [-1]\n");
-    fprintf(stderr, "\ntechnology setting:\n");
+    fprintf(stderr, "technology setting:\n");
     fprintf(stderr, "         -T INT        technology: 0 for Whole genome; 1 for Reduced representation; 2 for Targeted [0]\n");
     fprintf(stderr, "         -x STRING     enzyme cutting site string for reduced representation sequencing [None]\n");
-    fprintf(stderr, "         -b STRING     BED file for reduced-representation / targeted sequencing [None]\n");
+    fprintf(stderr, "         -e STRING     enrichment profile lookup file for reduced representation sequencing [None]\n");
+    fprintf(stderr, "         -b STRING     probe BED file for targeted sequencing [None]\n");
     fprintf(stderr, "         -D INT        fragment center's deviaiton from the probe center [50]\n");
     fprintf(stderr, "\n");
     return 1;
@@ -1205,7 +1265,7 @@ int main(int argc, char *argv[])
     int c = 0;
     int tech_mode=0, output_fmt = 0;
     int seed = -1;
-    int min_insert, max_insert, depth = 10;
+    int min_insert, max_insert, depth = 20;
     bool is_hap = false, is_uniform = true;
 
     char none_default[] = "None";

@@ -1,0 +1,1 @@
+/usr/bin/time -v -p sh -c ./a.out
