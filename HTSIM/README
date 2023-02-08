@@ -1,6 +1,6 @@
-HTSim is a high throughput sequencing reads simulator. This tool is based on WGSIM() framework but heavily modified to generate realistic sequencing reads for diploid organisms. 
+HTSim is a high throughput sequencing reads simulator. This tool is based on WGSIM framework but heavily modified to generate realistic sequencing reads for diploid organisms. 
 
-HTSim used the HTSLIB library to read and process VCF/BED files, it can either randomly generated mutations or introduce variants from a user-specified VCF file (so called profile-based simulation). Noteably, when conducting the profile-based simulation, the tool is haplotype-aware--that when the VCF file is phased, the haplotype information is kept and can be reflected in the reads.
+HTSim used the HTSLIB library to read and process VCF/BED files, it can either randomly generated mutations or introduce variants from a user-specified VCF file (so called profile-based simulation). Noteably, when conducting the profile-based simulation, the tool is haplotype-aware, that when the VCF file is phased, the haplotypes information is kept and can be reflected on the reads.
 
 HTSim can be used to simulate WGS reads (by default), or deliver intedimedate data to the BSReadSim python module for bisulfite sequencing reads (WGBS/TBS/RRBS) simulation when specifying -m 1.
 
