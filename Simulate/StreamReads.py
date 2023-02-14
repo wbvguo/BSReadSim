@@ -2,6 +2,7 @@ import subprocess
 import threading
 import os
 
+
 class StreamReads:
     '''stream reads and write into fastq files'''
     def __init__(self, outdir: str = None, prefix: str = None, 
