@@ -1,10 +1,8 @@
 import os
 import re
 import warnings
-import pandas as pd
 import numpy as np
 
-from Bio import SeqIO
 from scipy.stats import beta
 from tqdm import tqdm
 from typing import Dict, List
@@ -16,12 +14,12 @@ from UtilityFunctions import parseCGmap, parseASM
 class SetMethylation:
     '''
     prepare methylation level database for read methylation state simulation
-    :param str  ref_fasta   : path to the reference genome (.fasta/.fa/.fa.gz) [None]
+    :param str  ref_dict    : SeqIO dict of reference genome [None]
     :param str  outdir      : path to the output directory [None]
     :param str  meth_db_path: path to the previous obj (.pkl) [None]
     :param str  cgmap_file  : path to the cgmap file (.CGmap/.CGmap.gz) [False]
     :param bool cgmap_pool  : whether to pool methylaiton levels and random draws from it [False]
-    :param str  asm_file    : path to the allelic specific methylation (ASM) file [None]
+    :param str  asm_file    : path to the allelic specific methylation (ASM) file (.asm, .asm.gz) [None]
     :param dict beta_params : dict of beta parameters for CG/CHG/CHH methylation values simulation
                               [{"CG": (0.5, 0.5), "CHG": (0.01, 0.05), "CHH":(0.01, 0.05)}]
     :param bool collect_ch  : whether to collect/simulate the CHG/CHH sites [False]
@@ -30,20 +28,20 @@ class SetMethylation:
     :param bool verbose     : whether to output processing details [True]
     :rtype None
 
-    :var np.array meth_arr  : nx5 numpy array: context, flag, meth_avg, meth_ref, meth_alt
+    :var np.array meth_arr  : n x 5 numpy array: context, flag, meth_avg, meth_ref, meth_alt
                               - flag: 0 from dist or pool, 1 from CGmap, 2 from ASM, -1 unintialized
     :var np.array pos_map   : 1d numpy array (same length as contig), value is the row index of meth_arr
     '''
 
 
-    def __init__(self, ref_fasta: str = None, outdir: str = None,
+    def __init__(self, ref_dict: Dict = None, outdir: str = None, 
                  meth_db_path: str = None, cgmap_file: str = None, cgmap_pool: bool = False,
                  beta_params: dict = {"CG": (0.5, 0.5), "CHG": (0.01, 0.05), "CHH":(0.01, 0.05)},
                  asm_file: str = None, update_boundary: bool = False,
                  collect_ch: bool = True, overwrite_db: bool = False,
                  seed: int = None, verbose: bool = False):
 
-        self.ref_fasta   = ref_fasta
+        self.ref_dict    = ref_dict
         self.outdir      = outdir
         self.meth_db_path= meth_db_path
         self.cgmap_file  = cgmap_file
@@ -64,15 +62,11 @@ class SetMethylation:
         self.base_context_table= {'C': np.array([[7,3],  [1,1]]),  'G': np.array([[15,11],[9,9]])}
 
         # check existence
-        if not os.path.exists(ref_fasta):
-            raise ValueError('Cannot find the reference genome, please check!')
         if not outdir:
             raise ValueError('Please specify the output directory!')
         if self.asm_sim and not os.path.exists(asm_file):
             raise ValueError('Please specify allelic specific methylation file correctly for ASM simulation!')
 
-        self.ref_dict   = SeqIO.to_dict(SeqIO.parse(ref_fasta, "fasta"))
-        self.genome_len = sum([len(seq) for _, seq in self.ref_dict.items()])
         
         self.meth_db = StreamMethDB(outdir=self.outdir, overwrite_db=self.overwrite_db, ref_dict=self.ref_dict)
         self.meth_db.check_outdir()

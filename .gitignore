@@ -134,3 +134,6 @@ dmypy.json
 */.ipynb_checkpoints/
 .gitignore
 *temp/
+test/code/*
+test/data/*
+test/outdir/*
