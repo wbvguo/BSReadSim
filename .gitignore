@@ -136,4 +136,6 @@ dmypy.json
 *temp/
 test/code/*
 test/data/*
+test/outdir*
+test/outdir/pkl/*
 test/outdir/*

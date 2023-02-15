@@ -1,37 +1,64 @@
-from typing import Dict, List
+import os
 import re
 import numpy as np
 import pandas as pd
 import pickle
-import os
 
+from Bio import SeqIO
+from typing import Dict, List
+from UtilityFunctions import get_htsim_path
 
-class ParseCutBed:
+class ParseGenome:
     '''
-    
+    parse genome fasta into dict, calculate the effective length and score if needed
+    # parameters
+    :param str   ref_fasta      : path to the reference genome (.fasta/.fa/.fa.gz) [None]
+    :param str   outdir         : path to the output directory [None]
+    :param str   probe_bed_file : probe bed file for TBS simulation [None]
+    :param str   cut_site_str       : enzyme cut site for RRBS, cutting position is denoted by |, multiple sites
+                                  are separated by ,, for example MspI and TaqI: "C|CGG,T|CGA" [None]
+                                  
     '''
-    def __init__(self, ref_dict: Dict = None, outdir: str = None,
-                 probe_bed_file: str = None, site_str: str = None, rrbs_model: str = None,
-                 insert_min: int = 100, insert_max: int = 1000, overwrite: bool = False):
+    def __init__(self, ref_fasta: str = None, outdir: str = None, 
+                 depth: float = None, num_reads: int = None, 
+                 read_len: int = None, pair_end: bool = False, is_uniform: bool = True,
+                 probe_bed_file: str = None, cut_site_str: str = None, rrbs_model: str = None,
+                 insert_min: int = 100, insert_max: int = 1000, overwrite_db: bool = False):
         
-        self.ref_dict   = ref_dict
-        self.score_dict = {contig_id: 0 for contig_id in ref_dict.keys()}       # to calculate the #reads per chromosome if not is_uniform
-        self.eff_len_dict   = {contig_id: 0 for contig_id in ref_dict.keys()}   # to calculate the #reads from depth if not specified
+        self.ref_dict = SeqIO.to_dict(SeqIO.parse(ref_fasta, "fasta"))              # save
+        self.score_dict = {contig_id: 0 for contig_id in self.ref_dict.keys()}      # used to calculate the #reads per chromosome if not is_uniform
+        self.eff_len_dict = {contig_id: 0 for contig_id in self.ref_dict.keys()}    # used to calculate the #reads from depth if not specified
+        self.chr_len_dict = {contig_id: len(self.ref_dict[contig_id]) for contig_id in self.ref_dict.keys()} # record the genome length
+
 
         if probe_bed_file:
-            self.tech_mode  = 2
+            self.tech_mode      = 2
             self.probe_bed_file = probe_bed_file
             self.parse_bed()
-        else:
-            self.tech_mode  = 1
-            self.site_str   = site_str
-            self.insert_min = insert_min
-            self.insert_max = insert_max
-            self.overwrite  = overwrite
-            self.rrbs_model = rrbs_model
-            self.output_bed = 'f{outdir}/rrbs.bed'
+        elif cut_site_str:
+            self.tech_mode      = 1
+            self.cut_site_str   = cut_site_str
+            self.insert_min     = insert_min
+            self.insert_max     = insert_max
+            self.overwrite_db   = overwrite_db
+            self.rrbs_model     = rrbs_model
+            self.output_bed     = 'f{outdir}/rrbs.bed'
             self.check_file()
             self.cut_genome()
+        else:
+            self.tech_mode      = 0
+            self.score_dict     = self.chr_len_dict
+            self.eff_len_dict   = self.chr_len_dict
+
+
+        if not num_reads:
+            num_reads  = int(sum(self.eff_len_dict.values())*depth/read_len/(1+int(pair_end)))
+        if not is_uniform:
+            tot_score  = sum(self.score_dict.values())
+            self.count_dict = {contig_id: num_reads * self.score_dict[contig_id]/tot_score for contig_id in self.ref_dict.keys()}
+        else:
+            tot_score  = sum(self.eff_len_dict.values())
+            self.count_dict = {contig_id: num_reads * self.eff_len_dict[contig_id]/tot_score for contig_id in self.ref_dict.keys()}
 
 
     def parse_bed(self):
@@ -43,7 +70,7 @@ class ParseCutBed:
 
 
     def cut_genome(self):
-        site_list, spot_list, site_len_list = self.parse_site(self.site_str)
+        site_list, spot_list, site_len_list = self.parse_site(self.cut_site_str)
         
         for contig_id in self.ref_dict.keys():
             pos_arr = self.gen_cut_site(contig_id, site_list)
@@ -130,6 +157,8 @@ class ParseCutBed:
 
     def cal_score(self, model_file, df):
         # load model
+        rrbs_model = f'{os.path.dirname(get_htsim_path())}/data/model/rrbs.model' if not rrbs_model else rrbs_model
+        
         model = pickle.load(open(model_file, 'rb'))
         model_vars = []
         
@@ -139,10 +168,10 @@ class ParseCutBed:
         return model.predict(df.loc[:, model_vars])
 
 
-    def parse_site(self, site_str):
-        site_str_split= site_str.split(",")
-        spot_list = [site.rfind("|") for site in site_str_split]
-        site_list = [site.replace("|", "" ).upper() for site in site_str_split]
+    def parse_site(self, cut_site_str):
+        cut_site_str_split= cut_site_str.split(",")
+        spot_list = [site.rfind("|") for site in cut_site_str_split]
+        site_list = [site.replace("|", "" ).upper() for site in cut_site_str_split]
         site_len_list = [len(site) for site in site_list]
         
         return [site_list, spot_list, site_len_list]
@@ -150,8 +179,8 @@ class ParseCutBed:
     
     def check_file(self):
         if os.path.exists(self.output_bed):
-            if self.overwrite:
+            if self.overwrite_db:
                 os.remove(self.output_bed)
             else:
-                raise ValueError('Cannot write to output file, please set overwrite to be true!')
+                raise ValueError('Cannot write to output file, please set overwrite_db to be true!')
             

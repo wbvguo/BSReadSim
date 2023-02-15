@@ -15,7 +15,7 @@ from SetMethylation import SetMethylation
 from StreamReads import StreamReads
 from StreamHTSIM import StreamHTSIM
 from UtilityFunctions import get_htsim_path
-from ParseCutBed import ParseCutBed
+from ParseGenome import ParseGenome
 
 class BSReadSim:
     """
@@ -75,8 +75,8 @@ class BSReadSim:
     :param float conversion_rate: bisulfite conversion rate [0.995]
     :param bool  undirectional  : simulate undirectional (PCR product of Watson and Crick strands) [False]
     :param bool  pair_end       : whether to simulate pair-end data or not [False]
-    :param str   enzyme_cut_site: enzyme cut site for RRBS, cutting position is denoted by |, multiple sites
-                                  are separated by ;, for example MspI and TaqI: "C|CGG;T|CGA" [None]
+    :param str   cut_site_str   : enzyme cut site for RRBS, cutting position is denoted by |, multiple sites
+                                  are separated by comma, for example MspI and TaqI: "C|CGG,T|CGA" [None]
     :param str   probe_bed_file : probe bed file for TBS simulation [None]
     :param bool  is_uniform     : Whether the coverage should be uniform or not [True]
     :param int   n_threads      : number of threads for simulation [4]
@@ -109,7 +109,7 @@ class BSReadSim:
                  site_dependency: bool = False, conversion_rate: float = 0.998,                     # methylation setting
                  site_dependency_model: str = None, rrbs_model: str = None,                         # pretrained model
                  undirectional: bool = False, pair_end: bool = True,                                # sequencing protocol
-                 enzyme_cut_site: str = None, probe_bed_file: str = None, is_uniform: bool = True,  # sequencing technology
+                 cut_site_str: str = None, probe_bed_file: str = None, is_uniform: bool = True,     # sequencing technology
                  n_threads: int = 4, shuffle: bool = True, gzip: bool = True,                       # output setting
                  verbose: bool = True, collect_stats: bool = False):
 
@@ -118,34 +118,20 @@ class BSReadSim:
             raise ValueError('Cannot find the reference file, please check!')
         if not outdir:
             raise ValueError('Please specify the output directory!')
-        if enzyme_cut_site and probe_bed_file:
+        if cut_site_str and probe_bed_file:
             raise ValueError('Please specify files for only one technology mode!')
 
-        self.ref_fasta= ref_fasta
-        self.outdir   = outdir
-        self.prefix   = prefix
-        self.seed     = None if seed < 0 else seed
-        self.n_threads= n_threads
-        self.countLock= Lock()
+        self.ref_fasta      = ref_fasta
+        self.outdir         = outdir
+        self.pkl_dir        = f'{self.outdir}/pkl/'
+        self.tmp_dir        = f'{self.outdir}/tmp/'
+        self.prefix         = prefix
+        self.seed           = None if seed < 0 else seed
+        self.n_threads      = n_threads
+        self.countLock      = Lock()
 
-
-        # parse fasta files
-        self.ref_dict = SeqIO.to_dict(SeqIO.parse(ref_fasta, "fasta"))
-
-        # prepare the methylation reference
-        print('Initiating methylation profile:\n')
-        self.meth_set = SetMethylation(ref_dict=self.ref_dict, outdir=outdir,
-                                       meth_db_path=meth_db_path,
-                                       cgmap_file=cgmap_file, cgmap_pool=cgmap_pool,
-                                       asm_file=asm_file,
-                                       beta_params=beta_params,
-                                       collect_ch=collect_ch,
-                                       update_boundary=update_boundary,
-                                       overwrite_db=overwrite_db,
-                                       verbose=verbose,
-                                       seed=seed)
-        self.meth_db  = self.meth_set.meth_db
-
+        # prepare folder
+        self.create_outdir()
 
         # sequencing settings
         self.read_len       = read_len
@@ -166,75 +152,44 @@ class BSReadSim:
         self.meth_arr       = None
         self.variant_profile= None
 
+        # parse genome
+        self.genome_db  = ParseGenome(ref_fasta=self.ref_fasta, outdir=self.tmp_dir, 
+                                      depth=depth, read_len=read_len, pair_end=pair_end, is_uniform=is_uniform,
+                                      probe_bed_file=probe_bed_file, cut_site_str=cut_site_str, rrbs_model=rrbs_model,
+                                      insert_min=insert_min, insert_max=insert_max, overwrite_db=overwrite_db)
+        self.ref_dict   = self.genome_db.ref_dict
+        self.tech_mode  = self.genome_db.tech_mode
+        self.count_dict = self.genome_db.count_dict
+
+        # prepare the methylation reference
+        print('Initiating methylation profile:\n')
+        self.meth_set   = SetMethylation(ref_dict=self.ref_dict, outdir=self.outdir,
+                                         meth_db_path=meth_db_path,
+                                         cgmap_file=cgmap_file, cgmap_pool=cgmap_pool,
+                                         asm_file=asm_file,
+                                         beta_params=beta_params,
+                                         collect_ch=collect_ch,
+                                         update_boundary=update_boundary,
+                                         overwrite_db=overwrite_db,
+                                         verbose=verbose,
+                                         seed=seed)
+        self.meth_db    = self.meth_set.meth_db
 
         # prepare output
-        self.fastq_writer   = StreamReads(outdir=outdir, prefix=prefix, 
-                                          pair_end=pair_end,
-                                          gzip=gzip, shuffle=shuffle)
-        self.verbose        = verbose
+        self.fastq_out = StreamReads(outdir=outdir, prefix=prefix, pair_end=pair_end, gzip=gzip, shuffle=shuffle)
+        self.verbose   = verbose
 
 
         # prepare htsim command
         htsim_args    = [get_htsim_path(), ref_fasta]
         htsim_options = {'-i': insert_mean, '-I': insert_std, '-m': insert_min, '-M': insert_max,
-                         '-1': read_len, '-2': read_len, '-e': 0, '-A': propN_cutoff, '-u': is_uniform, '-f': 1,
+                         '-1': read_len, '-2': read_len, '-e': 0, '-A': propN_cutoff, '-u': int(is_uniform), '-f': 1,
                          '-g': vcf_file, '-r': mut_rate, '-R': mut_indel_frac, '-X': indel_ext_prob, 
-                         '-h': int(haplo_mode), '-s': seed}
+                         '-h': int(haplo_mode), '-s': seed, '-T': self.tech_mode}
         self.sim_cmd_part   = htsim_args + [str(item) for key_val in htsim_options.items() for item in key_val]
 
 
         # technology setting, prepare read count for each contig
-        self.cut_bed  = ParseCutBed(ref_dict = self.ref_dict, outdir = self.meth_db.tmp_dir,
-                                    probe_bed_file = probe_bed_file, site_str = enzyme_cut_site, rrbs_model = rrbs_model,
-                                    insert_min = insert_min, insert_max=insert_max, overwrite=overwrite_db)
-        
-        if self.cut_bed.tech_mode == 2:
-            
-        
-        self.len_count_dict = {id: [len(seq), 0, 0, 0] for id, seq in self.ref_dict.items()}
-        self.genome_len = sum([rec[0] for _, rec in self.len_count_dict.items()])
-
-        if self.probe_bed_file:
-            self.tech_mode  = 2
-            with open(self.probe_bed_file, 'r') as f: # bed file regions non-overlap
-                for line in f:
-                    columns = line.strip().split('\t')
-                    self.len_count_dict[columns[0]][1] += int(columns[2]) - int(columns[1])
-                    self.len_count_dict[columns[0]][2] += 0 if self.is_uniform else float(columns[4])
-            self.tot_score  = [sum(i) for i in zip(*[item[1,2] for _, item in self.len_count_dict.items()])]
-
-            if not num_reads:
-                num_reads  = int(self.tot_score[0]*depth/read_len/(1+int(pair_end)))
-            
-            for contig_id in self.len_count_dict.keys():
-                idx = 2 - int(is_uniform)
-                contig_score = self.len_count_dict[contig_id][idx]
-                self.len_count_dict[contig_id][3] = int(contig_score*num_reads/self.tot_score[idx])
-            
-        elif self.enzyme_cut_site:
-            self.tech_mode = 1
-            # read in the scores
-            
-            if not num_reads:
-                num_reads  = int(self.tot_score[0]*depth/read_len/(1+int(pair_end)))
-            for contig_id in self.len_count_dict.keys():
-                idx = 2 - int(is_uniform)
-                contig_score = self.len_count_dict[contig_id][idx]
-                self.len_count_dict[contig_id][3] = int(contig_score*num_reads/self.tot_score[idx])
-            
-            
-        else:
-            self.tech_mode = 0
-            if not num_reads:
-                num_reads = int(self.genome_len*depth/read_len/(1+int(pair_end)))
-            
-            for contig_id in self.len_count_dict.keys():
-                contig_len = self.len_count_dict[contig_id][0]
-                self.len_count_dict[contig_id][1] = contig_len
-                self.len_count_dict[contig_id][3] = int(contig_len*num_reads/self.genome_len)
-             
-            htsim_tech = {'-T': self.tech_mode}
-
         htsim_options['-N'] = num_reads
         self.htsim_args     = htsim_args
         self.htsim_options  = htsim_options
@@ -255,8 +210,8 @@ class BSReadSim:
         print(f'[CMD]: {" ".join(self.sim_cmd_part)} \n')
 
         with ThreadPoolExecutor(max_workers=self.n_threads) as executor:
-            for contig_id in self.len_count_dict.keys():
-                sim_cmd  = self.sim_cmd_part + ['-c', contig_id] + ['-n', self.len_count_dict[contig_id][3]]
+            for contig_id in self.count_dict.keys():
+                sim_cmd  = self.sim_cmd_part + ['-c', contig_id] + ['-n', self.count_dict[contig_id][3]]
                 read_gen = LockedIterator(StreamHTSIM(sim_cmd=sim_cmd, pair_end=self.pair_end))
                 var_contig, sim_data= next(read_gen)                                    # the first element is the variants
                 self.current_contig = var_contig                                        # update the profiles
@@ -275,7 +230,7 @@ class BSReadSim:
         if self.verbose:                    # close the progress bar
             self.tqdm_pbar.close()
 
-        self.fastq_writer.close()
+        self.fastq_out.close()
         print('Simulation Finished!\n')
 
 
@@ -291,7 +246,7 @@ class BSReadSim:
         self.rev_complement(read_pair[0], read_flip)
         self.add_seq_err(read_pair[0])
         self.add_qual_score(read_pair[0])
-        self.fastq_writer.output_reads(read_pair, read_flip, read1_sub)
+        self.fastq_out.output_reads(read_pair, read_flip, read1_sub)
 
 
     def process_read_pair(self, read_pair):
@@ -333,7 +288,7 @@ class BSReadSim:
         self.add_qual_score(read_pair[1])
 
         # output
-        self.fastq_writer.output_reads(read_pair, read_flip, read1_sub)
+        self.fastq_out.output_reads(read_pair, read_flip, read1_sub)
 
 
     def mask_context(self, read_rec, read_sub):
@@ -486,6 +441,13 @@ class BSReadSim:
         if incre_amount > self.tqdm_count[2]:
             self.tqdm_pbar.update(incre_amount)
             self.tqdm_count[1] = self.tqdm_count[0]
+
+    def create_outdir(self):
+        '''create output directory'''
+        if not os.path.isdir(self.outdir):
+            os.makedirs(self.outdir, exist_ok=False)
+            os.makedirs(self.pkl_dir, exist_ok=False)
+            os.makedirs(self.tmp_dir, exist_ok=False)
 
 
 # column context, row cigar
