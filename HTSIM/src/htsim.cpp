@@ -69,8 +69,8 @@ const uint8_t nst_nt4_table[256] = {
 static double ERR_RATE = 0.005;
 static double MUT_RATE = 0.01;
 static double INDEL_FRAC = 0.15;
-static double INDEL_EXTEND= 0.3;
-static double MAX_N_RATIO = 0.05;
+static double INDEL_EXTN = 0.3;
+static double MAX_N_RATIO= 0.05;
 
 
 static uint8_t MATCH  = 0x00;
@@ -334,7 +334,7 @@ void parse_bed_chr(char *fname, char *chr_id)
     if (ret=hts_close(fp)){fprintf(stderr,"[%s] ERROR: hts_close(%s): non-zero status %d\n", __func__, fname, ret); exit(ret);}
 }
 
-void parse_eff_file(char *fname)
+void parse_bias_file(char *fname)
 {
     FILE* fp = fopen(fname, "r");
     float eff_prob;
@@ -581,7 +581,7 @@ void sim_mut_diref(const kseq_t *ks, bool is_hap, mutseq_t *hap1, mutseq_t *hap2
         int c;
         c = ret[0]->s[i] = ret[1]->s[i] = (mut_t)nst_nt4_table[(int)ks->seq.s[i]];
         if (deleting) {
-            if (drand48() < INDEL_EXTEND) {
+            if (drand48() < INDEL_EXTN) {
                 if (deleting & 1) ret[0]->s[i] |= DELETE;
                 if (deleting & 2) ret[1]->s[i] |= DELETE;
                 site_flag_arr[i] = 1;
@@ -611,7 +611,7 @@ void sim_mut_diref(const kseq_t *ks, bool is_hap, mutseq_t *hap1, mutseq_t *hap2
                     do {
                         num_ins++;
                         ins = (ins << 2) | (int)(drand48() * 4.0);
-                    } while (num_ins < 4 && drand48() < INDEL_EXTEND);
+                    } while (num_ins < 4 && drand48() < INDEL_EXTN);
 
                     if (is_hap || drand48() < 0.333333) { // hom-ins
                         ret[0]->s[i] = ret[1]->s[i] = (num_ins << 12) | (ins << 4) | c;
@@ -814,7 +814,7 @@ void sim_rand(std::discrete_distribution<int> *dis, fragment *tmp_frag, int tech
     tmp_frag->pos_r = pos_r;
 }
 
-void sim_core(const char *fn, bool is_hap, bool is_uniform, uint64_t N, uint64_t chr_N, uint64_t tot_eff_len, int tech_mode, int output_fmt, char *vcf_file, char *probe_bed, char *chr_id)
+void sim_core(const char *fn, bool is_hap, bool is_uniform, uint64_t N, uint64_t chr_N, uint64_t tot_eff_len, int tech_mode, int output_fmt, char *vcf_file, char *bed_file, char *chr_id)
 {
     kseq_t *ks;
     mutseq_t rseq[2];
@@ -874,7 +874,7 @@ void sim_core(const char *fn, bool is_hap, bool is_uniform, uint64_t N, uint64_t
         std::uniform_int_distribution<int> dis;
 
         if(tech_mode){
-            parse_bed_chr(probe_bed, ks->name.s);
+            parse_bed_chr(bed_file, ks->name.s);
             if(probe_vec.size() == 0){continue;} // parse probe, skip if empty
             if(is_uniform){
                 std::uniform_int_distribution<int> dis(0, probe_vec.size()-1);
@@ -1179,21 +1179,22 @@ static int simu_usage()
     fprintf(stderr, "         -d INT        average sequencing depth, only used when n/N is not specified [10]\n");
     fprintf(stderr, "         -1 INT        length of the first read [70]\n");
     fprintf(stderr, "         -2 INT        length of the second read [70]\n");
-    fprintf(stderr, "         -E FLOAT      base error rate (set to be 0 for bisulfite sequencing) [%.3f]\n", ERR_RATE);
+    fprintf(stderr, "         -e FLOAT      base error rate (set to be 0 for bisulfite sequencing) [%.3f]\n", ERR_RATE);
     fprintf(stderr, "         -A FLOAT      disgard if the fraction of ambiguous bases higher than FLOAT [%.2f]\n", MAX_N_RATIO);
     fprintf(stderr, "         -u INT        uniform coverage: 0 for No, nonzero for Yes [1]\n");
     fprintf(stderr, "         -f INT        output format: 0 for letters; 1 for ascii numbers (for python module) [0]\n");
-    fprintf(stderr, "\nmutation setting:\n");
+    fprintf(stderr, "mutation setting:\n");
     fprintf(stderr, "         -g STRING     path to the genetic variant file (vcf/vcf.gz) [None]\n");
     fprintf(stderr, "         -r FLOAT      rate of mutations [%.4f]\n", MUT_RATE);
     fprintf(stderr, "         -R FLOAT      fraction of indels [%.2f]\n", INDEL_FRAC);
-    fprintf(stderr, "         -X FLOAT      probability an indel is extended [%.2f]\n", INDEL_EXTEND);
+    fprintf(stderr, "         -X FLOAT      probability an indel is extended [%.2f]\n", INDEL_EXTN);
     fprintf(stderr, "         -h INT        haplotype mode: 0 for No, nonzero for Yes (all variants are homozygotes) [0]\n");
     fprintf(stderr, "         -s INT        seed for random generator [-1]\n");
-    fprintf(stderr, "\ntechnology setting:\n");
+    fprintf(stderr, "technology setting:\n");
     fprintf(stderr, "         -T INT        technology: 0 for Whole genome; 1 for Reduced representation; 2 for Targeted [0]\n");
     fprintf(stderr, "         -x STRING     enzyme cutting site string for reduced representation sequencing [None]\n");
     fprintf(stderr, "         -b STRING     BED file for reduced-representation / targeted sequencing [None]\n");
+    fprintf(stderr, "         -B STRING     CG Bias reference for WGS/WGBS, only used when -u set to be 0 [None]\n");
     fprintf(stderr, "         -D INT        fragment center's deviaiton from the probe center [50]\n");
     fprintf(stderr, "\n");
     return 1;
@@ -1203,56 +1204,56 @@ int main(int argc, char *argv[])
 {
     uint64_t N=0, chr_N=0;
     int c = 0;
-    int tech_mode=0, output_fmt = 0;
+    int tech_mode = 0, output_fmt = 0;
     int seed = -1;
     int min_insert, max_insert, depth = 10;
     bool is_hap = false, is_uniform = true;
 
     char none_default[] = "None";
-    char *chr_id    = none_default;
-    char *vcf_file  = none_default;
-    char *cut_str   = none_default;
-    char *enrich_tsv= none_default;
-    char *probe_bed = none_default; // checked, will not intefere with vcf_file
+    char *chr_id   = none_default;
+    char *vcf_file = none_default;
+    char *cut_str  = none_default;
+    char *bias_tab = none_default;
+    char *bed_file = none_default; // checked, will not intefere with vcf_file
 
     mean_insert = 500; sd_insert = 50; sd_center = 50; size_l = size_r = 70;
-    while ((c = getopt(argc, argv, "i:I:m:M:c:n:N:d:1:2:E:A:U:f:g:r:R:X:h:s:T:x:e:b:D:")) >= 0) {
+    while ((c = getopt(argc, argv, "i:I:m:M:c:n:N:d:1:2:e:A:U:f:g:r:R:X:h:s:T:x:b:B:D:")) >= 0) {
         switch (c) {
             case 'i': mean_insert= atoi(optarg); break;
             case 'I': sd_insert  = atoi(optarg); break;
             case 'm': min_insert = atoi(optarg); break;
             case 'M': max_insert = atoi(optarg); break;
             case 'c': chr_id     = optarg; break;
-            case 'n': chr_N   = atoi(optarg); break;
+            case 'n': chr_N      = atoi(optarg); break;
             case 'N': N          = atoi(optarg); break;
             case 'd': depth      = atoi(optarg); break;
             case '1': size_l     = atoi(optarg); break;
             case '2': size_r     = atoi(optarg); break;
-            case 'E': ERR_RATE   = atof(optarg); break;
+            case 'e': ERR_RATE   = atof(optarg); break;
             case 'A': MAX_N_RATIO= atof(optarg); break;
             case 'u': is_uniform = atoi(optarg)!=0; break;
             case 'f': output_fmt = atoi(optarg); break;
             case 'g': vcf_file   = optarg; break;
             case 'r': MUT_RATE   = atof(optarg); break;
             case 'R': INDEL_FRAC = atof(optarg); break;
-            case 'X': INDEL_EXTEND=atof(optarg); break;
+            case 'X': INDEL_EXTN = atof(optarg); break;
             case 'h': is_hap     = atoi(optarg)!=0; break;
             case 's': seed       = atoi(optarg); break;
             case 'T': tech_mode  = atoi(optarg); break;
             case 'x': cut_str    = optarg; break;
-            case 'e': enrich_tsv = optarg; break;
-            case 'b': probe_bed  = optarg; break;
+            case 'b': bed_file   = optarg; break;
+            case 'B': bias_tab   = optarg; break;
             case 'D': sd_center  = atoi(optarg); break;
         }
     }
     if (argc - optind < 1) return simu_usage();
     if (seed <= 0) seed = time(0)&0x7fffffff;
 
-    bool bool_chr_set   = strcmp(chr_id, "None")    && strlen(chr_id);
-    bool bool_vcf_set   = strcmp(vcf_file,"None")   && strlen(vcf_file);
-    bool bool_site_set  = strcmp(cut_str, "None")   && strlen(cut_str);
-    bool bool_probe_set = strcmp(probe_bed, "None") && strlen(probe_bed);
-    bool bool_enrich_set= strcmp(enrich_tsv,"None") && strlen(enrich_tsv); 
+    bool bool_chr_set   = strcmp(chr_id,  "None") && strlen(chr_id);
+    bool bool_vcf_set   = strcmp(vcf_file,"None") && strlen(vcf_file);
+    bool bool_site_set  = strcmp(cut_str, "None") && strlen(cut_str);
+    bool bool_probe_set = strcmp(bed_file,"None") && strlen(bed_file);
+    bool bool_bias_set  = strcmp(bias_tab,"None") && strlen(bias_tab); 
 
     // check legal input mode and corresponding files
     if (tech_mode==2 || bool_probe_set){
@@ -1271,10 +1272,10 @@ int main(int argc, char *argv[])
         tech_mode = 0;
     }
 
-    // check enrichment file
-    if(!is_uniform || bool_enrich_set){
-        if (!bool_enrich_set){fprintf(stderr, "ERROR: Please specify enrichment files when specifying -u as 0\n");exit(EXIT_FAILURE);}
-        parse_eff_file(enrich_tsv);
+    // check cg bias file
+    if(!is_uniform || bool_bias_set){
+        if (!bool_bias_set){fprintf(stderr, "ERROR: Please specify bias files when specifying -u as 0\n");exit(EXIT_FAILURE);}
+        parse_bias_file(bias_tab);
         is_uniform = false;
     }
 
@@ -1292,7 +1293,7 @@ int main(int argc, char *argv[])
     uint64_t tot_len = 0, tot_eff_len = 0;
     while ((l = kseq_read(ks)) >= 0) {
         tmp_len = {};
-        cal_length_chr(ks, &tmp_len, tech_mode, probe_bed);
+        cal_length_chr(ks, &tmp_len, tech_mode, bed_file);
         tot_len += tmp_len.tot_len;
         tot_eff_len += tmp_len.eff_len;
         len_vec.push_back(tmp_len);
@@ -1335,7 +1336,7 @@ int main(int argc, char *argv[])
     fprintf(stderr, "[htsim] seed = %d\n", seed);
     srand48(seed);
 
-    sim_core(argv[optind], is_hap, is_uniform, N, chr_N, tot_eff_len, tech_mode, output_fmt, vcf_file, probe_bed, chr_id);
+    sim_core(argv[optind], is_hap, is_uniform, N, chr_N, tot_eff_len, tech_mode, output_fmt, vcf_file, bed_file, chr_id);
 
     return 0;
 }

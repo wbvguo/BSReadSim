@@ -14,11 +14,12 @@ class StreamMethDB:
     def __init__(self, outdir: str = None, overwrite_db: bool = False, ref_dict: Dict = None):
         self.outdir = outdir
         self.pkl_dir= f'{self.outdir}/pkl/'
+        self.tmp_dir= f'{self.outdir}/tmp/'
         self.overwrite_db = overwrite_db
         
         self.create_outdir()
-        if ref_dict and overwrite_db:
-            self.save_ref(ref_dict)
+        # if ref_dict and overwrite_db:
+        #     self.save_ref(ref_dict)
 
 
     def create_outdir(self):
@@ -26,6 +27,7 @@ class StreamMethDB:
         if not os.path.isdir(self.outdir):
             os.makedirs(self.outdir, exist_ok=False)
             os.makedirs(self.pkl_dir, exist_ok=False)
+            os.makedirs(self.tmp_dir, exist_ok=False)
 
 
     def check_outdir(self):
@@ -34,6 +36,8 @@ class StreamMethDB:
             print(f"No such folder: {self.outdir}")
         if not os.path.isdir(self.pkl_dir):
             print(f"No such folder: {self.pkl_dir}")
+        if not os.path.isdir(self.tmp_dir):
+            print(f"No such folder: {self.tmp_dir}")
 
 
     def save_ref(self, ref_dict):

@@ -81,16 +81,16 @@ class parseASM:
             return line.replace('\n', '').split('\t')
 
 
-def get_wgsim_path():
+def get_htsim_path():
     """Get paths of dependencies. Print warning if setup.py not run and dependencies not compiled.
-    rtype: str wgsim_path: path to wgsim executable wgsim
+    rtype: str htsim_path: path to htsim executable htsim
     """
     utility_dir = os.path.dirname(os.path.realpath(__file__))
     base_dir    = os.path.dirname(utility_dir)
-    wgsim_path  = f'{base_dir}/WGSIM/wgsim'
-    if not os.path.exists(wgsim_path):
-        raise ValueError("[ERROR] Executable wgsim not found, please check!")
-    return wgsim_path
+    htsim_path  = f'{base_dir}/HTSIM/htsim'
+    if not os.path.exists(htsim_path):
+        raise ValueError("[ERROR] Executable htsim not found, please check!")
+    return htsim_path
 
 
 def complement(sequence):

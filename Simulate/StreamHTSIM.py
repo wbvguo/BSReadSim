@@ -5,10 +5,10 @@ from typing import Dict
 from UtilityFunctions import retrieve_iupac
 
 
-class StreamWGSIM:
+class StreamHTSIM:
     '''
-    stream WGSIM output for bisulfite reads generation
-    :param str  sim_cmd : WGSIM commands for simulation
+    stream HTSIM output for bisulfite reads generation
+    :param str  sim_cmd : HTSIM commands for simulation
     :param bool pair_end: pair_end or not
     :rtype None
     '''
@@ -17,8 +17,8 @@ class StreamWGSIM:
         self.pair_end = pair_end
 
     def __iter__(self):
-        wgsim = subprocess.Popen(self.sim_cmd, stdout=subprocess.PIPE, universal_newlines=True)
-        sim_iter = iter(wgsim.stdout.readline, b'')
+        htsim = subprocess.Popen(self.sim_cmd, stdout=subprocess.PIPE, universal_newlines=True)
+        sim_iter = iter(htsim.stdout.readline, b'')
 
         line  = self.get_line(sim_iter) # line is None when EOF
         while line:

@@ -3,6 +3,7 @@ import random
 import numpy as np
 import subprocess
 
+from Bio import SeqIO
 from tqdm import tqdm
 from scipy.stats import bernoulli
 from typing import Dict, Union, Tuple
@@ -11,31 +12,32 @@ from concurrent.futures import ThreadPoolExecutor
 
 from LockedIterator import LockedIterator
 from SetMethylation import SetMethylation
-from StreamMethDB import StreamMethDB
 from StreamReads import StreamReads
-from StreamWGSIM import StreamWGSIM
-from UtilityFunctions import get_wgsim_path
+from StreamHTSIM import StreamHTSIM
+from UtilityFunctions import get_htsim_path
+from ParseGenome import ParseGenome
 
 
 class BSReadSim:
     """
     The bisulfite sequencing simulation works as follows:
     1. construct the meth_db:
-        a. parse the reference fasta to initiate a methylation database (using array and Series)
-        b. fill in the methylaiton value, which can be obtained from the following 3 aspects:
+        a. parse the reference fasta and initiate a methylation database (np.array which holds 
+           the methylable base (C or G)'s position and methylation value)
+        b. fill in the methylaiton value, which can be from the following 3 approaches:
             - reference CGmap, either pool randomly or assign to correponding sites
-            - beta distribution (prarameters can be estimated from CGmap file and set by users)
-            - from the ASM file, especially estimated from the ASM simulation
-    2. modified WGSIM module is invoked to simulate pair-end Illumina sequencing reads and variants
+            - beta distribution (prarameters can be estimated from CGmap file or set by users)
+            - reference ASM
+    2. modified htsim module is invoked to simulate pair-end Illumina sequencing reads and variants
         a. if run in single end mode, the second read is not processed nor output, correspondingly 
           the number of reads simulated is doubled to get desired depth
-        b. the output of 2 reads from WGSIM is always the watson 5' to 3' and error-free,the 
+        b. the output of 2 reads from htsim is always the watson 5' to 3' and error-free,the 
           strandness/orientation is determined in the python module
         c. update meth_db: the variant's methylable base (also the boundary methylable bases whose 
         context is changed by variants) is set using beta distribution according to their context
     3. For each read, methylation values are retrived from meth_db for methylable bases (C or G),
        methylation states is simulated either using the naive independent bernoulli distribution or
-       using RNN-GAN model for site-site dependency consideration. [TODO]
+       using RNN model for site-site dependency consideration. [TODO]
     4. Allelic methylation is permitted if the asm_file specified
     5. Reads are bisulfite converted (with a conversion rate) and sequencing error can be introduced
 
@@ -46,31 +48,44 @@ class BSReadSim:
     :param str   meth_db_path   : path to the previous obj (.pkl) [None]
     :param str   cgmap_file     : path to the cgmap file (.CGmap/.CGmap.gz) [False]
     :param bool  cgmap_pool     : whether to pool methylaiton levels and random draws from it [False]
-    :param bool  asm_sim        : whether to conduct allelic specific methylation (ASM) [False]
     :param str   asm_file       : path to the allelic specific methylation (ASM) file [None]
     :param dict  beta_params    : dict of beta parameters for CG/CHG/CHH methylation values simulation
                                   [{"CG": (0.5, 0.5), "CHG": (0.01, 0.05), "CHH":(0.01, 0.05)}]
     :param bool  collect_ch     : whether to collect/simulate the CHG/CHH sites [False]
+    :param bool  update_boundary: whether to change the boundary sites' mehtylation due to mutation [False]
     :param bool  overwrite_db   : whether to overwrite the meth_db if it already exists [True]
     :param str   vcf_file       : path to the reference vcf file
     :param float mut_rate       : mutation error rate for random mutation generation [0.0010]
-    :param float mut_indel_frac : INDEL fraction in the random generated mutation [0.15]
-    :param float indel_ext_prob : probability the INDEL length will be extended [0.15]
     :param bool  haplo_mode     : simulate only homozygous variants [False]
     :param int   seed           : seed for methylation, mutation and sequencing error generation,
                                   seed is none if sign is negative [-1]
+    :param float mut_indel_frac : INDEL fraction in the random generated mutation [0.15]
+    :param float indel_ext_prob : probability the INDEL length will be extended [0.15]
     :param int   insert_mean    : mean of insert size
     :param int   insert_std     : standard deviation of insert size
+    :param int   insert_min     : min insert size
+    :param int   insert_max     : max insert size
     :param int   read_len       : length of simulated reads [100]
     :param float depth          : average sequencing depth for each contigs [20]
-    :param float seq_err        : sequencing error rate [0.005]
-    :param float conversion_rate: bisulfite conversion rate [0.995]
-    :param bool  pair_end       : whether to simulate pair-end data or not [False]
-    :param bool  undirectional  : simulate undirectional (PCR product of Watson and Crick strands) [False]
+    :param float num_reads      : total number of reads to simulate [None]
+    :param bool  random_err     : whether to generate sequencing error randomly [True]
+    :param float seq_err        : sequencing error rate for random error generation[0.005]
     :param float propN_cutoff   : reference segments where the proportion of ambiguous bases, - or N,
                                   greater than threshold will be skipped [0.05]
-    :param bool  verbose        : whether to output processing details [True]
+    :param bool  site_dependency: whether to consider site-site dependency on the read-level methylation [False]
+    :param float conversion_rate: bisulfite conversion rate [0.995]
+    :param bool  undirectional  : simulate undirectional (PCR product of Watson and Crick strands) [False]
+    :param bool  pair_end       : whether to simulate pair-end data or not [False]
+    :param str   cut_site_str   : enzyme cut site for RRBS, cutting position is denoted by |, multiple sites
+                                  are separated by comma, for example MspI and TaqI: "C|CGG,T|CGA" [None]
+    :param str   probe_bed_file : probe bed file for TBS simulation [None]
+    :param bool  is_uniform     : Whether the coverage should be uniform or not [True]
+    :param int   n_threads      : number of threads for simulation [4]
     :param bool  shuffle        : by default the reads are segmented by contigs, shuffle it [True]
+    :param bool  gzip           : whether to compressed the output fastq files [True]
+    :param bool  verbose        : whether to output processing details [True]
+    :param bool  collect_stats  : whether to collect simulation statistics [False]
+
 
     Usage:
     ```python
@@ -89,54 +104,36 @@ class BSReadSim:
                  mut_rate: float = 0.0010, haplo_mode: bool = False, seed: int = -1,                # mutation parameter
                  mut_indel_frac: float = 0.15, indel_ext_prob: float = 0.15,                        # indel parameter
                  insert_mean: int = 400, insert_std: int = 25,                                      # fragment setting
+                 insert_min: int = 100, insert_max: int = 1000,
                  read_len: int = 100, depth: int = 20, num_reads: int = None,                       # reads setting
-                 random_err= True, seq_err: float = 0.005,                                          # sequencing error
+                 random_err= True, seq_err: float = 0.005, propN_cutoff: float = 0.05,              # sequencing error
                  site_dependency: bool = False, conversion_rate: float = 0.998,                     # methylation setting
+                 site_dependency_model: str = None, rrbs_model: str = None,                         # pretrained model
+                 cg_bias_file: str = None, probe_deviation: int =None,
                  undirectional: bool = False, pair_end: bool = True,                                # sequencing protocol
-                 enzyme_cut_site: str = None, probe_bed_file: str = None,                           # sequencing technology
-                 n_threads: int = 4, gzip: bool = True, shuffle: bool = True,                       # output setting
-                 verbose: bool = True, collect_stats: bool = False, propN_cutoff: float = 0.05):
+                 cut_site_str: str = None, probe_bed_file: str = None, is_uniform: bool = True,     # sequencing technology
+                 n_threads: int = 4, shuffle: bool = True, gzip: bool = True,                       # output setting
+                 verbose: bool = True, collect_stats: bool = False):
 
         # check required auguments are provided
         if not os.path.exists(ref_fasta):
             raise ValueError('Cannot find the reference file, please check!')
         if not outdir:
             raise ValueError('Please specify the output directory!')
-        if enzyme_cut_site and probe_bed_file:
-            raise ValueError('Please only specify only one mode for simulation!')        
+        if cut_site_str and probe_bed_file:
+            raise ValueError('Please specify files for only one technology mode!')
 
-        self.ref_fasta= ref_fasta
-        self.outdir   = outdir
-        self.prefix   = prefix
-        self.seed     = None if seed < 0 else seed
-        self.n_threads= n_threads
-        self.countLock= Lock()
+        self.ref_fasta      = ref_fasta
+        self.outdir         = outdir
+        self.pkl_dir        = f'{self.outdir}/pkl/'
+        self.tmp_dir        = f'{self.outdir}/tmp/'
+        self.prefix         = prefix
+        self.seed           = None if seed < 0 else seed
+        self.n_threads      = n_threads
+        self.countLock      = Lock()
 
-
-        # prepare the methylation reference
-        print('Initiating methylation profile:\n')
-        self.meth_set = SetMethylation(ref_fasta=ref_fasta, outdir=outdir,
-                                       meth_db_path=meth_db_path,
-                                       cgmap_file=cgmap_file, cgmap_pool=cgmap_pool,
-                                       asm_file=asm_file,
-                                       beta_params=beta_params,
-                                       collect_ch=collect_ch,
-                                       update_boundary=update_boundary,
-                                       overwrite_db=overwrite_db,
-                                       verbose=verbose,
-                                       seed = self.seed)
-        self.meth_db  = self.meth_set.meth_db
-
-
-        # technology settings
-        self.enzyme_cut_site= enzyme_cut_site
-        self.probe_bed_file = probe_bed_file
-        if self.probe_bed_file:
-            self.tech_mode  = 2
-        elif self.enzyme_cut_site:
-            self.tech_mode  = 1
-        else:
-            self.tech_mode  = 0
+        # prepare folder
+        self.create_outdir()
 
         # sequencing settings
         self.read_len       = read_len
@@ -147,7 +144,8 @@ class BSReadSim:
         self.seq_err        = seq_err
         self.collect_ch     = collect_ch
         self.asm_sim        = True if asm_file else False
-        self.site_dependency= site_dependency
+        self.site_dependency= True if site_dependency_model else site_dependency
+        self.is_uniform     = is_uniform
         self.collect_stats  = collect_stats
 
         # to hold intermediate data
@@ -155,67 +153,68 @@ class BSReadSim:
         self.pos_map        = None
         self.meth_arr       = None
         self.variant_profile= None
-        self.read_count_dict= {}
 
+        # parse genome
+        self.genome_db  = ParseGenome(ref_fasta=self.ref_fasta, outdir=self.tmp_dir, num_reads=num_reads,
+                                      depth=depth, read_len=read_len, pair_end=pair_end, is_uniform=is_uniform,
+                                      probe_bed_file=probe_bed_file, cut_site_str=cut_site_str, rrbs_model=rrbs_model,
+                                      insert_min=insert_min, insert_max=insert_max, overwrite_db=overwrite_db)
+        self.ref_dict   = self.genome_db.ref_dict
+        self.bed_file   = self.genome_db.bed_file
+        self.tech_mode  = self.genome_db.tech_mode
+        self.count_dict = self.genome_db.count_dict
+        self.num_reads  = self.genome_db.num_reads
+
+        # prepare the methylation reference
+        print('Initiating methylation profile:\n')
+        self.meth_set   = SetMethylation(ref_dict=self.ref_dict, outdir=self.outdir,
+                                         meth_db_path=meth_db_path,
+                                         cgmap_file=cgmap_file, cgmap_pool=cgmap_pool,
+                                         asm_file=asm_file,
+                                         beta_params=beta_params,
+                                         collect_ch=collect_ch,
+                                         update_boundary=update_boundary,
+                                         overwrite_db=overwrite_db,
+                                         verbose=verbose,
+                                         seed=seed)
+        self.meth_db    = self.meth_set.meth_db
 
         # prepare output
-        self.fastq_writer   = StreamReads(outdir=outdir, prefix=prefix, 
-                                          pair_end=pair_end,
-                                          gzip=gzip, shuffle=shuffle)
-        self.verbose        = verbose
+        self.fastq_out  = StreamReads(outdir=outdir, prefix=prefix, pair_end=pair_end, gzip=gzip, shuffle=shuffle)
+        self.verbose    = verbose
 
-
-        # prepare wgsim command
-        wgsim_args    = [get_wgsim_path(), ref_fasta]
-        wgsim_options = {'-d': insert_mean, '-s': insert_std,
-                         '-1': read_len, '-2': read_len, 
-                         '-g': vcf_file,
-                         '-r': mut_rate, '-h': int(haplo_mode), '-S': seed,
-                         '-R': mut_indel_frac, '-X': indel_ext_prob,
-                         '-A': propN_cutoff, '-e': 0, '-m': 1}
-        self.sim_cmd_part   = wgsim_args + [str(item) for key_val in wgsim_options.items() for item in key_val]
-
-
-        # prepare read count for each contig
-        if self.tech_mode  == 2:
-            if not num_reads:
-                # calculate the effective length of each contig
-                pass
-        elif self.tech_mode== 1:
-            if not num_reads:
-                # calculate the effective length of each contig
-                pass
-        else:
-            if not num_reads:
-                num_reads = int(self.meth_set.genome_len*depth/read_len/(1+int(pair_end)))
-
-            for contig_id in self.meth_set.ref_dict.keys():
-                contig_len  = self.meth_set.ref_dict[contig_id]
-                self.read_count_dict[contig_id] = int(contig_len*num_reads/self.meth_set.genome_len)
-        
-        wgsim_options['-N'] = num_reads
-        self.wgsim_args     = wgsim_args
-        self.wgsim_options  = wgsim_options
-
+        # prepare htsim command
+        htsim_args      = [get_htsim_path(), ref_fasta]
+        htsim_options   = {'-i': insert_mean, '-I': insert_std, '-m': insert_min, '-M': insert_max,
+                           '-1': read_len, '-2': read_len, '-e': 0, '-A': propN_cutoff, '-u': int(is_uniform), '-f': 1,
+                           '-g': vcf_file, '-r': mut_rate, '-R': mut_indel_frac, '-X': indel_ext_prob, 
+                           '-h': int(haplo_mode), '-s': seed, '-T': self.tech_mode, '-x': cut_site_str, 
+                           '-b': self.bed_file, '-B': cg_bias_file, '-D': probe_deviation}
+        self.cmd_part   = htsim_args + [str(item) for key_val in htsim_options.items() for item in key_val]
+        self.htsim_args     = htsim_args
+        self.htsim_options  = htsim_options
 
         # progress
         if verbose:
-            self.tqdm_count = [0, 0, num_reads * 0.01] # current, previous, step size
-            self.tqdm_pbar  = tqdm(range(num_reads), bar_format="{desc:<5.5}{percentage:3.0f}%|{bar:20}{r_bar}")
+            self.tqdm_count = [0, 0, self.num_reads * 0.01] # current, previous, step size
+            self.tqdm_pbar  = tqdm(range(self.num_reads), bar_format="{desc:<5.5}{percentage:3.0f}%|{bar:20}{r_bar}")
 
 
     def run(self):
         """Simulating Bisulfite sequencing reads with parallelization:
-        # 1. recieve from WGSIM
+        # 1. recieve from htsim
         # 2. process and write to disk (multiple threads)
         """
         print('Simulating methylated Reads:\n')
-        print(f'[CMD]: {" ".join(self.sim_cmd_part)} \n')
+        print(f'[CMD]: {" ".join(self.cmd_part)} \n')
+        if self.verbose:
+            print(f'[INFO]: # reads for each contig\n')
+            print(f'{contig_id}: {str(num_reads)}\n' for contig_id, num_reads in self.count_dict.items())
 
         with ThreadPoolExecutor(max_workers=self.n_threads) as executor:
-            for contig_id in self.meth_set.ref_dict.keys():
-                sim_cmd  = self.sim_cmd_part + ['-c', contig_id] + ['-n', self.read_count_dict[contig_id]]
-                read_gen = LockedIterator(StreamWGSIM(sim_cmd=sim_cmd, pair_end=self.pair_end))
+            for contig_id in self.count_dict.keys():
+                sim_cmd  = self.cmd_part + ['-c', contig_id] + ['-n', self.count_dict[contig_id][3]]
+                read_gen = LockedIterator(StreamHTSIM(sim_cmd=sim_cmd, pair_end=self.pair_end))
                 var_contig, sim_data= next(read_gen)                                    # the first element is the variants
                 self.current_contig = var_contig                                        # update the profiles
                 self.pos_map, self.meth_arr, _ = self.meth_db.load_contig(var_contig)   # [pos_map, meth_arr, status]
@@ -233,7 +232,7 @@ class BSReadSim:
         if self.verbose:                    # close the progress bar
             self.tqdm_pbar.close()
 
-        self.fastq_writer.close()
+        self.fastq_out.close()
         print('Simulation Finished!\n')
 
 
@@ -249,7 +248,7 @@ class BSReadSim:
         self.rev_complement(read_pair[0], read_flip)
         self.add_seq_err(read_pair[0])
         self.add_qual_score(read_pair[0])
-        self.fastq_writer.output_reads(read_pair, read_flip, read1_sub)
+        self.fastq_out.output_reads(read_pair, read_flip, read1_sub)
 
 
     def process_read_pair(self, read_pair):
@@ -291,7 +290,7 @@ class BSReadSim:
         self.add_qual_score(read_pair[1])
 
         # output
-        self.fastq_writer.output_reads(read_pair, read_flip, read1_sub)
+        self.fastq_out.output_reads(read_pair, read_flip, read1_sub)
 
 
     def mask_context(self, read_rec, read_sub):
@@ -445,10 +444,10 @@ class BSReadSim:
             self.tqdm_pbar.update(incre_amount)
             self.tqdm_count[1] = self.tqdm_count[0]
 
+    def create_outdir(self):
+        '''create output directory'''
+        if not os.path.isdir(self.outdir):
+            os.makedirs(self.outdir, exist_ok=False)
+            os.makedirs(self.pkl_dir, exist_ok=False)
+            os.makedirs(self.tmp_dir, exist_ok=False)
 
-# column context, row cigar
-cigar_table = np.array([['M', 'c', 'C', 'b',  'B', '-', '-', 'a',  'A', 'c', 'C', 'b',  'B', '-', '-', 'a',  'A'], # match
-                        ['x', 'x', 'X', 'x',  'X', '-', '-', 'x',  'X', 'x', 'X', 'x',  'X', '-', '-', 'x',  'X'], # snp
-                        ['-', '-', '-', '-',  '-', '-', '-', '-',  '-', '-', '-', '-',  '-', '-', '-', '-',  '-'], # empty
-                        ['M', 'i', 'I', 'i',  'I', '-', '-', 'i',  'I', 'i', 'I', 'i',  'I', '-', '-', 'i',  'I'], # insert
-                        ['-', '#', '-', '#',  '-', '-', '-', '#',  '-', '#', '-', '#',  '-', '-', '-', '#',  '-']])# convert failed
