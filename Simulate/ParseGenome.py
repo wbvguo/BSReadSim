@@ -8,6 +8,7 @@ from Bio import SeqIO
 from typing import Dict, List
 from UtilityFunctions import get_htsim_path
 
+
 class ParseGenome:
     '''
     parse genome fasta into dict, calculate the effective length and score if needed
@@ -19,6 +20,7 @@ class ParseGenome:
                                   are separated by ,, for example MspI and TaqI: "C|CGG,T|CGA" [None]
                                   
     '''
+
     def __init__(self, ref_fasta: str = None, outdir: str = None, 
                  depth: float = None, num_reads: int = None, 
                  read_len: int = None, pair_end: bool = False, is_uniform: bool = True,
@@ -29,11 +31,11 @@ class ParseGenome:
         self.score_dict = {contig_id: 0 for contig_id in self.ref_dict.keys()}      # used to calculate the #reads per chromosome if not is_uniform
         self.eff_len_dict = {contig_id: 0 for contig_id in self.ref_dict.keys()}    # used to calculate the #reads from depth if not specified
         self.chr_len_dict = {contig_id: len(self.ref_dict[contig_id]) for contig_id in self.ref_dict.keys()} # record the genome length
-
-
+        self.is_uniform   = is_uniform
+        
         if probe_bed_file:
             self.tech_mode      = 2
-            self.probe_bed_file = probe_bed_file
+            self.bed_file       = probe_bed_file
             self.parse_bed()
         elif cut_site_str:
             self.tech_mode      = 1
@@ -41,146 +43,132 @@ class ParseGenome:
             self.insert_min     = insert_min
             self.insert_max     = insert_max
             self.overwrite_db   = overwrite_db
-            self.rrbs_model     = rrbs_model
-            self.output_bed     = 'f{outdir}/rrbs.bed'
-            self.check_file()
+            self.rrbs_model     = rrbs_model if rrbs_model else f'{os.path.dirname(get_htsim_path())}/data/model/rrbs.model'
+            self.bed_file       = f'{outdir}/rrbs.bed'
+            self.new_bed()
             self.cut_genome()
         else:
             self.tech_mode      = 0
             self.score_dict     = self.chr_len_dict
             self.eff_len_dict   = self.chr_len_dict
 
-
-        if not num_reads:
-            num_reads  = int(sum(self.eff_len_dict.values())*depth/read_len/(1+int(pair_end)))
-        if not is_uniform:
-            tot_score  = sum(self.score_dict.values())
-            self.count_dict = {contig_id: num_reads * self.score_dict[contig_id]/tot_score for contig_id in self.ref_dict.keys()}
-        else:
-            tot_score  = sum(self.eff_len_dict.values())
-            self.count_dict = {contig_id: num_reads * self.eff_len_dict[contig_id]/tot_score for contig_id in self.ref_dict.keys()}
+        # should check depth, read_len, pair_end
+        self.num_reads  = num_reads if num_reads else int(sum(self.eff_len_dict.values())*depth/read_len/(1+int(pair_end)))
+        norm_score_dict = {contig_id: self.score_dict[contig_id]/sum(self.score_dict.values()) for contig_id in self.ref_dict.keys()}
+        self.count_dict = {contig_id: int(self.num_reads*norm_score_dict[contig_id]/(1+int(pair_end)))for contig_id in self.ref_dict.keys()}
 
 
     def parse_bed(self):
-        with open(self.probe_bed_file, 'r') as f: # bed file regions non-overlap
+        with open(self.bed_file, 'r') as f: # bed file regions non-overlap
             for line in f:
                 columns = line.strip().split('\t')
-                self.score_dict[columns[0]]   += float(columns[4])
-                self.eff_len_dict[columns[0]] += int(columns[2]) - int(columns[1])
+                length  = int(columns[2]) - int(columns[1])
+                self.eff_len_dict[columns[0]]+= length
+                self.score_dict[columns[0]]  += length if self.is_uniform else float(columns[4]) # what if score is .
 
 
     def cut_genome(self):
-        site_list, spot_list, site_len_list = self.parse_site(self.cut_site_str)
-        
+        site_dict, spot_dict, site_len_dict = self.parse_site(self.cut_site_str)
+
         for contig_id in self.ref_dict.keys():
-            pos_arr = self.gen_cut_site(contig_id, site_list)
-            frag_arr= self.gen_frag_simple(contig_id, pos_arr, site_list, spot_list, site_len_list)
-            self.eff_len_dict[contig_id]= np.sum(frag_arr[:,1] - frag_arr[:,0])
-            frag_arr2=self.gen_frag_w_cut(frag_arr,site_list)
+            pos_arr = self.gen_cut_site(contig_id, site_dict)
+            frag_arr, contig_eff_length = self.gen_cut_frag(contig_id, pos_arr, site_dict, spot_dict, site_len_dict)
+            self.eff_len_dict[contig_id]= contig_eff_length
             
-            frag_df = pd.DataFrame(frag_arr2, columns= ['start', 'end', 'cut_l', 'cut_r', 'cg_count'] + site_list)
+            frag_df = pd.DataFrame(frag_arr, columns= ['start', 'end', 'cut_l', 'cut_r', 'cg_count'] + list(site_dict.values()))
             frag_df.loc[:, 'chr_id'] = contig_id
             frag_df.loc[:, 'name']   = "."
             frag_df.loc[:, 'strand'] = "."
             frag_df.loc[:, 'length'] = frag_df.loc[:,'end'] - frag_df.loc[:,'start']
             frag_df.loc[:, 'ratio']  = frag_df.loc[:,'cg_count']/frag_df.loc[:,'length']
-            frag_df.loc[:, 'score']  = self.cal_score(frag_df)
+            frag_df.loc[:, 'score']  = 1 if self.is_uniform else self.cal_score(frag_df)
             
-            self.score_dict[contig_id] += np.sum(frag_df.loc[:, 'score'])
+            self.score_dict[contig_id] = self.eff_len_dict[contig_id] if self.is_uniform else np.sum(frag_df.loc[:, 'score'])
             
-            frag_df.to_csv(self.output_bed, columns=['chr_id', 'start', 'end', 'name', 'score', 'strand'], 
+            frag_df.to_csv(self.bed_file, columns=['chr_id', 'start', 'end', 'name', 'score', 'strand'], 
                            sep = '\t', mode='a', header=False, index=False, quoting=None)
 
 
-    def gen_cut_site(self, contig_id, site_list):
+    def gen_cut_site(self, contig_id, site_dict):
         # get all the cutting sites and sort
         arr_list = []
         contig_seq = self.ref_dict[contig_id].seq.upper()
         
-        for ix, site in enumerate(site_list):
+        for ix, site in site_dict.items():
             arr_list.append(np.array([[match.start(), ix] for match in re.finditer(site, str(contig_seq))], dtype=np.int32))
-        arr_list.append(np.array([[len(contig_seq), 0]]))
+        arr_list.append(np.array([[0, -1], [len(contig_seq), -1]])) # -1 mark the boundary
         
         pos_arr = np.concatenate(arr_list, axis=0)
-        return pos_arr[pos_arr[:, 0].argsort()]
+        return pos_arr[pos_arr[:, 0].argsort()] # np.array([position, type])
 
 
-    def gen_frag_simple(self, contig_id, pos_arr, site_list, spot_list, site_len_list):
-        # create fragment without cut sites in the middle
+    def gen_cut_frag(self, contig_id, pos_arr, site_dict, spot_dict, site_len_dict):
+        # create fragments from the cutting positions
         pos_num  = pos_arr.shape[0]
-        frag_arr = np.zeros((pos_num, 5 + len(site_list)), dtype=np.int32) # pos_left, pos_right, left_cut, right_cut, cg_count
+        frag_list  = [] # each fragment: [pos_left, pos_right, left_cut, right_cut, cg_count] + site_list
+        eff_length = 0
         contig_seq = self.ref_dict[contig_id].seq.upper()
         
-        ix = 0
         for i in range(pos_num):
-            cut_l = 0 if i==0 else pos_arr[i-1,1]
-            cut_r = pos_arr[i, 1]
-            cut_dict = {ix:0 for ix in range(len(site_list))}
-            cut_dict[cut_l] += 1
-            cut_dict[cut_r] += 1
+            cut_l = pos_arr[i,1]
+            pos_l = pos_arr[i,0] + spot_dict[cut_l]
+            
+            cut_dict = {ix:0 for ix in site_dict.keys()}
+            if cut_l >=0:
+                cut_dict[cut_l] += 1
 
-            pos_l = 0 if i==0 else pos_arr[i-1,0] + spot_list[cut_l]
-            pos_r = pos_arr[i,0] + site_len_list[cut_r] - spot_list[cut_r]
-
-            length= pos_r - pos_l
-            if length >= self.insert_min and length <= self.insert_max:
-                cg_count= (contig_seq[pos_l:pos_r].count('C') + contig_seq[pos_l:pos_r].count('G'))
-                frag_arr[ix,:] = [pos_l, pos_r, cut_l, cut_r, cg_count] + list(cut_dict.values())
-                ix += 1
-        
-        return frag_arr[:ix,:]
-
-
-    def gen_frag_w_cut(self, frag_arr, site_list):
-        # create frag with cut sites in the middle
-        frag_list = []
-        frag_num  = frag_arr.shape[0]
-        for i in range(frag_num):
-            pos_l, cut_l, cut_r, cg_count = frag_arr[i,[0,2,3,4]]
-            cut_dict = {ix:0 for ix in range(len(site_list))}
-            cut_dict[cut_l] += 1
-            cut_dict[cut_r] += 1
-
-            for j in range(i+1, frag_num):
-                pos_r, cut_r, frag_cg_count = frag_arr[j,[1,3,4]]
-                if pos_r - pos_l > self.insert_max:
-                    break
-
-                cut_dict[cut_r] += 1
-                cg_count += frag_cg_count
+            for j in range(i+1, pos_num):
+                cut_r = pos_arr[j, 1]
+                pos_r = pos_arr[j, 0] + site_len_dict[cut_r] - spot_dict[cut_r]
+                length= pos_r - pos_l
+                
+                if length > self.insert_max:
+                     break
+                
+                if cut_r >= 0:
+                    cut_dict[cut_r] += 1
+                
+                if length < self.insert_min:
+                    continue
+                
+                if j-i == 1:
+                    eff_length += length
+                
+                # has duplicate computing, can be optimized
+                cg_count = contig_seq[pos_l:pos_r].count('C') + contig_seq[pos_l:pos_r].count('G')
                 frag_list.append([pos_l, pos_r, cut_l, cut_r, cg_count] + list(cut_dict.values()))
-        
-        frag_arr2= np.concatenate([frag_arr, np.array(frag_list, dtype=np.int32)], axis=0)
-        frag_arr2= frag_arr2[np.lexsort((frag_arr2[:,1], frag_arr2[:,0]))]
-        return frag_arr2
+
+        frag_arr= np.array(frag_list, dtype=np.int32)
+        return frag_arr[np.lexsort((frag_arr[:,1], frag_arr[:,0]))], eff_length
 
 
-    def cal_score(self, model_file, df):
+    def cal_score(self, df):
         # load model
-        rrbs_model = f'{os.path.dirname(get_htsim_path())}/data/model/rrbs.model' if not rrbs_model else rrbs_model
-        
-        model = pickle.load(open(model_file, 'rb'))
-        model_vars = []
+        model, model_vars = pickle.load(open(self.rrbs_model, 'rb'))
         
         # check if the model and the columns fit
-        if set(model_vars) != set(df.columns):
+        if len(set(model_vars).intersection(set(df.columns))):
             raise ValueError('The trained model is not compatible with input data (cut sites maybe different), please check!')
         return model.predict(df.loc[:, model_vars])
 
 
     def parse_site(self, cut_site_str):
         cut_site_str_split= cut_site_str.split(",")
-        spot_list = [site.rfind("|") for site in cut_site_str_split]
-        site_list = [site.replace("|", "" ).upper() for site in cut_site_str_split]
-        site_len_list = [len(site) for site in site_list]
+        spot_dict = {-1:0}
+        site_dict = {}
+        site_len_dict = {-1:0}
         
-        return [site_list, spot_list, site_len_list]
-    
-    
-    def check_file(self):
-        if os.path.exists(self.output_bed):
-            if self.overwrite_db:
-                os.remove(self.output_bed)
+        for ix, site in enumerate(cut_site_str_split):
+            spot_dict[ix] = site.rfind("|")
+            site_dict[ix] = site.replace("|", "" ).upper()
+            site_len_dict[ix] = len(site_dict[ix])
+        
+        return [site_dict, spot_dict, site_len_dict]
+
+
+    def new_bed(self):
+        if os.path.exists(self.bed_file):
+            if not self.overwrite_db:
+                raise ValueError('Cannot write to output file (file already exists), please set overwrite_db to be true!')
             else:
-                raise ValueError('Cannot write to output file, please set overwrite_db to be true!')
-            
+                os.remove(self.bed_file)

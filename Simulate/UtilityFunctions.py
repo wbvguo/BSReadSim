@@ -87,7 +87,7 @@ def get_htsim_path():
     """
     utility_dir = os.path.dirname(os.path.realpath(__file__))
     base_dir    = os.path.dirname(utility_dir)
-    htsim_path  = f'{base_dir}/htsim/htsim'
+    htsim_path  = f'{base_dir}/HTSIM/htsim'
     if not os.path.exists(htsim_path):
         raise ValueError("[ERROR] Executable htsim not found, please check!")
     return htsim_path

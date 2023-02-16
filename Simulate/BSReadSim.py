@@ -17,6 +17,7 @@ from StreamHTSIM import StreamHTSIM
 from UtilityFunctions import get_htsim_path
 from ParseGenome import ParseGenome
 
+
 class BSReadSim:
     """
     The bisulfite sequencing simulation works as follows:
@@ -108,6 +109,7 @@ class BSReadSim:
                  random_err= True, seq_err: float = 0.005, propN_cutoff: float = 0.05,              # sequencing error
                  site_dependency: bool = False, conversion_rate: float = 0.998,                     # methylation setting
                  site_dependency_model: str = None, rrbs_model: str = None,                         # pretrained model
+                 cg_bias_file: str = None, probe_deviation: int =None,
                  undirectional: bool = False, pair_end: bool = True,                                # sequencing protocol
                  cut_site_str: str = None, probe_bed_file: str = None, is_uniform: bool = True,     # sequencing technology
                  n_threads: int = 4, shuffle: bool = True, gzip: bool = True,                       # output setting
@@ -142,7 +144,7 @@ class BSReadSim:
         self.seq_err        = seq_err
         self.collect_ch     = collect_ch
         self.asm_sim        = True if asm_file else False
-        self.site_dependency= site_dependency
+        self.site_dependency= True if site_dependency_model else site_dependency
         self.is_uniform     = is_uniform
         self.collect_stats  = collect_stats
 
@@ -153,13 +155,15 @@ class BSReadSim:
         self.variant_profile= None
 
         # parse genome
-        self.genome_db  = ParseGenome(ref_fasta=self.ref_fasta, outdir=self.tmp_dir, 
+        self.genome_db  = ParseGenome(ref_fasta=self.ref_fasta, outdir=self.tmp_dir, num_reads=num_reads,
                                       depth=depth, read_len=read_len, pair_end=pair_end, is_uniform=is_uniform,
                                       probe_bed_file=probe_bed_file, cut_site_str=cut_site_str, rrbs_model=rrbs_model,
                                       insert_min=insert_min, insert_max=insert_max, overwrite_db=overwrite_db)
         self.ref_dict   = self.genome_db.ref_dict
+        self.bed_file   = self.genome_db.bed_file
         self.tech_mode  = self.genome_db.tech_mode
         self.count_dict = self.genome_db.count_dict
+        self.num_reads  = self.genome_db.num_reads
 
         # prepare the methylation reference
         print('Initiating methylation profile:\n')
@@ -176,29 +180,24 @@ class BSReadSim:
         self.meth_db    = self.meth_set.meth_db
 
         # prepare output
-        self.fastq_out = StreamReads(outdir=outdir, prefix=prefix, pair_end=pair_end, gzip=gzip, shuffle=shuffle)
-        self.verbose   = verbose
-
+        self.fastq_out  = StreamReads(outdir=outdir, prefix=prefix, pair_end=pair_end, gzip=gzip, shuffle=shuffle)
+        self.verbose    = verbose
 
         # prepare htsim command
-        htsim_args    = [get_htsim_path(), ref_fasta]
-        htsim_options = {'-i': insert_mean, '-I': insert_std, '-m': insert_min, '-M': insert_max,
-                         '-1': read_len, '-2': read_len, '-e': 0, '-A': propN_cutoff, '-u': int(is_uniform), '-f': 1,
-                         '-g': vcf_file, '-r': mut_rate, '-R': mut_indel_frac, '-X': indel_ext_prob, 
-                         '-h': int(haplo_mode), '-s': seed, '-T': self.tech_mode}
-        self.sim_cmd_part   = htsim_args + [str(item) for key_val in htsim_options.items() for item in key_val]
-
-
-        # technology setting, prepare read count for each contig
-        htsim_options['-N'] = num_reads
+        htsim_args      = [get_htsim_path(), ref_fasta]
+        htsim_options   = {'-i': insert_mean, '-I': insert_std, '-m': insert_min, '-M': insert_max,
+                           '-1': read_len, '-2': read_len, '-e': 0, '-A': propN_cutoff, '-u': int(is_uniform), '-f': 1,
+                           '-g': vcf_file, '-r': mut_rate, '-R': mut_indel_frac, '-X': indel_ext_prob, 
+                           '-h': int(haplo_mode), '-s': seed, '-T': self.tech_mode, '-x': cut_site_str, 
+                           '-b': self.bed_file, '-B': cg_bias_file, '-D': probe_deviation}
+        self.cmd_part   = htsim_args + [str(item) for key_val in htsim_options.items() for item in key_val]
         self.htsim_args     = htsim_args
         self.htsim_options  = htsim_options
 
-
         # progress
         if verbose:
-            self.tqdm_count = [0, 0, num_reads * 0.01] # current, previous, step size
-            self.tqdm_pbar  = tqdm(range(num_reads), bar_format="{desc:<5.5}{percentage:3.0f}%|{bar:20}{r_bar}")
+            self.tqdm_count = [0, 0, self.num_reads * 0.01] # current, previous, step size
+            self.tqdm_pbar  = tqdm(range(self.num_reads), bar_format="{desc:<5.5}{percentage:3.0f}%|{bar:20}{r_bar}")
 
 
     def run(self):
@@ -207,11 +206,14 @@ class BSReadSim:
         # 2. process and write to disk (multiple threads)
         """
         print('Simulating methylated Reads:\n')
-        print(f'[CMD]: {" ".join(self.sim_cmd_part)} \n')
+        print(f'[CMD]: {" ".join(self.cmd_part)} \n')
+        if self.verbose:
+            print(f'[INFO]: # reads for each contig\n')
+            print(f'{contig_id}: {str(num_reads)}\n' for contig_id, num_reads in self.count_dict.items())
 
         with ThreadPoolExecutor(max_workers=self.n_threads) as executor:
             for contig_id in self.count_dict.keys():
-                sim_cmd  = self.sim_cmd_part + ['-c', contig_id] + ['-n', self.count_dict[contig_id][3]]
+                sim_cmd  = self.cmd_part + ['-c', contig_id] + ['-n', self.count_dict[contig_id][3]]
                 read_gen = LockedIterator(StreamHTSIM(sim_cmd=sim_cmd, pair_end=self.pair_end))
                 var_contig, sim_data= next(read_gen)                                    # the first element is the variants
                 self.current_contig = var_contig                                        # update the profiles
@@ -449,10 +451,3 @@ class BSReadSim:
             os.makedirs(self.pkl_dir, exist_ok=False)
             os.makedirs(self.tmp_dir, exist_ok=False)
 
-
-# column context, row cigar
-cigar_table = np.array([['M', 'c', 'C', 'b',  'B', '-', '-', 'a',  'A', 'c', 'C', 'b',  'B', '-', '-', 'a',  'A'], # match
-                        ['x', 'x', 'X', 'x',  'X', '-', '-', 'x',  'X', 'x', 'X', 'x',  'X', '-', '-', 'x',  'X'], # snp
-                        ['-', '-', '-', '-',  '-', '-', '-', '-',  '-', '-', '-', '-',  '-', '-', '-', '-',  '-'], # empty
-                        ['M', 'i', 'I', 'i',  'I', '-', '-', 'i',  'I', 'i', 'I', 'i',  'I', '-', '-', 'i',  'I'], # insert
-                        ['-', '#', '-', '#',  '-', '-', '-', '#',  '-', '#', '-', '#',  '-', '-', '-', '#',  '-']])# convert failed
