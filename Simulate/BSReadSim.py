@@ -108,8 +108,8 @@ class BSReadSim:
                  read_len: int = 100, depth: int = 20, num_reads: int = None,                       # reads setting
                  random_err= True, seq_err: float = 0.005, propN_cutoff: float = 0.05,              # sequencing error
                  site_dependency: bool = False, conversion_rate: float = 0.998,                     # methylation setting
-                 site_dependency_model: str = None, rrbs_model: str = None,                         # pretrained model
-                 cg_bias_file: str = None, probe_deviation: int =None,
+                 site_model: str = None, rrbs_model: str = None,                                    # pretrained model
+                 gc_bias_file: str = None, probe_deviation: int =None,
                  undirectional: bool = False, pair_end: bool = True,                                # sequencing protocol
                  cut_site_str: str = None, probe_bed_file: str = None, is_uniform: bool = True,     # sequencing technology
                  n_threads: int = 4, shuffle: bool = True, gzip: bool = True,                       # output setting
@@ -132,9 +132,6 @@ class BSReadSim:
         self.n_threads      = n_threads
         self.countLock      = Lock()
 
-        # prepare folder
-        self.create_outdir()
-
         # sequencing settings
         self.read_len       = read_len
         self.pair_end       = pair_end
@@ -144,9 +141,15 @@ class BSReadSim:
         self.seq_err        = seq_err
         self.collect_ch     = collect_ch
         self.asm_sim        = True if asm_file else False
-        self.site_dependency= True if site_dependency_model else site_dependency
+        self.site_dependency= True if site_model else site_dependency
         self.is_uniform     = is_uniform
         self.collect_stats  = collect_stats
+
+        # prepare folder and files
+        self.create_outdir()
+        self.tool_path      = os.path.dirname(os.path.dirname(get_htsim_path()))
+        self.gc_bias_file   = gc_bias_file if gc_bias_file else f'{self.tool_path}/data/model/gc_bias.txt'
+        self.site_model     = site_model if site_model else f'{self.tool_path}/data/model/site_model.pickle'
 
         # to hold intermediate data
         self.current_contig = None
@@ -180,7 +183,8 @@ class BSReadSim:
         self.meth_db    = self.meth_set.meth_db
 
         # prepare output
-        self.fastq_out  = StreamReads(outdir=outdir, prefix=prefix, pair_end=pair_end, gzip=gzip, shuffle=shuffle)
+        self.fastq_out  = StreamReads(outdir=outdir, prefix=prefix, pair_end=pair_end, 
+                                      shuffle=shuffle, ref_fasta=self.ref_fasta, gzip=gzip)
         self.verbose    = verbose
 
         # prepare htsim command
@@ -189,7 +193,7 @@ class BSReadSim:
                            '-1': read_len, '-2': read_len, '-e': 0, '-A': propN_cutoff, '-u': int(is_uniform), '-f': 1,
                            '-g': vcf_file, '-r': mut_rate, '-R': mut_indel_frac, '-X': indel_ext_prob, 
                            '-h': int(haplo_mode), '-s': seed, '-T': self.tech_mode, '-x': cut_site_str, 
-                           '-b': self.bed_file, '-B': cg_bias_file, '-D': probe_deviation}
+                           '-b': self.bed_file, '-B': self.gc_bias_file, '-D': probe_deviation}
         self.cmd_part   = htsim_args + [str(item) for key_val in htsim_options.items() for item in key_val]
         self.htsim_args     = htsim_args
         self.htsim_options  = htsim_options
@@ -213,7 +217,9 @@ class BSReadSim:
 
         with ThreadPoolExecutor(max_workers=self.n_threads) as executor:
             for contig_id in self.count_dict.keys():
-                sim_cmd  = self.cmd_part + ['-c', contig_id] + ['-n', self.count_dict[contig_id][3]]
+                if self.count_dict[contig_id] == 0: # can be 0, need to test if reads < self.n_threads
+                    continue
+                sim_cmd  = self.cmd_part + ['-c', contig_id] + ['-n', self.count_dict[contig_id]]
                 read_gen = LockedIterator(StreamHTSIM(sim_cmd=sim_cmd, pair_end=self.pair_end))
                 var_contig, sim_data= next(read_gen)                                    # the first element is the variants
                 self.current_contig = var_contig                                        # update the profiles

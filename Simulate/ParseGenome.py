@@ -25,8 +25,9 @@ class ParseGenome:
                  depth: float = None, num_reads: int = None, 
                  read_len: int = None, pair_end: bool = False, is_uniform: bool = True,
                  probe_bed_file: str = None, cut_site_str: str = None, rrbs_model: str = None,
-                 insert_min: int = 100, insert_max: int = 1000, overwrite_db: bool = False):
-        
+                 insert_min: int = 100, insert_max: int = 1000, middle_cuts: bool = False,
+                 overwrite_db: bool = False):
+       
         self.ref_dict = SeqIO.to_dict(SeqIO.parse(ref_fasta, "fasta"))              # save
         self.score_dict = {contig_id: 0 for contig_id in self.ref_dict.keys()}      # used to calculate the #reads per chromosome if not is_uniform
         self.eff_len_dict = {contig_id: 0 for contig_id in self.ref_dict.keys()}    # used to calculate the #reads from depth if not specified
@@ -42,6 +43,7 @@ class ParseGenome:
             self.cut_site_str   = cut_site_str
             self.insert_min     = insert_min
             self.insert_max     = insert_max
+            self.middle_cuts    = middle_cuts
             self.overwrite_db   = overwrite_db
             self.rrbs_model     = rrbs_model if rrbs_model else f'{os.path.dirname(get_htsim_path())}/data/model/rrbs.model'
             self.bed_file       = f'{outdir}/rrbs.bed'
@@ -104,20 +106,22 @@ class ParseGenome:
 
     def gen_cut_frag(self, contig_id, pos_arr, site_dict, spot_dict, site_len_dict):
         # create fragments from the cutting positions
-        pos_num  = pos_arr.shape[0]
+        num_pos = pos_arr.shape[0]
         frag_list  = [] # each fragment: [pos_left, pos_right, left_cut, right_cut, cg_count] + site_list
         eff_length = 0
         contig_seq = self.ref_dict[contig_id].seq.upper()
         
-        for i in range(pos_num):
+        for i in range(num_pos):
             cut_l = pos_arr[i,1]
             pos_l = pos_arr[i,0] + spot_dict[cut_l]
             
             cut_dict = {ix:0 for ix in site_dict.keys()}
             if cut_l >=0:
                 cut_dict[cut_l] += 1
-
-            for j in range(i+1, pos_num):
+            
+            right_bound = num_pos if self.middle_cuts else min([i+2, num_pos])
+            
+            for j in range(i+1, right_bound):
                 cut_r = pos_arr[j, 1]
                 pos_r = pos_arr[j, 0] + site_len_dict[cut_r] - spot_dict[cut_r]
                 length= pos_r - pos_l
@@ -143,7 +147,7 @@ class ParseGenome:
 
 
     def cal_score(self, df):
-        # load model
+        # load model: TODO
         model, model_vars = pickle.load(open(self.rrbs_model, 'rb'))
         
         # check if the model and the columns fit
@@ -172,3 +176,4 @@ class ParseGenome:
                 raise ValueError('Cannot write to output file (file already exists), please set overwrite_db to be true!')
             else:
                 os.remove(self.bed_file)
+

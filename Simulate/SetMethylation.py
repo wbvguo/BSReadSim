@@ -55,6 +55,7 @@ class SetMethylation:
         self.verbose     = verbose
         self.meth_arr    = None
         self.pos_map     = None
+        self.contig_flag = True
 
         self.update_boundary   = update_boundary and not self.asm_sim
         self.context_dict      = {1:'CG', 3:'CHG', 7:'CHH', 9:'CG', 11:'CHG', 15:'CHH'}
@@ -77,6 +78,9 @@ class SetMethylation:
         else:
             self.create_meth_db()
 
+        if self.contig_flag and (not self.cgmap_pool) and self.cgmap_file:
+            warnings.warn(f'No Contig in the CGmap file can be found in the reference fasta, please check!')
+
 
     def check_meth_db(self):
         '''if use previous meth_db object, check if they align'''
@@ -87,7 +91,7 @@ class SetMethylation:
             ref_pos_set = set(np.where(self.pos_map!=4294967295)[0])
             not_comp_sites = ref_pos_set.difference(set(np.where(contig_profile[0]!=4294967295)[0]))
             if len(not_comp_sites):
-                print(f'{contig_id}: sites in the meth_db is not a subset of the reference')
+                warnings.warn(f'{contig_id}: sites in the meth_db is not a subset of the reference')
 
 
     def create_meth_db(self):
@@ -155,20 +159,20 @@ class SetMethylation:
             return None
 
         if self.verbose:
-            print(f"Filling CGmap for {self.current_contig}... ", end="")
+            print(f"Filling CGmap for {self.current_contig}{' (pool)' if self.cgmap_pool else ''}... ", end="")
         if self.cgmap_pool:
             meth_level_pool = self.get_cgmap_pool(contig_id=None)
             idx_cg  = np.where(np.bitwise_and(self.meth_arr[:,0].astype(np.int16), 0x7)==1)
             np.random.seed(self.seed)
-            self.meth_arr[idx_cg, 2] = np.random.choice(meth_level_pool[0], size=np.sum(idx_cg))
+            self.meth_arr[idx_cg, 2] = np.random.choice(meth_level_pool[0], size=len(idx_cg))
 
             if self.collect_ch:
                 idx_chg = np.where(np.bitwise_and(self.meth_arr[:,0].astype(np.int16), 0x7)==3)
                 idx_chh = np.where(np.bitwise_and(self.meth_arr[:,0].astype(np.int16), 0x7)==7)
                 np.random.seed(self.seed)
-                self.meth_arr[idx_chg,2] = np.random.choice(meth_level_pool[1], size=np.sum(idx_chg))
+                self.meth_arr[idx_chg,2] = np.random.choice(meth_level_pool[1], size=len(idx_chg))
                 np.random.seed(self.seed)
-                self.meth_arr[idx_chh,2] = np.random.choice(meth_level_pool[2], size=np.sum(idx_chh))
+                self.meth_arr[idx_chh,2] = np.random.choice(meth_level_pool[2], size=len(idx_chh))
             return None
 
         num_cgmap_pos, num_404_pos = [0,0]  # counting
@@ -188,12 +192,13 @@ class SetMethylation:
                     continue
                 self.meth_arr[arr_idx, 1:3] = [1, float(meth_level)]
 
+        self.contig_flag = self.contig_flag and (num_cgmap_pos == 0)
         if self.verbose:
             if num_cgmap_pos:
                 ratio_404 = round(num_404_pos / num_cgmap_pos, 4)
                 ### also print what context
                 print(f"{num_cgmap_pos} sites found in CGmap file, " +
-                    f"among them {num_404_pos} sites ({ratio_404 * 100}%) are incompatible...")
+                      f"among them {num_404_pos} sites ({ratio_404 * 100}%) are incompatible...")
                 if ratio_404 >=0.5:
                     warnings.warn("[WARNING]: More than half sites in CGmap file cannot be found in the reference fasta\n" +
                                   "Potential reason: the CGmap does not share the same coordinates with fasta, please check!")
@@ -241,6 +246,8 @@ class SetMethylation:
 
     def fill_dist(self):
         '''fill in from beta distribution'''
+        if self.cgmap_pool:
+            return None
 
         if self.verbose:
             print(f"Filling with beta distribution for {self.current_contig}...")
@@ -271,7 +278,7 @@ class SetMethylation:
 
     def get_cgmap_pool(self, contig_id):
         '''get the pool of cgmaps, return a list of size 3'''
-        ctx_idx_dict = {'CG':1, 'CHG':2, 'CHH':3}
+        ctx_idx_dict = {'CG':0, 'CHG':1, 'CHH':2}
         meth_level_pool = [[],[],[]]
         for line in parseCGmap(self.cgmap_file, contig_id, collect_ch = self.collect_ch):
             _, _,  _, context, meth_level = line
@@ -366,7 +373,7 @@ class SetMethylation:
 
     def estimate_beta_params(self, context = None):
         '''estimate the beta parameters for each context, update the dict'''
-        ctx_idx_dict = {'CG':1, 'CHG':2, 'CHH':3}
+        ctx_idx_dict = {'CG':0, 'CHG':1, 'CHH':2}
         idx_ctx_dict = {v: k for k, v in ctx_idx_dict.items()}
         meth_level_pool = self.get_cgmap_pool(contig_id=None)
 

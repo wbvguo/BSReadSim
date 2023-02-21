@@ -41,9 +41,10 @@ class StreamMethDB:
 
 
     def save_ref(self, ref_dict):
-        if not self.overwrite_db:
-            raise ValueError("cannot save ref_dict, overwrite is set to be false\n")
-        with open(self.pkl_dir + '/ref_dict.pkl', 'wb') as file:
+        output_pickle = self.pkl_dir + '/ref_dict.pkl'
+        if not self.overwrite_db and os.path.exists(output_pickle):
+            raise ValueError("cannot save reference dict, overwrite is set to be false\n")
+        with open(output_pickle, 'wb') as file:
             pickle.dump(ref_dict, file)
 
 
