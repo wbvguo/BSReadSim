@@ -108,7 +108,7 @@ const  uint8_t cg_context_table[64] = {
 
 
 //  global variables, only changed at program start.
-const  uint8_t cg_table[4] = {0, 1, 1, 0}; // for cg check
+const  uint8_t cg_table[4] = {0, 1, 1, 0}; // for C/G check
 int mean_insert, sd_insert, min_insert, max_insert, size_l, size_r, sd_center;
 
 // if the leftmost 4 bit is non-zero, then it must be snp or indel
@@ -148,7 +148,7 @@ typedef struct {
 
 typedef struct {
     int pos_l, pos_r;       /*int max value is 2147483647*/
-    float cg_ratio= -1;
+    float gc_ratio= -1;
     int8_t cut_l  = -1;
     int8_t cut_r  = -1;
     int8_t index  = -1;     /*save for capture efficiency usage*/
@@ -756,12 +756,12 @@ void sim_rand(std::uniform_int_distribution<int> *dis, fragment *tmp_frag, mut_t
             insert_dev = (int)(sd_insert * dis_rn(gen_rn));
             insert_len = std::max(min_insert, std::min(mean_insert + insert_dev, max_insert));
             pos_r = std::min(pos_l + insert_len, tot_size -2);
-            int cg_count =0;
+            int gc_count =0;
             for(int kk = pos_l; kk <= pos_r; ++kk){
-                cg_count += cg_table[(uint8_t)(target[kk]& 0x3)]; // not perfect, but fine enough
+                gc_count += cg_table[(uint8_t)(target[kk]& 0x3)]; // not perfect, but fine enough
             }
-            float cg_prob = eff_vec[(int)(cg_count*MAX_BIN/(pos_r - pos_l)+0.5)];
-            flag = dis_ru(gen_ru) > cg_prob; // when initiate eff_vec, judge the value in case it's too small
+            float gc_prob = eff_vec[(int)(gc_count*MAX_BIN/(pos_r - pos_l)+0.5)];
+            flag = dis_ru(gen_ru) > gc_prob; // when initiate eff_vec, judge the value in case it's too small
         }
     }
     tmp_frag->pos_l= pos_l;
@@ -1194,7 +1194,7 @@ static int simu_usage()
     fprintf(stderr, "         -T INT        technology: 0 for Whole genome; 1 for Reduced representation; 2 for Targeted [0]\n");
     fprintf(stderr, "         -x STRING     enzyme cutting site string for reduced representation sequencing [None]\n");
     fprintf(stderr, "         -b STRING     BED file for reduced-representation / targeted sequencing [None]\n");
-    fprintf(stderr, "         -B STRING     CG Bias reference for WGS/WGBS, only used when -u set to be 0 [None]\n");
+    fprintf(stderr, "         -B STRING     GC Bias reference for WGS/WGBS, only used when -u set to be 0 [None]\n");
     fprintf(stderr, "         -D INT        fragment center's deviaiton from the probe center [50]\n");
     fprintf(stderr, "\n");
     return 1;
@@ -1272,7 +1272,7 @@ int main(int argc, char *argv[])
         tech_mode = 0;
     }
 
-    // check cg bias file
+    // check GC-bias file
     if(!is_uniform || bool_bias_set){
         if (!bool_bias_set){fprintf(stderr, "ERROR: Please specify bias files when specifying -u as 0\n");exit(EXIT_FAILURE);}
         parse_bias_file(bias_tab);

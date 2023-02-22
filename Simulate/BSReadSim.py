@@ -108,8 +108,8 @@ class BSReadSim:
                  read_len: int = 100, depth: int = 20, num_reads: int = None,                       # reads setting
                  random_err= True, seq_err: float = 0.005, propN_cutoff: float = 0.05,              # sequencing error
                  site_dependency: bool = False, conversion_rate: float = 0.998,                     # methylation setting
-                 site_dependency_model: str = None, rrbs_model: str = None,                         # pretrained model
-                 cg_bias_file: str = None, probe_deviation: int =None,
+                 site_model: str = None, rrbs_model: str = None,                                    # pretrained model
+                 gc_bias_file: str = None, probe_deviation: int =None,
                  undirectional: bool = False, pair_end: bool = True,                                # sequencing protocol
                  cut_site_str: str = None, probe_bed_file: str = None, is_uniform: bool = True,     # sequencing technology
                  n_threads: int = 4, shuffle: bool = True, gzip: bool = True,                       # output setting
@@ -132,9 +132,6 @@ class BSReadSim:
         self.n_threads      = n_threads
         self.countLock      = Lock()
 
-        # prepare folder
-        self.create_outdir()
-
         # sequencing settings
         self.read_len       = read_len
         self.pair_end       = pair_end
@@ -144,9 +141,15 @@ class BSReadSim:
         self.seq_err        = seq_err
         self.collect_ch     = collect_ch
         self.asm_sim        = True if asm_file else False
-        self.site_dependency= True if site_dependency_model else site_dependency
+        self.site_dependency= True if site_model else site_dependency
         self.is_uniform     = is_uniform
         self.collect_stats  = collect_stats
+
+        # prepare folder and files
+        self.create_outdir()
+        self.tool_path      = os.path.dirname(os.path.dirname(get_htsim_path()))
+        self.gc_bias_file   = gc_bias_file if gc_bias_file else f'{self.tool_path}/data/model/gc_bias.txt'
+        self.site_model     = site_model if site_model else f'{self.tool_path}/data/model/site_model.pickle'
 
         # to hold intermediate data
         self.current_contig = None
@@ -180,7 +183,8 @@ class BSReadSim:
         self.meth_db    = self.meth_set.meth_db
 
         # prepare output
-        self.fastq_out  = StreamReads(outdir=outdir, prefix=prefix, pair_end=pair_end, gzip=gzip, shuffle=shuffle)
+        self.fastq_out  = StreamReads(outdir=outdir, prefix=prefix, pair_end=pair_end, 
+                                      shuffle=shuffle, ref_fasta=self.ref_fasta, gzip=gzip)
         self.verbose    = verbose
 
         # prepare htsim command
@@ -189,7 +193,7 @@ class BSReadSim:
                            '-1': read_len, '-2': read_len, '-e': 0, '-A': propN_cutoff, '-u': int(is_uniform), '-f': 1,
                            '-g': vcf_file, '-r': mut_rate, '-R': mut_indel_frac, '-X': indel_ext_prob, 
                            '-h': int(haplo_mode), '-s': seed, '-T': self.tech_mode, '-x': cut_site_str, 
-                           '-b': self.bed_file, '-B': cg_bias_file, '-D': probe_deviation}
+                           '-b': self.bed_file, '-B': self.gc_bias_file, '-D': probe_deviation}
         self.cmd_part   = htsim_args + [str(item) for key_val in htsim_options.items() for item in key_val]
         self.htsim_args     = htsim_args
         self.htsim_options  = htsim_options
@@ -213,7 +217,9 @@ class BSReadSim:
 
         with ThreadPoolExecutor(max_workers=self.n_threads) as executor:
             for contig_id in self.count_dict.keys():
-                sim_cmd  = self.cmd_part + ['-c', contig_id] + ['-n', self.count_dict[contig_id][3]]
+                if self.count_dict[contig_id] == 0: # can be 0, need to test if reads < self.n_threads
+                    continue
+                sim_cmd  = self.cmd_part + ['-c', contig_id] + ['-n', self.count_dict[contig_id]]
                 read_gen = LockedIterator(StreamHTSIM(sim_cmd=sim_cmd, pair_end=self.pair_end))
                 var_contig, sim_data= next(read_gen)                                    # the first element is the variants
                 self.current_contig = var_contig                                        # update the profiles
@@ -221,8 +227,8 @@ class BSReadSim:
                 self.variant_profile= self.meth_set.set_var_meth(var_contig, sim_data)  # a dict, can be empty
                 if self.pair_end:                                                       # what if read_gen is empty at very beginning
                     job_arr = [executor.submit(self.process_read_pair, read_pair) for read_pair in read_gen]
-                else:
-                    job_arr = [executor.submit(self.process_read, read_pair) for read_pair in read_gen]
+                # else:
+                #     job_arr = [executor.submit(self.process_read, read_pair) for read_pair in read_gen]
 
                 if self.verbose:
                     for job in job_arr:
@@ -236,18 +242,63 @@ class BSReadSim:
         print('Simulation Finished!\n')
 
 
-    def process_read(self, read_pair):
-        '''process single end reads'''
-        read_flip = random.choice([0, 1])
-        read1_sub = random.choice([0, 1]) if self.undirectional else read_flip
+    # def process_read(self, read_pair):
+    #     '''process single end reads'''
+    #     read_flip = random.choice([0, 1])
+    #     read1_sub = random.choice([0, 1]) if self.undirectional else read_flip
 
-        self.mask_context(read_pair[0], read1_sub)
-        self.retrive_meth_db(read_pair[0])
-        self.set_context_state(read_pair[0])
+    #     self.mask_context(read_pair[0], read1_sub)
+    #     self.retrive_meth_db(read_pair[0])
+    #     self.set_context_state(read_pair[0])
+    #     self.treat_bisulfite(read_pair[0])
+    #     self.rev_complement(read_pair[0], read_flip)
+    #     self.add_seq_err(read_pair[0])
+    #     self.add_qual_score(read_pair[0])
+    #     self.fastq_out.output_reads(read_pair, read_flip, read1_sub)
+
+    def process_read_pair(self, read_pair):
+        """
+        This processing step works as follows:
+        1. randomly assign reads to Watson or Crick strand, with corresponding base change pattern
+        2. set methylation status according to methylation profile
+        3. bisulfite converted and introduce sequencing error
+        4. output reads
+        """
+
+        # for directional library, read1 will be G2A if read_flip else C2A, strand will be W else C
+        # if read_flip: read_pair[0], read_pair[1] = read_pair[1], read_pair[0]
+        read_flip = random.choice([[0, 1], [1, 0]])
+        read_sub  = random.choice([[0, 1], [1, 0]]) if self.undirectional else read_flip
+
+        # mask the context
+        for ix in range(1+int(self.pair_end)):
+            self.mask_context(read_pair[ix], read_sub[ix])  # 
+            self.retrive_meth_db(read_pair[0])              # retrive methy profile
+        
+        self.set_context_state(read_pair)                   # set methylation states
+        
+    
+        
+
+
+        
+        
+        # bisulfite converted
         self.treat_bisulfite(read_pair[0])
-        self.rev_complement(read_pair[0], read_flip)
+        self.treat_bisulfite(read_pair[1])
+
+        # rev complementary
+        self.rev_complement(read_pair, read_flip)
+
+
+        # introduce seq errors
         self.add_seq_err(read_pair[0])
+        self.add_seq_err(read_pair[1])
+        # introduce quality scores
         self.add_qual_score(read_pair[0])
+        self.add_qual_score(read_pair[1])
+
+        # output
         self.fastq_out.output_reads(read_pair, read_flip, read1_sub)
 
 

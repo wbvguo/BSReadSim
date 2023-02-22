@@ -1,20 +1,19 @@
 import subprocess
 import threading
 import os
+import numpy as np
 
 
 class StreamReads:
     '''stream reads and write into fastq files'''
-    def __init__(self, outdir: str = None, prefix: str = None, 
-                 ref_fasta: str = None, pair_end: bool = True,
-                 shuffle: bool = True, gzip: bool = True):
+    def __init__(self, outdir: str = None, prefix: str = None, pair_end: bool = True,
+                 shuffle: bool = True, ref_fasta: str = None, gzip: bool = True):
         self.outdir   = outdir
         self.prefix   = prefix
-        self.ref_fasta= ref_fasta
         self.pair_end = pair_end
         self.shuffle  = shuffle
+        self.ref_fasta= ref_fasta
         self.gzip     = gzip
-        self.output_fastq = []
         self.writeLock= threading.Lock()
 
         fastq1 = f'{self.outdir}/{self.prefix}_1.fastq'
@@ -23,26 +22,44 @@ class StreamReads:
             self.fastq_list = [fastq1, fastq2]
         else:
             self.fastq_list = [fastq1]
+        self.create_fastq()
+        
+        # column context, row cigar
+        self.cigar_table = np.array([['M', 'c', 'C', 'b',  'B', '-', '-', 'a',  'A', 'c', 'C', 'b',  'B', '-', '-', 'a',  'A'], # match
+                                     ['x', 'x', 'X', 'x',  'X', '-', '-', 'x',  'X', 'x', 'X', 'x',  'X', '-', '-', 'x',  'X'], # snp
+                                     ['-', '-', '-', '-',  '-', '-', '-', '-',  '-', '-', '-', '-',  '-', '-', '-', '-',  '-'], # empty
+                                     ['M', 'i', 'I', 'i',  'I', '-', '-', 'i',  'I', 'i', 'I', 'i',  'I', '-', '-', 'i',  'I'], # insert
+                                     ['-', '#', '-', '#',  '-', '-', '-', '#',  '-', '#', '-', '#',  '-', '-', '-', '#',  '-']])# convert failed
+        self.qual_str    = '''!"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~'''
 
 
-    def creata_fastq(self):
+    def create_fastq(self):
         '''Return io object for fastq writing'''
+        self.output_obj = []
         for fastq_file in self.fastq_list:
             # check if the file exists
-            self.output_fastq.append(open(fastq_file, 'a'))
+            self.output_obj.append(open(fastq_file, 'a'))
 
 
-    def output_reads(self, read_pair, read_flip, read1_sub): # take into the read_pairs
+    def output_reads(self, read_pair, read_flip, read_sub): 
+        # take into the read_pairs, read_flip:[0,1]; read_sub:[0,1]
         read_lines = []
         for idx in range(1+int(self.pair_end)):
-            read_id  = f'{read_pair[idx]["read_id"]}/{idx+1}'
-            read_seq = ''.join("ACGT"[i] for i in read_pair[idx]['seq'])
-            read_sub = ('C2T', 'G2A')[read_pair[idx]['sub']]
-            read_strd= ('W','C')[read_pair[idx]['flip']]
-            read_cmt = f'+{read_pair[idx]["cgr_str"]}:{read_strd}_{read_sub}'
-            read_qual= ''.join(read_pair[idx]['qual'])
+            id  = f'{read_pair[idx]["read_id"]}/{idx+1}'
+            seq = ''.join("ACGT"[i] for i in read_pair[idx]['seq'])
+            strd= read_flip[idx]
+            sub = read_sub[idx]
+            if strd:
+                pass
+            
+            cmt = '+'
+            for ix, ctx in enumerate(read_pair[idx]["ctx"]):
+                cmt += self.cigar_table[read_pair[idx]["cgr"][ix], ctx]
+            cmt += f':{["W","C"][strd]}{["C2T", "G2A"][sub]}'
+            qual = '\n'
+            #qual= ''.join([self.qual_str[i] for i in read_pair[idx]['qual']])
 
-            read_lines.append(f'{read_id}\n{read_seq}\n{read_cmt}\n{read_qual}\n')
+            read_lines.append(f'{id}\n{seq}\n{cmt}\n{qual}\n')
         self.write_file(read_lines)
 
 
@@ -50,18 +67,18 @@ class StreamReads:
         """write bisulfite reads to disk"""
         with self.writeLock:
             for idx, line in enumerate(read_lines):
-                self.output_fastq[idx].write(read_lines[idx])
+                self.output_obj[idx].write(line)
 
 
     def close(self):
         '''close the fastq object and shuffle or gzip reads'''
-        for output in self.output_fastq:
-            output.close()
+        for obj in self.output_obj:
+            obj.close()
 
         if self.gzip or self.shuffle:
             print("Shuffling/Compressing reads\n")
         for fastq in self.fastq_list:
-            if self.shuffle:
+            if self.shuffle and self.ref_fasta:
                 self.shuffle_read(fastq, self.ref_fasta)
             if self.gzip:
                 self.gzip_read(fastq)
@@ -80,8 +97,8 @@ class StreamReads:
         prefix_split    = os.path.splitext(fastq_file)[0].split("_")
         fastq_shuffle   = "_".join(prefix_split[:-1]) + "_shuffle_" + prefix_split[-1] + ".fastq"
         shuf_cmd_list   = ["awk", "'{OFS=\"\t\"; getline seq; getline sep; getline qual; print $0,seq,sep,qual}'",
-                         fastq_file, "|", "shuf --random-source", random_source, "|",
-                         "awk", "'{OFS=\"\n\"; print $1,$2,$3,$4}'", ">", fastq_shuffle]
+                           fastq_file, "|", "shuf --random-source", random_source, "|",
+                           "awk", "'{OFS=\"\n\"; print $1,$2,$3,$4}'", ">", fastq_shuffle]
         shuffle_run     = subprocess.Popen(shuf_cmd_list,  stdout=subprocess.PIPE, universal_newlines=True)
         stdout, stderr  = shuffle_run.communicate()
         
@@ -99,12 +116,3 @@ class StreamReads:
         gzip_run        = subprocess.Popen(gzip_cmd_list,  stdout=subprocess.PIPE, universal_newlines=True)
         stdout, stderr  = gzip_run.communicate()
 
-
-
-
-# column context, row cigar
-cigar_table = np.array([['M', 'c', 'C', 'b',  'B', '-', '-', 'a',  'A', 'c', 'C', 'b',  'B', '-', '-', 'a',  'A'], # match
-                        ['x', 'x', 'X', 'x',  'X', '-', '-', 'x',  'X', 'x', 'X', 'x',  'X', '-', '-', 'x',  'X'], # snp
-                        ['-', '-', '-', '-',  '-', '-', '-', '-',  '-', '-', '-', '-',  '-', '-', '-', '-',  '-'], # empty
-                        ['M', 'i', 'I', 'i',  'I', '-', '-', 'i',  'I', 'i', 'I', 'i',  'I', '-', '-', 'i',  'I'], # insert
-                        ['-', '#', '-', '#',  '-', '-', '-', '#',  '-', '#', '-', '#',  '-', '-', '-', '#',  '-']])# convert failed
