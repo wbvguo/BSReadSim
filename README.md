@@ -13,17 +13,16 @@ allow CG bias/nonuniform coverage| no | no | no | yes
 haplotype-aware | no   | no | no | yes
 site-site dependency | no | no | no| [todo]
 
-( $\textsf{yes}^*$: Limited support
+$\textsf{yes}^*$: Limited support
 - BSSim only accept snps input using a frequency table, it cannot faithfully simulate given genotypes, preserve haplotype information, nor handle indel variants
-- BSBolt allows users to input the methylation reference. But during simulation, it **randomly** picks a value from this methylation reference pool. As a result, for a paticular CG site, the simulated data and the reference profile will likely have different methylation level)
+- BSBolt allows users to input the methylation reference. But during simulation, it **randomly** picks a value from this methylation reference pool. As a result, for a paticular CG site, the simulated data and the reference profile will likely have different methylation level
 
 
 # 2. Installation
 ## Dependency
 - Python 3.8 or later
 - Biopython
-- numpy
-- scipy
+- numpy, scipy
 - tqdm
 - GCC >= 9.4.0
 
