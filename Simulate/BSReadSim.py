@@ -227,8 +227,8 @@ class BSReadSim:
                 self.variant_profile= self.meth_set.set_var_meth(var_contig, sim_data)  # a dict, can be empty
                 if self.pair_end:                                                       # what if read_gen is empty at very beginning
                     job_arr = [executor.submit(self.process_read_pair, read_pair) for read_pair in read_gen]
-                else:
-                    job_arr = [executor.submit(self.process_read, read_pair) for read_pair in read_gen]
+                # else:
+                #     job_arr = [executor.submit(self.process_read, read_pair) for read_pair in read_gen]
 
                 if self.verbose:
                     for job in job_arr:
@@ -242,18 +242,63 @@ class BSReadSim:
         print('Simulation Finished!\n')
 
 
-    def process_read(self, read_pair):
-        '''process single end reads'''
-        read_flip = random.choice([0, 1])
-        read1_sub = random.choice([0, 1]) if self.undirectional else read_flip
+    # def process_read(self, read_pair):
+    #     '''process single end reads'''
+    #     read_flip = random.choice([0, 1])
+    #     read1_sub = random.choice([0, 1]) if self.undirectional else read_flip
 
-        self.mask_context(read_pair[0], read1_sub)
-        self.retrive_meth_db(read_pair[0])
-        self.set_context_state(read_pair[0])
+    #     self.mask_context(read_pair[0], read1_sub)
+    #     self.retrive_meth_db(read_pair[0])
+    #     self.set_context_state(read_pair[0])
+    #     self.treat_bisulfite(read_pair[0])
+    #     self.rev_complement(read_pair[0], read_flip)
+    #     self.add_seq_err(read_pair[0])
+    #     self.add_qual_score(read_pair[0])
+    #     self.fastq_out.output_reads(read_pair, read_flip, read1_sub)
+
+    def process_read_pair(self, read_pair):
+        """
+        This processing step works as follows:
+        1. randomly assign reads to Watson or Crick strand, with corresponding base change pattern
+        2. set methylation status according to methylation profile
+        3. bisulfite converted and introduce sequencing error
+        4. output reads
+        """
+
+        # for directional library, read1 will be G2A if read_flip else C2A, strand will be W else C
+        # if read_flip: read_pair[0], read_pair[1] = read_pair[1], read_pair[0]
+        read_flip = random.choice([[0, 1], [1, 0]])
+        read_sub  = random.choice([[0, 1], [1, 0]]) if self.undirectional else read_flip
+
+        # mask the context
+        for ix in range(1+int(self.pair_end)):
+            self.mask_context(read_pair[ix], read_sub[ix])  # 
+            self.retrive_meth_db(read_pair[0])              # retrive methy profile
+        
+        self.set_context_state(read_pair)                   # set methylation states
+        
+    
+        
+
+
+        
+        
+        # bisulfite converted
         self.treat_bisulfite(read_pair[0])
-        self.rev_complement(read_pair[0], read_flip)
+        self.treat_bisulfite(read_pair[1])
+
+        # rev complementary
+        self.rev_complement(read_pair, read_flip)
+
+
+        # introduce seq errors
         self.add_seq_err(read_pair[0])
+        self.add_seq_err(read_pair[1])
+        # introduce quality scores
         self.add_qual_score(read_pair[0])
+        self.add_qual_score(read_pair[1])
+
+        # output
         self.fastq_out.output_reads(read_pair, read_flip, read1_sub)
 
 
