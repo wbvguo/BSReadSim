@@ -1,0 +1,22 @@
+
+BSBolt
+M	base match	yes	yes
+X	sequence mismatch	yes	yes
+E	sequence error	yes	yes
+C	methylated CG	yes	yes
+c	unmethylated CG (converted)	yes	yes
+#   unmethylated CG (unconverted) yes yes
+B	methylated CHG	yes	yes
+b	unmethylated CHG (converted)	yes	yes
+"   unmethylated CHG (unconverted) yes yes
+A	methylated CHH	yes	yes
+a	unmethylated CHH (converted)	yes	yes
+!   unmethylated CHH (unconverted) yes yes
+Z	methylated mismatch	yes	yes
+z	unmethylated mismatch (converted)	yes	yes
+:   unmethylated mismatch (unconverted)	yes	yes
+1-9	insertion and position	yes	no
+K	methylated insertion	yes	no
+k	unmethylated insertion (converted)	yes	no
++	unmethylated insertion (unconverted)	yes	no 
+V	sequence mismatch that generates false methylation signal (C to T / G to A)	yes	yes
