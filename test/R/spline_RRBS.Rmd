@@ -1,0 +1,112 @@
+---
+title: "Spline for RRBS"
+author: "Wenbin Guo"
+date: "2023-02-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# library
+```{r}
+# Helper packages
+library(dplyr)     # for data wrangling
+library(ggplot2)   # for awesome plotting
+
+# Modeling packages
+library(earth)     # for fitting MARS models
+library(caret)     # for automating the tuning process
+
+# Model interpretability packages
+library(vip)       # for variable importance
+library(pdp)       # for variable relationships
+```
+
+
+# read-in
+```{r}
+df = read.table("~/iproject/BSReadSim/test/data/RRBS/frag_cut_df2.csv", sep = ",", header = TRUE)
+dat= df[c("length", "gc_ratio", "CCGG", "relative_depth")]
+```
+
+
+```{r}
+mars1 <- earth(relative_depth ~ ., data = dat, 
+               glm=list(family=binomial), degree=3, nprun = 10)
+```
+
+```{r}
+summary(mars1) %>% .$coefficients %>% head(10)
+```
+
+
+```{r}
+plot(mars1, which = 1)
+```
+
+
+# cross validation to select the best model
+```{r}
+hyper_grid <- expand.grid(
+  degree = 1:5, 
+  nprune = seq(2, 100, length.out = 10) %>% floor()
+)
+
+head(hyper_grid)
+```
+
+
+
+```{r}
+library(doParallel)
+cl <- makePSOCKcluster(12)
+registerDoParallel(cl)
+
+set.seed(123)  # for reproducibility
+cv_mars <- train(
+  x = subset(dat, select = -relative_depth),
+  y = dat$relative_depth,
+  method = "earth",
+  metric = "RMSE",
+  trControl = trainControl(method = "cv", number = 10),
+  tuneGrid = hyper_grid,
+)
+
+stopCluster(cl)
+```
+
+
+# your own CV
+```{r}
+library(modelr)
+cv  <- crossv_kfold(data = dat, k =  10)
+
+# split the data
+
+
+# for loop
+
+# train using the rest
+
+# predict using the 
+
+```
+
+
+
+
+```{r}
+library(ggpointdensity)
+
+df2 = data.frame(fitted = mars1$fitted.values %>% unlist() %>% unname(), 
+                 real = dat$relative_depth %>% unlist())
+
+ggplot(df2, mapping = aes(x = fitted, y = real)) +
+  stat_density2d(aes(alpha = ..density..), geom = "tile", contour = FALSE) +
+  #geom_pointdensity(mapping = aes(x = fitted, y = real)) +
+  scale_color_viridis()
+```
+

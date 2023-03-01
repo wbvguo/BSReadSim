@@ -2,7 +2,7 @@ import subprocess
 import threading
 import os
 import numpy as np
-
+import warnings
 
 class StreamReads:
     '''stream reads and write into fastq files'''
@@ -15,70 +15,78 @@ class StreamReads:
         self.ref_fasta= ref_fasta
         self.gzip     = gzip
         self.writeLock= threading.Lock()
-
-        fastq1 = f'{self.outdir}/{self.prefix}_1.fastq'
-        fastq2 = f'{self.outdir}/{self.prefix}_2.fastq'
-        if self.pair_end:
-            self.fastq_list = [fastq1, fastq2]
-        else:
-            self.fastq_list = [fastq1]
         self.create_fastq()
         
         # column context, row cigar
         self.cigar_table = np.array([['M', 'c', 'C', 'b',  'B', '-', '-', 'a',  'A', 'c', 'C', 'b',  'B', '-', '-', 'a',  'A'], # match
                                      ['x', 'x', 'X', 'x',  'X', '-', '-', 'x',  'X', 'x', 'X', 'x',  'X', '-', '-', 'x',  'X'], # snp
-                                     ['-', '-', '-', '-',  '-', '-', '-', '-',  '-', '-', '-', '-',  '-', '-', '-', '-',  '-'], # empty
-                                     ['M', 'i', 'I', 'i',  'I', '-', '-', 'i',  'I', 'i', 'I', 'i',  'I', '-', '-', 'i',  'I'], # insert
+                                     ['-', '-', '-', '-',  '-', 'e', 'E', '-',  '-', '-', '-', '-',  '-', 'e', 'E', '-',  '-'], # seq err
+                                     ['i', 'i', 'I', 'i',  'I', '-', '-', 'i',  'I', 'i', 'I', 'i',  'I', '-', '-', 'i',  'I'], # insert
                                      ['-', '#', '-', '#',  '-', '-', '-', '#',  '-', '#', '-', '#',  '-', '-', '-', '#',  '-']])# convert failed
         self.qual_str    = '''!"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~'''
 
 
     def create_fastq(self):
         '''Return io object for fastq writing'''
-        self.output_obj = []
+        fastq1 = f'{self.outdir}/{self.prefix}_1.fastq'
+        fastq2 = f'{self.outdir}/{self.prefix}_2.fastq'
+        self.fastq_list = [fastq1, fastq2] if self.pair_end else [fastq1]
+        
+        # check the existence of fastq and create object
+        self.output = []
         for fastq_file in self.fastq_list:
-            # check if the file exists
-            self.output_obj.append(open(fastq_file, 'a'))
+            if os.path.exists(fastq_file):
+                warnings.warn(f'Fastq file exists, will overwrite... {fastq_file}')
+                os.remove(fastq_file)           
+            self.output.append(open(fastq_file, 'a'))
 
 
-    def output_reads(self, read_pair, read_flip, read_sub): 
-        # take into the read_pairs, read_flip:[0,1]; read_sub:[0,1]
+    def output_reads(self, read_pair, read1_idx, pattern_idx):
+        # take read_pairs, read1_idx:{0,1}; pattern_idx:{0,1}
         read_lines = []
-        for idx in range(1+int(self.pair_end)):
-            id  = f'{read_pair[idx]["read_id"]}/{idx+1}'
-            seq = ''.join("ACGT"[i] for i in read_pair[idx]['seq'])
-            strd= read_flip[idx]
-            sub = read_sub[idx]
-            if strd:
-                pass
-            
-            cmt = '+'
-            for ix, ctx in enumerate(read_pair[idx]["ctx"]):
-                cmt += self.cigar_table[read_pair[idx]["cgr"][ix], ctx]
-            cmt += f':{["W","C"][strd]}{["C2T", "G2A"][sub]}'
-            qual = '\n'
-            #qual= ''.join([self.qual_str[i] for i in read_pair[idx]['qual']])
-
-            read_lines.append(f'{id}\n{seq}\n{cmt}\n{qual}\n')
+        
+        read_rec = read_pair[read1_idx]
+        read_lines.append(self.gen_fastq_lines(read_rec, 1, ))
+        
+        if self.pair_end:
+            read_rec = read_pair[1-read1_idx]
+            read_lines.append(self.gen_fastq_lines(read_rec, 2))
+        
         self.write_file(read_lines)
+
+
+    def gen_fastq_lines(self, read_rec, pair_idx, read1_idx, pattern_idx):
+        id  = f'{read_rec["read_id"]}/{pair_idx}'
+        seq = ''.join("ACGT"[i] for i in read_rec['seq'])
+        
+        strand  = ["W","C"][read1_idx]
+        pattern = ["C2T", "G2A"][pattern_idx]
+        
+        cmt = "+"
+        for ix, ctx in enumerate(read_rec["ctx"]):
+            cmt += self.cigar_table[read_rec["cgr"][ix], ctx]
+        
+        cmt += f':{strand}{pattern}'
+        qual= ''.join([self.qual_str[i] for i in read_rec['qual']])
+        return f'{id}\n{seq}\n{cmt}\n{qual}\n'
 
 
     def write_file(self, read_lines):
         """write bisulfite reads to disk"""
         with self.writeLock:
             for idx, line in enumerate(read_lines):
-                self.output_obj[idx].write(line)
+                self.output[idx].write(line)
 
 
     def close(self):
         '''close the fastq object and shuffle or gzip reads'''
-        for obj in self.output_obj:
+        for obj in self.output:
             obj.close()
 
         if self.gzip or self.shuffle:
             print("Shuffling/Compressing reads\n")
         for fastq in self.fastq_list:
-            if self.shuffle and self.ref_fasta:
+            if self.shuffle:
                 self.shuffle_read(fastq, self.ref_fasta)
             if self.gzip:
                 self.gzip_read(fastq)

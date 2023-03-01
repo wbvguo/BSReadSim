@@ -53,6 +53,7 @@ class ParseGenome:
             self.tech_mode      = 0
             self.score_dict     = self.chr_len_dict
             self.eff_len_dict   = self.chr_len_dict
+            self.bed_file       = None
 
         # should check depth, read_len, pair_end
         self.num_reads  = num_reads if num_reads else int(sum(self.eff_len_dict.values())*depth/read_len/(1+int(pair_end)))

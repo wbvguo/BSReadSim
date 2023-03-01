@@ -172,9 +172,6 @@ def check_python_version():
         raise OSError
 
 
-
-
-
 def propagate_error(error):
     raise error
 

@@ -4,7 +4,6 @@ import warnings
 import numpy as np
 
 from scipy.stats import beta
-from tqdm import tqdm
 from typing import Dict, List
 
 from StreamMethDB import StreamMethDB
@@ -31,8 +30,8 @@ class SetMethylation:
     :var np.array meth_arr  : n x 5 numpy array: context, flag, meth_avg, meth_ref, meth_alt
                               - flag: 0 from dist or pool, 1 from CGmap, 2 from ASM, -1 unintialized
     :var np.array pos_map   : 1d numpy array (same length as contig), value is the row index of meth_arr
+    make sure all input coordinates is 0-based
     '''
-
 
     def __init__(self, ref_dict: Dict = None, outdir: str = None, 
                  meth_db_path: str = None, cgmap_file: str = None, cgmap_pool: bool = False,
@@ -98,13 +97,12 @@ class SetMethylation:
         '''parse the fasta, CGmap, ASM file into pickle for later simulation'''
         contig_id_list = self.ref_dict.keys()
         for contig_id in contig_id_list:
-            self.current_contig = contig_id
             self.init_meth_db(contig_id)
             self.fill_cgmap(contig_id)
             self.fill_asm(contig_id)
-            self.fill_dist()
+            self.fill_dist(contig_id)
             if self.verbose:
-                print(f"Processed {self.meth_arr.shape[0]} sites from contig {self.current_contig}")
+                print(f"Processed {self.meth_arr.shape[0]} sites from contig {contig_id}")
             # the 3rd item: 1 for boundary updated by variants, 0 for not updated
             self.meth_db.output_contig(contig_id, [self.pos_map, self.meth_arr, 0], is_variant=False)
 
@@ -117,7 +115,7 @@ class SetMethylation:
         self.pos_map  = np.full(seq_len, -1, dtype=np.uint32) # support max value 4294967295
 
         if self.verbose:
-            print(f"\n[Initiating the methylaiton database] for {self.current_contig}...")
+            print(f"\n[Initiating meth_db] for {contig_id}...")
         if self.collect_ch:
             count_c = seq.count("C")
             count_g = seq.count("G")
@@ -125,7 +123,7 @@ class SetMethylation:
             self.meth_arr = np.full((arr_size, 5), fill_value=np.NaN, dtype=np.float16)
             self.meth_arr[:,1] = -1 # flag, record uninitialized sites
 
-            for pos, base in tqdm(enumerate(seq), disable = not self.verbose):
+            for pos, base in enumerate(seq):
                 if base not in {"C", "G"}:
                     continue
                 if pos<2 or pos>=(seq_len-3):
@@ -144,7 +142,7 @@ class SetMethylation:
             self.meth_arr= np.full((arr_size, 5), fill_value=np.NaN, dtype=np.float16)
             self.meth_arr[:,1]= -1
 
-            for cg_match in tqdm(re.finditer("CG", str(seq)), disable = not self.verbose):
+            for cg_match in re.finditer("CG", str(seq)):
                 pos = cg_match.start()
                 self.meth_arr[idx,  0] = [pos,  1]
                 self.meth_arr[idx+1,0] = [pos+1,9]
@@ -159,7 +157,7 @@ class SetMethylation:
             return None
 
         if self.verbose:
-            print(f"Filling CGmap for {self.current_contig}{' (pool)' if self.cgmap_pool else ''}... ", end="")
+            print(f"Filling CGmap for {contig_id}{' (pool)' if self.cgmap_pool else ''}...", end=" ")
         if self.cgmap_pool:
             meth_level_pool = self.get_cgmap_pool(contig_id=None)
             idx_cg  = np.where(np.bitwise_and(self.meth_arr[:,0].astype(np.int16), 0x7)==1)
@@ -203,7 +201,7 @@ class SetMethylation:
                     warnings.warn("[WARNING]: More than half sites in CGmap file cannot be found in the reference fasta\n" +
                                   "Potential reason: the CGmap does not share the same coordinates with fasta, please check!")
             else:
-                print(f"No sites found in CGmap file for {self.current_contig}, skip...")
+                print(f"No sites found in CGmap file for {contig_id}, skip...")
         return None
 
 
@@ -213,7 +211,7 @@ class SetMethylation:
             return None
 
         if self.verbose:
-            print(f"Filling ASM for {self.current_contig}... ", end="")
+            print(f"Filling ASM for {contig_id}...", end=" ")
         num_asm_pos, num_404_pos = [0,0] # counting
         for line in parseASM(self.asm_file, contig_id, collect_ch = self.collect_ch):
             _, base, pos, context, tot_meth, ref_meth, alt_meth = line
@@ -240,17 +238,17 @@ class SetMethylation:
                     warnings.warn("[WARNING]: More than half sites in ASM file cannot be found in the reference fasta\n" +
                                   "Potential reason: the CGmap does not share the same coordinates with fasta, please check!")
             else:
-                print(f"No sites found in ASM file for {self.current_contig}, skip...")
+                print(f"No sites found in ASM file for {contig_id}, skip...")
         return None
 
 
-    def fill_dist(self):
+    def fill_dist(self, contig_id):
         '''fill in from beta distribution'''
         if self.cgmap_pool:
             return None
 
         if self.verbose:
-            print(f"Filling with beta distribution for {self.current_contig}...")
+            print(f"Filling with beta distribution for {contig_id}...")
         idx_nan = np.isnan(self.meth_arr[:,2]) # hold for each element
         idx_ctx = np.bitwise_and(self.meth_arr[:,0].astype(np.int16), 0x7) # hold for each element
         idx_nan_cg  = np.where((idx_ctx == 1) & idx_nan)[0] # hold for index
@@ -297,7 +295,7 @@ class SetMethylation:
 
         seq = self.ref_dict[contig_id].seq.upper()
         seq_len = len(seq)
-        for pos, variant_info in tqdm(sim_data.items()):
+        for pos, variant_info in sim_data.items():
             if pos<2 or pos>(seq_len-2):
                 continue
             if variant_info['indel'] == -1:  # deletion starts at pos

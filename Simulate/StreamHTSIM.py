@@ -72,7 +72,7 @@ class StreamHTSIM:
     def get_line(sim_iter):
         '''receive lines from console'''
         try:
-            line = next(sim_iter).strip()
+            line = next(sim_iter).strip('\n')
         except StopIteration:
             print("End of output\n")
             return None
@@ -113,17 +113,21 @@ class StreamHTSIM:
             return None
 
         if not line:
-            line = next(sim_iter).strip()
+            line = next(sim_iter).strip('\n')
         # header, seq, comment process
-        read_id, pair, flag_pos, flag_mut, flag_indel, qual, cgr = line.split(' ')
-        cgr = np.frombuffer(cgr.encode(), dtype=np.int8)
-        seq = np.frombuffer(next(sim_iter).strip().encode(), dtype=np.int8)
-        _, start, end, cover_pos, n_sub, n_indel, insert_size, inner_dist, ofs= next(sim_iter).strip().split(':')
+        read_id, pair, flag_pos, flag_mut, flag_indel, strd, cgr = line.split(' ')
+        #cgr = np.frombuffer(cgr.encode(), dtype=np.int8)
+        #seq = np.frombuffer(next(sim_iter).strip('\n').encode(), dtype=np.int8)
+        cgr = np.frombuffer(bytearray(cgr.encode()), dtype=np.int8)
+        seq = np.frombuffer(bytearray(next(sim_iter).strip('\n').encode()), dtype=np.int8)
+        _, start, end, cover_pos, n_sub, n_indel, insert_size, inner_dist, ofs= next(sim_iter).strip('\n').split(':')
         ofs = np.fromstring(ofs, dtype=np.int8, sep = ',')
-        ctx = np.frombuffer(next(sim_iter).strip().encode(), np.int8)
-        return dict(read_id=read_id, pair=int(pair), qual = int(qual),
+        ctx = np.ma.masked_equal(np.frombuffer(next(sim_iter).strip('\n').encode(), np.int8), 0)
+        
+        return dict(read_id=read_id, pair=int(pair), strand = {-1:1, 0:-1, 1:0}[int(strd)],
                     flag_pos=int(flag_pos), flag_mut=int(flag_mut), flag_indel=int(flag_indel),
                     start=int(start), end=int(end), cover_pos=int(cover_pos),
                     n_sub=int(n_sub), n_indel=int(n_indel),
                     insert_size=int(insert_size), inner_dist=int(inner_dist),
                     cgr=cgr, seq=seq, ofs=ofs, ctx=ctx)
+
