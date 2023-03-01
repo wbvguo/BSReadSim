@@ -11,4 +11,4 @@ class LockedIterator(object):
 
     def __next__(self):
         with self.lock:
-            return self.it.__next__()
+            return next(self.it)
