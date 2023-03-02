@@ -18,15 +18,17 @@ class StreamMethDB:
         self.overwrite_db = overwrite_db
         
         self.create_outdir()
-        # if ref_dict and overwrite_db:
-        #     self.save_ref(ref_dict)
+        if ref_dict and overwrite_db:
+            self.save_ref(ref_dict)
 
 
     def create_outdir(self):
         '''create output directory'''
         if not os.path.isdir(self.outdir):
             os.makedirs(self.outdir, exist_ok=False)
+        if not os.path.isdir(self.pkl_dir):
             os.makedirs(self.pkl_dir, exist_ok=False)
+        if not os.path.isdir(self.tmp_dir):
             os.makedirs(self.tmp_dir, exist_ok=False)
 
 

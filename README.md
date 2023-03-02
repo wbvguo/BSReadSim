@@ -1,15 +1,15 @@
 # 1. Introduction
-**BSReadSim** is a efficient and flexible <ins>**B**</ins>isulfite <ins>**S**</ins>equencing <ins>**Read**</ins> <ins>**Sim**</ins>ulator that allows for profile-based read simulation. To our best knowledge, BSReadSim is the only bisulfite sequencing read simulator that allows user to incooperate the genetic variant and methylation profile with high fidelity. As a result, it can generate more realistic bisulfite sequencing reads compared to other bisulfite read simulators. The following table summarized the difference between BSReadSim and other tools:
+**BSReadSim** is a efficient and flexible <ins>**B**</ins>isulfite <ins>**S**</ins>equencing <ins>**Read**</ins> <ins>**Sim**</ins>ulator that allows for profile-based bisulfite sequencing reads simulation. To our best knowledge, BSReadSim is the only simulator that allows user to incooperate both genetic variant and methylation profile with high fidelity. As a result, it can generate more realistic sequencing reads compared to other bisulfite read simulators. The following table summarized the difference between BSReadSim and other tools:
 
-Features | Sherman | BSBolt | BSSim | BSReadSim
-----| ---- | ---- | ---- | ---- |
-sequencing technology support| WGBS | WGBS | WGBS | WGBS/RRBS/TBS
+Features | Sherman | BSBolt | BSSim |  BSReadSim
+----| ---- | ---- | ---- | ---- | 
+sequencing technology| WGBS | WGBS | WGBS |  WGBS/RRBS/TBS
 adjustable bisulfite conversion rate | yes | no | yes | yes
 support multi-thread | no | no | yes | yes
 allow genetic variant input | no   | no | $\textsf{yes}^*$ | yes
 allow methylation profile input | no |   $\textsf{yes}^*$ | no | yes
 allow alleclic-specific methylation | no | no | no | yes
-allow CG bias/nonuniform coverage| no | no | no | yes
+allow GC bias/nonuniform coverage| no | no | no | yes
 haplotype-aware | no   | no | no | yes
 site-site dependency | no | no | no| [todo]
 
@@ -45,7 +45,7 @@ bsreadsim ... [to add]
 ```
 
 ## Input file format  
-click here to see the [example]() data
+click here to see the [example](./data/example/) data
 - reference genome: [FASTA](https://en.wikipedia.org/wiki/FASTA_format) format ( `.fasta`, `.fa` or `.fa.gz` ) 
 - methylation profile: [CGmap](https://bsbolt.readthedocs.io/en/latest/methylation_calling/) format ( `.CGmap` or `.CGmap.gz` ) 
 - genetic variants: [VCF](https://samtools.github.io/hts-specs/VCFv4.2.pdf) format, v4.0 or later, **sorted** by chromosome id and position ( `.vcf` or `.vcf.gz` )

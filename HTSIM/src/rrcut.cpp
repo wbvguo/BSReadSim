@@ -279,7 +279,7 @@ void parse_bed_line(char *line, char *chr_id, probe_rec *tmp_probe, probe_meta *
             case 1: start  = atoi(p); break;
             case 2: end    = atoi(p); break;
             case 3: name   = strdup(p); break;
-            case 4: score  = atof(p); break;        // TODO: need to test what if score is "." 
+            case 4: score  = atof(p); break;        // need to test what if score is . 
             case 5: strand = int(strcmp(p,"+")==0)-int(strcmp(p,"-")==0); break; //1,0,-1
             default: break;}
 			++i, p = q + 1;
@@ -695,76 +695,6 @@ void sim_print_mutref(const char *name, const kseq_t *ks, mutseq_t *hap1, mutseq
     }
 }
 
-void sim_print_mutref_0base(const char *name, const kseq_t *ks, mutseq_t *hap1, mutseq_t *hap2)
-{
-    int i, j = 0; // j keeps the end of the last deletion
-    for (i = 0; i != ks->seq.l; ++i) {
-        int c[3];
-        c[0] = nst_nt4_table[(int)ks->seq.s[i]];
-        c[1] = hap1->s[i]; c[2] = hap2->s[i];
-        if (c[0] >= 4) continue;
-        if ((c[1] & mutmsk) != NOCHANGE || (c[2] & mutmsk) != NOCHANGE) {
-            if (c[1] == c[2]) { // hom
-                if ((c[1]&mutmsk) == SUBSTITUTE) { // substitution
-                    printf("%s\t%d\t%c\t%c\t-\n", name, i, "ACGTN"[c[0]], "ACGTN"[c[1]&0xf]); // coordinate is 1-based
-                } else if ((c[1]&mutmsk) == DELETE) { // del
-                    if (i >= j) {
-                        printf("%s\t%d\t", name, i);
-                        for (j = i; j < ks->seq.l && hap1->s[j] == hap2->s[j] && (hap1->s[j]&mutmsk) == DELETE; ++j)
-                            putchar("ACGTN"[nst_nt4_table[(int)ks->seq.s[j]]]);
-                        printf("\t-\t-\n");
-                    }
-                } else if (((c[1] & mutmsk) >> 12) <= 4) { // ins
-                    printf("%s\t%d\t-\t", name, i);
-                    int n = (c[1]&mutmsk) >> 12, ins = c[1] >> 4;
-                    while (n > 0) {
-                        putchar("ACGTN"[ins & 0x3]);
-                        ins >>= 2;
-                        n--;
-                    }
-                    printf("\t-\n");
-                } // else: deleted base in a long deletion
-            } else { // het
-                if ((c[1]&mutmsk) == SUBSTITUTE || (c[2]&mutmsk) == SUBSTITUTE) { // substitution
-                    printf("%s\t%d\t%c\t%c\t+\n", name, i, "ACGTN"[c[0]], "XACMGRSVTWYHKDBN"[1<<(c[1]&0x3)|1<<(c[2]&0x3)]);
-                } else if ((c[1]&mutmsk) == DELETE) {
-                    if (i >= j) {
-                        printf("%s\t%d\t", name, i);
-                        for (j = i; j < ks->seq.l && hap1->s[j] != hap2->s[j] && (hap1->s[j]&mutmsk) == DELETE; ++j)
-                            putchar("ACGTN"[nst_nt4_table[(int)ks->seq.s[j]]]);
-                        printf("\t-\t-\n");
-                    }
-                } else if ((c[2]&mutmsk) == DELETE) {
-                    if (i >= j) {
-                        printf("%s\t%d\t", name, i);
-                        for (j = i; j < ks->seq.l && hap1->s[j] != hap2->s[j] && (hap2->s[j]&mutmsk) == DELETE; ++j)
-                            putchar("ACGTN"[nst_nt4_table[(int)ks->seq.s[j]]]);
-                        printf("\t-\t-\n");
-                    }
-                } else if (((c[1] & mutmsk) >> 12) <= 4 && ((c[1] & mutmsk) >> 12) > 0) { // ins1
-                    printf("%s\t%d\t-\t", name, i);
-                    int n = (c[1]&mutmsk) >> 12, ins = c[1] >> 4;
-                    while (n > 0) {
-                        putchar("ACGTN"[ins & 0x3]);
-                        ins >>= 2;
-                        n--;
-                    }
-                    printf("\t+\n");
-                } else if (((c[2] & mutmsk) >> 12) <= 4 || ((c[2] & mutmsk) >> 12) > 0) { // ins2
-                    printf("%s\t%d\t-\t", name, i);
-                    int n = (c[2]&mutmsk) >> 12, ins = c[2] >> 4;
-                    while (n > 0) {
-                        putchar("ACGTN"[ins & 0x3]);
-                        ins >>= 2;
-                        n--;
-                    }
-                    printf("\t+\n");
-                } // else: deleted base in a long deletion
-            }
-        }
-    }
-}
-
 void cal_length_chr(kseq_t *ks, len_rec *tmp_len, int tech_mode, char *bed_file)
 {
     uint64_t eff_len;
@@ -939,35 +869,33 @@ void sim_core(const char *fn, bool is_hap, bool is_uniform, uint64_t N, uint64_t
         if(!n_pairs){continue;} // skip if no reads simulated from this contig
 
         // initialize random number generator to generate read positions
-        uint64_t unif_begin = 2, unif_end = ks->seq.l-max_insert-2;     // ensure read doesn't pass boundary with 2 base offset
-        std::vector<float> weights;
+        uint64_t unif_begin, unif_end;
+        std::discrete_distribution<int> dis2;
+        std::uniform_int_distribution<int> dis;
 
         if(tech_mode){
             parse_bed_chr(bed_file, ks->name.s);
             if(probe_vec.size() == 0){continue;} // parse probe, skip if empty
             if(is_uniform){
-                unif_begin = 0; unif_end = probe_vec.size()-1; //unif_end - unif_start + 1
+                std::uniform_int_distribution<int> dis(0, probe_vec.size()-1);
             }else{
                 std::vector<float> weights(probe_vec.size());
                 for(int i=0; i < probe_vec.size(); ++i){ weights.push_back(probe_vec[i].score);}
-            }   
+                std::discrete_distribution<int> dis2(weights.begin(), weights.end());
+                // std::vector<float>().swap(weights);
+            }
         }
-        std::uniform_int_distribution<int> dis(unif_begin, unif_end);
-        std::discrete_distribution<int> dis2(weights.begin(), weights.end()); //TODO: need to test when weights is empty size
-        // std::vector<float>().swap(weights);
+        else{
+            // ensure read doesn't pass boundary with 2 base offset
+            std::uniform_int_distribution<int> dis(2, ks->seq.l-max_insert-2);
+        }
 
         // print out simulation information
         tot_pairs += n_pairs;
         fprintf(stderr, "[%s] contig '%s': simulate %ld reads...\n", __func__, ks->name.s, n_pairs);
-        
-        // introduce mutations and print them to stdout
-        uint8_t* site_flag_arr = (uint8_t*)malloc(ks->seq.l * sizeof(uint8_t));
-        if (site_flag_arr == NULL) {fprintf(stderr, "ERROR: could not allocate memory\n");exit(EXIT_FAILURE);} else {
-            memset(site_flag_arr, 0, ks->seq.l * sizeof(uint8_t));
-            // Initialize array as 0, record if a site is SNP/INDEL position (base can be either REF/ALT)
-            // uint8_t site_flag_arr[ks->seq.l] = {0}; // only work when length is small, otherwise overflow
-        }
 
+        // introduce mutations and print them to stdout
+        uint8_t site_flag_arr[ks->seq.l] = {0}; // record if a site is SNP/INDEL position (base can be either REF/ALT)        
         fprintf(stdout, "Contig Variant Start\n");
         if(bool_vcf_set){
             sim_mut_vcf(ks, vcf_file, rseq, rseq+1, site_flag_arr);
@@ -976,8 +904,9 @@ void sim_core(const char *fn, bool is_hap, bool is_uniform, uint64_t N, uint64_t
             sim_mut_diref(ks, is_hap, rseq, rseq+1, site_flag_arr);         // TODO: should return an int
             if(MUT_RATE == 0.0){fprintf(stdout, "%s\n", ks->name.s);}       //if no variants, print chromosome id            
         }
-        if(output_fmt){sim_print_mutref_0base(ks->name.s, ks, rseq, rseq+1);}else{sim_print_mutref(ks->name.s, ks, rseq, rseq+1);}
+        sim_print_mutref(ks->name.s, ks, rseq, rseq+1);
         fprintf(stdout, "Contig Variant End\n");
+
 
         fragment tmp_frag;
         for (ii = 0; ii != n_pairs; ++ii) { // the core loop
@@ -1078,7 +1007,6 @@ void sim_core(const char *fn, bool is_hap, bool is_uniform, uint64_t N, uint64_t
                 for (ix=0; ix < k; ++ix) {                                  \
                     int c_d1, c_d2;                                         \
                     int c = tmp_seq[x][ix];                                 \
-                    uint8_t context = 0;                                    \
                     if (cg_table[(uint8_t) c]){                             \
                         if (c == 1) {                                       \
                             /*handle the last 2 base*/                      \
@@ -1102,9 +1030,8 @@ void sim_core(const char *fn, bool is_hap, bool is_uniform, uint64_t N, uint64_t
                             }                                               \
                         }                                                   \
                         uint8_t context_idx = c << 4 | c_d1 <<2 | c_d2;     \
-                        context = cg_context_table[context_idx];            \
+                        tmp_context[x][ix] = cg_context_table[context_idx]; \
                     }                                                       \
-                tmp_context[x][ix] = context;                               \
                 }                                                           \
                 if (k != size[x]) {ext_coor[x] = -10;}                      \
             } while (0)
@@ -1134,7 +1061,7 @@ void sim_core(const char *fn, bool is_hap, bool is_uniform, uint64_t N, uint64_t
                 continue;
             }
             
-            int flag_pos, flag_mut; //flag_pos: whether has mutation position; flag_mut: whether has mutation
+            int flag_pos, flag_mut;
             for(i=tmp_frag.pos_l; i < tmp_frag.pos_r; ++i){
                 flag_pos |= site_flag_arr[i];
                 flag_mut |= target[i] & mutmsk;
@@ -1219,7 +1146,6 @@ void sim_core(const char *fn, bool is_hap, bool is_uniform, uint64_t N, uint64_t
             tot_err   += (int)(n_err[0]  + n_err[1] > 0);
         }
         free(rseq[0].s); free(rseq[1].s);
-        free(site_flag_arr);
     }
 
     fprintf(stderr, "[%s] Generated %lu read pairs, with %lu contain SNP, %lu contain INDEL", __func__, tot_pairs, tot_sub, tot_indel);
@@ -1280,7 +1206,7 @@ int main(int argc, char *argv[])
     int c = 0;
     int tech_mode = 0, output_fmt = 0;
     int seed = -1;
-    int depth = 10;
+    int min_insert, max_insert, depth = 10;
     bool is_hap = false, is_uniform = true;
 
     char none_default[] = "None";
@@ -1290,8 +1216,8 @@ int main(int argc, char *argv[])
     char *bias_tab = none_default;
     char *bed_file = none_default; // checked, will not intefere with vcf_file
 
-    mean_insert = 500; sd_insert = 50; min_insert=100, max_insert=1000, size_l = size_r = 70; sd_center = 50;
-    while ((c = getopt(argc, argv, "i:I:m:M:c:n:N:d:1:2:e:A:u:f:g:r:R:X:h:s:T:x:b:B:D:")) >= 0) {
+    mean_insert = 500; sd_insert = 50; sd_center = 50; size_l = size_r = 70;
+    while ((c = getopt(argc, argv, "i:I:m:M:c:n:N:d:1:2:e:A:U:f:g:r:R:X:h:s:T:x:b:B:D:")) >= 0) {
         switch (c) {
             case 'i': mean_insert= atoi(optarg); break;
             case 'I': sd_insert  = atoi(optarg); break;
@@ -1322,8 +1248,6 @@ int main(int argc, char *argv[])
     }
     if (argc - optind < 1) return simu_usage();
     if (seed <= 0) seed = time(0)&0x7fffffff;
-
-    min_insert = min_insert == 0 ? std::max(size_l, size_r) : min_insert;
 
     bool bool_chr_set   = strcmp(chr_id,  "None") && strlen(chr_id);
     bool bool_vcf_set   = strcmp(vcf_file,"None") && strlen(vcf_file);
