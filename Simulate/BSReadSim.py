@@ -179,8 +179,8 @@ class BSReadSim:
         self.ref_dict   = self.genome_db.ref_dict
         self.bed_file   = self.genome_db.bed_file
         self.tech_mode  = self.genome_db.tech_mode
-        self.count_dict = self.genome_db.count_dict
         self.num_reads  = self.genome_db.num_reads
+        self.count_dict = self.genome_db.count_dict
 
         # prepare the methylation reference
         print('Initiating methylation profile...')
@@ -237,10 +237,10 @@ class BSReadSim:
 
         # with ThreadPoolExecutor(max_workers=self.n_threads) as executor:
         for contig_id in self.count_dict.keys():
-            if self.count_dict[contig_id] == 0: # can be 0, need to test if reads < self.n_threads TODO
+            if self.count_dict[contig_id] == 0: # need to test if reads < self.n_threads TODO:
                 continue
             sim_cmd  = self.cmd_part + ['-c', contig_id] + ['-n', str(self.count_dict[contig_id])]
-            read_gen = LockedIterator(StreamHTSIM(sim_cmd=sim_cmd, pair_end=self.pair_end)) # only output 1 header for -c TODO
+            read_gen = LockedIterator(StreamHTSIM(sim_cmd=sim_cmd, pair_end=self.pair_end)) # only output 1 header for -c TODO:
             var_contig, sim_data= next(read_gen)                                    # the first element of generator is variants
             self.current_contig = var_contig                                        # update the profiles
             self.pos_map, self.meth_arr, _ = self.meth_db.load_contig(var_contig)   # [pos_map, meth_arr, status]
@@ -298,12 +298,15 @@ class BSReadSim:
         """
 
         # for directional library, read1 always C2T, strand can be either watson or crick unless strand captured
-        read1_idx   = random.choice([0, 1]) if read_pair[0]['strand']<0 else read_pair[0]['strand']
+        read1_idx   = random.choice([0, 1]) 
         pattern_idx = random.choice([0, 1]) if self.undirectional else read1_idx
+        strand_idx  = random.choice([0, 1]) if read_pair[0]['strand']<0 else read_pair[0]['strand']
         read_pair[1-read1_idx]['read2'] = 1
         read_pair[0]['conv'] = pattern_idx
         read_pair[1]['conv'] = pattern_idx
-
+        read_pair[0]['strand'] = strand_idx
+        read_pair[1]['strand'] = strand_idx
+        
         # mask the context
         self.mask_context(read_pair[0])
         self.mask_context(read_pair[1])
@@ -476,7 +479,7 @@ class BSReadSim:
         '''add quality scores'''
         if self.qual_uniform:
             qual_arr = np.full(self.read_len, qual_num)
-            qual_arr[[-1,0][read_rec['read2']]] = qual_num -1
+            qual_arr[[0,-1][read_rec['strand']^read_rec['conv']]] = qual_num -1 # denote the 5' end
             read_rec['qual'] = qual_arr
         else:
             # generate quality score from a profile TODO:

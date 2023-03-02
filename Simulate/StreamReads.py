@@ -47,9 +47,12 @@ class StreamReads:
 
         for read_rec in read_pair:
             read_lines.append(self.gen_fastq_lines(read_rec))
-            read_order.append(read_rec['read2'])
+            read_order.append(read_rec["read2"])
 
-        self.write_file(read_lines[read_order]) # might have problem for single end read_order = 1 but read_lines only have idx 0
+        if self.pair_end:
+            self.write_file([read_lines[i] for i in read_order])
+        else:
+            self.write_file(read_lines)
 
 
     def gen_fastq_lines(self, read_rec):
