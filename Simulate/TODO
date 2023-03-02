@@ -1,0 +1,16 @@
+- the cigar is reversed in read2
+- read1 has G2A which should not
+- quality directionality
+- write lock for multithreading
+- error model
+- rrbs model
+- site model
+- quality model
+- test RRBS
+- test TBS
+- test GC bias
+- better way to encode the read_pair
+- progress bar if possible
+- test on a large scale ~ 100M reads
+- the #read is not equal to what designed (rounding error) @done
+- test chr21 (100k reads) @done

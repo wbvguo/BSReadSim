@@ -21,17 +21,15 @@ class ParseGenome:
                                   
     '''
 
-    def __init__(self, ref_fasta: str = None, outdir: str = None, 
-                 depth: float = None, num_reads: int = None, 
-                 read_len: int = None, pair_end: bool = False, is_uniform: bool = True,
-                 probe_bed_file: str = None, cut_site_str: str = None, rrbs_model: str = None,
-                 insert_min: int = 100, insert_max: int = 1000, middle_cuts: bool = False,
-                 overwrite_db: bool = False):
-       
-        self.ref_dict = SeqIO.to_dict(SeqIO.parse(ref_fasta, "fasta"))              # save
-        self.score_dict = {contig_id: 0 for contig_id in self.ref_dict.keys()}      # used to calculate the #reads per chromosome if not is_uniform
-        self.eff_len_dict = {contig_id: 0 for contig_id in self.ref_dict.keys()}    # used to calculate the #reads from depth if not specified
-        self.chr_len_dict = {contig_id: len(self.ref_dict[contig_id]) for contig_id in self.ref_dict.keys()} # record the genome length
+    def __init__(self, ref_fasta: str = None, outdir: str = None, depth: float = None, num_reads: int = None, 
+                 read_len: int = None, pair_end: bool = False, insert_min: int = 100, insert_max: int = 1000, 
+                 cut_site_str: str = None, rrbs_model: str = None, middle_cuts: bool = False, 
+                 probe_bed_file: str = None, is_uniform: bool = True, overwrite_db: bool = False):
+
+        self.ref_dict = SeqIO.to_dict(SeqIO.parse(ref_fasta, "fasta"))              # can be saved
+        self.score_dict = {contig_id: 0 for contig_id in self.ref_dict.keys()}      # calculate #reads per contig if not is_uniform
+        self.eff_len_dict = {contig_id: 0 for contig_id in self.ref_dict.keys()}    # calculate #reads from depth if not specified
+        self.chr_len_dict = {contig_id: len(self.ref_dict[contig_id]) for contig_id in self.ref_dict.keys()} # record contig length
         self.is_uniform   = is_uniform
         
         if probe_bed_file:
@@ -45,8 +43,8 @@ class ParseGenome:
             self.insert_max     = insert_max
             self.middle_cuts    = middle_cuts
             self.overwrite_db   = overwrite_db
-            self.rrbs_model     = rrbs_model if rrbs_model else f'{os.path.dirname(get_htsim_path())}/data/model/rrbs.model'
-            self.bed_file       = f'{outdir}/rrbs.bed'
+            self.rrbs_model     = rrbs_model
+            self.bed_file       = f'{outdir}/tmp/rrbs.bed'
             self.new_bed()
             self.cut_genome()
         else:
@@ -59,6 +57,12 @@ class ParseGenome:
         self.num_reads  = num_reads if num_reads else int(sum(self.eff_len_dict.values())*depth/read_len/(1+int(pair_end)))
         norm_score_dict = {contig_id: self.score_dict[contig_id]/sum(self.score_dict.values()) for contig_id in self.ref_dict.keys()}
         self.count_dict = {contig_id: int(self.num_reads*norm_score_dict[contig_id]/(1+int(pair_end)))for contig_id in self.ref_dict.keys()}
+        # the above could have some rounding errors, 
+        num_reads_rest  = self.num_reads - sum(self.count_dict.values())
+        while num_reads_rest:
+            contig_list = list(self.count_dict.keys())
+            self.count_dict[contig_list[num_reads_rest % len(contig_list)]] += 1
+            num_reads_rest = num_reads_rest -1
 
 
     def parse_bed(self):
