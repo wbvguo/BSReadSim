@@ -58,10 +58,10 @@ class ParseGenome:
         norm_score_dict = {contig_id: self.score_dict[contig_id]/sum(self.score_dict.values()) for contig_id in self.ref_dict.keys()}
         self.count_dict = {contig_id: int(self.num_reads*norm_score_dict[contig_id]/(1+int(pair_end)))for contig_id in self.ref_dict.keys()}
         # the above could have some rounding errors, 
-        num_reads_rest  = self.num_reads - sum(self.count_dict.values())
+        num_reads_rest  = self.num_reads/(1+int(pair_end)) - sum(self.count_dict.values())
         while num_reads_rest:
             contig_list = list(self.count_dict.keys())
-            self.count_dict[contig_list[num_reads_rest % len(contig_list)]] += 1
+            self.count_dict[contig_list[int(num_reads_rest % len(contig_list))]] += 1
             num_reads_rest = num_reads_rest -1
 
 

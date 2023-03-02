@@ -4,6 +4,7 @@ import os
 import numpy as np
 import warnings
 
+
 class StreamReads:
     '''stream reads and write into fastq files'''
     def __init__(self, outdir: str = None, prefix: str = None, pair_end: bool = True,
@@ -40,29 +41,24 @@ class StreamReads:
             self.output.append(open(fastq_file, 'a'))
 
 
-    def output_reads(self, read_pair, read1_idx, pattern_idx):
-        # take read_pairs, read1_idx:{0,1}; pattern_idx:{0,1}
+    def output_reads(self, read_pair):
         read_lines = []
+        read_order = []
 
-        read_lines.append(self.gen_fastq_lines(read_pair[read1_idx], 1, read1_idx, pattern_idx))
-        if self.pair_end:
-            read_lines.append(self.gen_fastq_lines(read_pair[1-read1_idx], 2, read1_idx, 1- pattern_idx))
-        
-        self.write_file(read_lines)
+        for read_rec in read_pair:
+            read_lines.append(self.gen_fastq_lines(read_rec))
+            read_order.append(read_rec['read2'])
+
+        self.write_file(read_lines[read_order]) # might have problem for single end read_order = 1 but read_lines only have idx 0
 
 
-    def gen_fastq_lines(self, read_rec, pair_idx, read1_idx, pattern_idx):
-        id  = f'{read_rec["read_id"]}/{pair_idx}'
+    def gen_fastq_lines(self, read_rec):
+        id  = f'{read_rec["read_id"]}/{1+read_rec["read2"]}'
         seq = ''.join("ACGTN"[i] for i in read_rec['seq'])
-        
-        strand  = ["W","C"][read1_idx]
-        pattern = ["C2T", "G2A"][pattern_idx]
-        
         cmt = "+"
         for ix, ctx in enumerate(read_rec["ctx"].filled()):
             cmt += self.cigar_table[read_rec["cgr"][ix], ctx]
-        
-        cmt += f':{strand}_{pattern}'
+        cmt += f':{["W","C"][read_rec["strand"]]}_{["C2T", "G2A"][read_rec["conv"]]}'
         qual= ''.join([chr(i) for i in read_rec['qual']])
         return f'{id}\n{seq}\n{cmt}\n{qual}\n'
 
@@ -72,6 +68,7 @@ class StreamReads:
         with self.writeLock:
             for idx, line in enumerate(read_lines):
                 self.output[idx].write(line)
+                self.output[idx].flush()
 
 
     def close(self):
