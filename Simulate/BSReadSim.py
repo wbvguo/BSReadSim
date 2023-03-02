@@ -8,7 +8,7 @@ from tqdm import tqdm
 from scipy.stats import bernoulli
 from typing import Dict, Union, Tuple
 from threading import Lock
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from LockedIterator import LockedIterator
 from SetMethylation import SetMethylation
@@ -235,22 +235,32 @@ class BSReadSim:
             print(f'[INFO]: #reads/#read pairs for each contig', end=" ")
             print(self.count_dict)
 
-        with ThreadPoolExecutor(max_workers=self.n_threads) as executor:
-            for contig_id in self.count_dict.keys():
-                if self.count_dict[contig_id] == 0: # can be 0, need to test if reads < self.n_threads TODO
-                    continue
-                sim_cmd  = self.cmd_part + ['-c', contig_id] + ['-n', str(self.count_dict[contig_id])]
-                read_gen = LockedIterator(StreamHTSIM(sim_cmd=sim_cmd, pair_end=self.pair_end)) # only output 1 header for -c TODO
-                var_contig, sim_data= next(read_gen)                                    # the first element of generator is variants
-                self.current_contig = var_contig                                        # update the profiles
-                self.pos_map, self.meth_arr, _ = self.meth_db.load_contig(var_contig)   # [pos_map, meth_arr, status]
-                self.variant_profile= self.meth_set.set_var_meth(var_contig, sim_data)  # a dict, can be empty
-                
+        # with ThreadPoolExecutor(max_workers=self.n_threads) as executor:
+        for contig_id in self.count_dict.keys():
+            if self.count_dict[contig_id] == 0: # can be 0, need to test if reads < self.n_threads TODO
+                continue
+            sim_cmd  = self.cmd_part + ['-c', contig_id] + ['-n', str(self.count_dict[contig_id])]
+            read_gen = LockedIterator(StreamHTSIM(sim_cmd=sim_cmd, pair_end=self.pair_end)) # only output 1 header for -c TODO
+            var_contig, sim_data= next(read_gen)                                    # the first element of generator is variants
+            self.current_contig = var_contig                                        # update the profiles
+            self.pos_map, self.meth_arr, _ = self.meth_db.load_contig(var_contig)   # [pos_map, meth_arr, status]
+            self.variant_profile= self.meth_set.set_var_meth(var_contig, sim_data)  # a dict, can be empty
+            
+            with ThreadPoolExecutor(max_workers=self.n_threads) as executor:
                 if self.pair_end:                                                       # what if read_gen is empty at very beginning
                     job_arr = [executor.submit(self.process_read_pair, read_pair) for _, read_pair in read_gen]
                 else:
                     job_arr = [executor.submit(self.process_read, read_pair) for _, read_pair in read_gen]
 
+                for job in as_completed(job_arr):
+                    try:
+                        data = job.result()
+                    except Exception as exc:
+                        print('generated an exception: %s' % (exc))
+                    else:
+                        read_pair, read1_idx, pattern_idx = data
+                        self.fastq_out.output_reads(read_pair, read1_idx, pattern_idx)
+                
                 # if self.verbose:
                 #     for job in job_arr:
                 #         job.add_done_callback(self.progress_bar)
@@ -259,7 +269,6 @@ class BSReadSim:
         #     self.tqdm_pbar.close()
 
         self.fastq_out.close()
-        print(job_arr)
         print('Simulation Finished!\n')
 
 
@@ -291,10 +300,13 @@ class BSReadSim:
         # for directional library, read1 always C2T, strand can be either watson or crick unless strand captured
         read1_idx   = random.choice([0, 1]) if read_pair[0]['strand']<0 else read_pair[0]['strand']
         pattern_idx = random.choice([0, 1]) if self.undirectional else read1_idx
+        read_pair[1-read1_idx]['read2'] = 1
+        read_pair[0]['conv'] = pattern_idx
+        read_pair[1]['conv'] = pattern_idx
 
         # mask the context
-        self.mask_context(read_pair[0], pattern_idx)
-        self.mask_context(read_pair[1], pattern_idx)
+        self.mask_context(read_pair[0])
+        self.mask_context(read_pair[1])
         
         # retrive methy profile
         self.retrive_meth_db(read_pair[0])
@@ -311,20 +323,20 @@ class BSReadSim:
         self.rev_complement(read_pair)
 
         # introduce seq errors
-        self.add_seq_err(read_pair[read1_idx], pattern_idx)
-        self.add_seq_err(read_pair[1-read1_idx],1-pattern_idx)
+        self.add_seq_err(read_pair[0])
+        self.add_seq_err(read_pair[1])
         
         # introduce quality scores
         self.add_qual_score(read_pair[0])
         self.add_qual_score(read_pair[1])
 
         # output
-        self.fastq_out.output_reads(read_pair, read1_idx, pattern_idx)
+        self.fastq_out.output_reads(read_pair)
 
 
-    def mask_context(self, read_rec, read_sub):
+    def mask_context(self, read_rec):
         '''mask the context based on read substitution pattern (0 for C2T, 1 for G2A)'''
-        if read_sub:
+        if read_rec['conv'] :
             if self.collect_ch:
                 read_rec['ctx'] = np.ma.masked_less(read_rec['ctx'], 8)
             else:
@@ -439,10 +451,12 @@ class BSReadSim:
         for read_rec in read_pair:
             if read_rec['pair']:
                 read_rec['cgr'] = np.flip(read_rec['cgr'])
+                read_rec['ctx'] = np.flip(read_rec['ctx'])
                 read_rec['seq'] = 3 - np.flip(read_rec['seq'])
+                read_rec['conv']= 1 - read_rec['conv']
 
 
-    def add_seq_err(self, read_rec, pattern_idx):
+    def add_seq_err(self, read_rec):
         ''' introduce sequencing error'''
         if self.random_err:
             err_idx = np.where(bernoulli.rvs(self.err_rate, size = self.read_len))[0] #cannot np.squeeze
@@ -452,7 +466,7 @@ class BSReadSim:
                     base_err = np.random.choice(np.setdiff1d(np.array([0,1,2,3]), base_ori), size = 1)[0]
                     read_rec['seq'][idx] = base_err
                     read_rec['cgr'][idx] = 2
-                    read_rec['ctx'][idx] = 5 if (base_ori, base_err)==[(1,3), (2,0)][pattern_idx] else 6
+                    read_rec['ctx'][idx] = 5 if (base_ori, base_err)==[(1,3), (2,0)][read_rec['conv']] else 6
         else:
             # generate sequencing error based on a profile TODO:
             pass
@@ -462,10 +476,25 @@ class BSReadSim:
         '''add quality scores'''
         if self.qual_uniform:
             qual_arr = np.full(self.read_len, qual_num)
+            qual_arr[[-1,0][read_rec['read2']]] = qual_num -1
             read_rec['qual'] = qual_arr
         else:
             # generate quality score from a profile TODO:
             pass
+
+
+    def create_outdir(self):
+        '''create output directory'''
+        if not os.path.isdir(self.outdir):
+            os.makedirs(self.outdir, exist_ok=False)
+        if not os.path.isdir(self.pkl_dir):
+            os.makedirs(self.pkl_dir, exist_ok=False)
+        if not os.path.isdir(self.tmp_dir):
+            os.makedirs(self.tmp_dir, exist_ok=False)
+
+
+    def test(self, read_pair):
+        return read_pair
 
 
     # @property
@@ -478,14 +507,4 @@ class BSReadSim:
     #     if incre_amount > self.tqdm_count[2]:
     #         self.tqdm_pbar.update(incre_amount)
     #         self.tqdm_count[1] = self.tqdm_count[0]
-
-
-    def create_outdir(self):
-        '''create output directory'''
-        if not os.path.isdir(self.outdir):
-            os.makedirs(self.outdir, exist_ok=False)
-        if not os.path.isdir(self.pkl_dir):
-            os.makedirs(self.pkl_dir, exist_ok=False)
-        if not os.path.isdir(self.tmp_dir):
-            os.makedirs(self.tmp_dir, exist_ok=False)
 

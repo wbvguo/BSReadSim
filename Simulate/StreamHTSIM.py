@@ -124,10 +124,13 @@ class StreamHTSIM:
         ofs = np.fromstring(ofs, dtype=np.int8, sep = ',')
         ctx = np.ma.masked_equal(np.frombuffer(next(sim_iter).strip('\n').encode(), np.int8), 0)
         
-        return dict(read_id=read_id, pair=int(pair), strand = {-1:1, 0:-1, 1:0}[int(strd)],
+        return dict(read_id=read_id, pair=int(pair), read2=0, conv=0, strand = {-1:1, 0:-1, 1:0}[int(strd)],
                     flag_pos=int(flag_pos), flag_mut=int(flag_mut), flag_indel=int(flag_indel),
                     start=int(start), end=int(end), cover_pos=int(cover_pos),
                     n_sub=int(n_sub), n_indel=int(n_indel),
                     insert_size=int(insert_size), inner_dist=int(inner_dist),
                     cgr=cgr, seq=seq, ofs=ofs, ctx=ctx)
 
+# pair: positional order
+# read2 read2's index on the list
+# conv: conversion type 0 for C2T, 1 for G2A
