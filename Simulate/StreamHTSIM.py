@@ -131,6 +131,7 @@ class StreamHTSIM:
                     insert_size=int(insert_size), inner_dist=int(inner_dist),
                     cgr=cgr, seq=seq, ofs=ofs, ctx=ctx)
 
-# pair: positional order
-# read2 read2's index on the list
-# conv: conversion type 0 for C2T, 1 for G2A
+# pair: whether it will be reverse complementary
+# read2: whether it's read2: 0 for no, 1 for yes
+# conv: conversion type: 0 for C2T, 1 for G2A
+# strand: -1 for undetermined, 0 for watson, 1 for crick
