@@ -959,9 +959,15 @@ void sim_core(const char *fn, bool is_hap, bool is_uniform, uint64_t N, uint64_t
         // print out simulation information
         tot_pairs += n_pairs;
         fprintf(stderr, "[%s] contig '%s': simulate %ld reads...\n", __func__, ks->name.s, n_pairs);
-
+        
         // introduce mutations and print them to stdout
-        uint8_t site_flag_arr[ks->seq.l] = {0}; // record if a site is SNP/INDEL position (base can be either REF/ALT)        
+        uint8_t* site_flag_arr = (uint8_t*)malloc(ks->seq.l * sizeof(uint8_t));
+        if (site_flag_arr == NULL) {fprintf(stderr, "ERROR: could not allocate memory\n");exit(EXIT_FAILURE);} else {
+            memset(site_flag_arr, 0, ks->seq.l * sizeof(uint8_t));
+            // Initialize array as 0, record if a site is SNP/INDEL position (base can be either REF/ALT)
+            // uint8_t site_flag_arr[ks->seq.l] = {0}; // only work when length is small, otherwise overflow
+        }
+
         fprintf(stdout, "Contig Variant Start\n");
         if(bool_vcf_set){
             sim_mut_vcf(ks, vcf_file, rseq, rseq+1, site_flag_arr);
@@ -972,7 +978,6 @@ void sim_core(const char *fn, bool is_hap, bool is_uniform, uint64_t N, uint64_t
         }
         if(output_fmt){sim_print_mutref_0base(ks->name.s, ks, rseq, rseq+1);}else{sim_print_mutref(ks->name.s, ks, rseq, rseq+1);}
         fprintf(stdout, "Contig Variant End\n");
-
 
         fragment tmp_frag;
         for (ii = 0; ii != n_pairs; ++ii) { // the core loop
@@ -1214,6 +1219,7 @@ void sim_core(const char *fn, bool is_hap, bool is_uniform, uint64_t N, uint64_t
             tot_err   += (int)(n_err[0]  + n_err[1] > 0);
         }
         free(rseq[0].s); free(rseq[1].s);
+        free(site_flag_arr);
     }
 
     fprintf(stderr, "[%s] Generated %lu read pairs, with %lu contain SNP, %lu contain INDEL", __func__, tot_pairs, tot_sub, tot_indel);

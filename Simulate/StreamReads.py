@@ -1,5 +1,5 @@
 import subprocess
-import threading
+from threading import Lock
 import os
 import numpy as np
 import warnings
@@ -7,14 +7,14 @@ import warnings
 class StreamReads:
     '''stream reads and write into fastq files'''
     def __init__(self, outdir: str = None, prefix: str = None, pair_end: bool = True,
-                 shuffle: bool = True, ref_fasta: str = None, gzip: bool = True):
+                 write_lock: Lock = None, shuffle: bool = False, ref_fasta: str = None, gzip: bool = False):
         self.outdir   = outdir
         self.prefix   = prefix
         self.pair_end = pair_end
         self.shuffle  = shuffle
         self.ref_fasta= ref_fasta
         self.gzip     = gzip
-        self.writeLock= threading.Lock()
+        self.writeLock= write_lock
         self.create_fastq()
         
         # column context, row cigar
@@ -23,7 +23,6 @@ class StreamReads:
                                      ['-', '-', '-', '-',  '-', 'e', 'E', '-',  '-', '-', '-', '-',  '-', 'e', 'E', '-',  '-'], # seq err
                                      ['i', 'i', 'I', 'i',  'I', '-', '-', 'i',  'I', 'i', 'I', 'i',  'I', '-', '-', 'i',  'I'], # insert
                                      ['-', '#', '-', '#',  '-', '-', '-', '#',  '-', '#', '-', '#',  '-', '-', '-', '#',  '-']])# convert failed
-        self.qual_str    = '''!"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~'''
 
 
     def create_fastq(self):
@@ -44,30 +43,27 @@ class StreamReads:
     def output_reads(self, read_pair, read1_idx, pattern_idx):
         # take read_pairs, read1_idx:{0,1}; pattern_idx:{0,1}
         read_lines = []
-        
-        read_rec = read_pair[read1_idx]
-        read_lines.append(self.gen_fastq_lines(read_rec, 1, ))
-        
+
+        read_lines.append(self.gen_fastq_lines(read_pair[read1_idx], 1, read1_idx, pattern_idx))
         if self.pair_end:
-            read_rec = read_pair[1-read1_idx]
-            read_lines.append(self.gen_fastq_lines(read_rec, 2))
+            read_lines.append(self.gen_fastq_lines(read_pair[1-read1_idx], 2, read1_idx, 1- pattern_idx))
         
         self.write_file(read_lines)
 
 
     def gen_fastq_lines(self, read_rec, pair_idx, read1_idx, pattern_idx):
         id  = f'{read_rec["read_id"]}/{pair_idx}'
-        seq = ''.join("ACGT"[i] for i in read_rec['seq'])
+        seq = ''.join("ACGTN"[i] for i in read_rec['seq'])
         
         strand  = ["W","C"][read1_idx]
         pattern = ["C2T", "G2A"][pattern_idx]
         
         cmt = "+"
-        for ix, ctx in enumerate(read_rec["ctx"]):
+        for ix, ctx in enumerate(read_rec["ctx"].filled()):
             cmt += self.cigar_table[read_rec["cgr"][ix], ctx]
         
-        cmt += f':{strand}{pattern}'
-        qual= ''.join([self.qual_str[i] for i in read_rec['qual']])
+        cmt += f':{strand}_{pattern}'
+        qual= ''.join([chr(i) for i in read_rec['qual']])
         return f'{id}\n{seq}\n{cmt}\n{qual}\n'
 
 

@@ -72,7 +72,7 @@ class BSReadSim:
     :param float depth          : average sequencing depth for each contigs [20]
     :param float num_reads      : total number of reads to simulate [None]
     :param bool  random_err     : whether to generate sequencing error randomly [True]
-    :param float seq_err        : sequencing error rate for random error generation[0.005]
+    :param float err_rate       : sequencing error rate for random error generation[0.005]
     :param float propN_cutoff   : reference segments where the proportion of ambiguous bases, - or N,
                                   greater than threshold will be skipped [0.05]
     :param bool  site_dependency: whether to consider site-site dependency on the read-level methylation [False]
@@ -111,7 +111,7 @@ class BSReadSim:
                  read_len: int = 100, depth: int = 20, num_reads: int = None,                       # reads setting
                  propN_cutoff: float = 0.05, conversion_rate: float = 0.998,                        
                  undirectional: bool = False, pair_end: bool = True,                                # sequencing protocol
-                 random_err= True, seq_err: float = 0.005,                                          # sequencing error, can from a profile TODO:
+                 random_err= True, err_rate: float = 0.005, error_model: str = None,                # sequencing error TODO:
                  qual_uniform: bool =True, qual_model: str = None,                                  # quality model, TODO:
                  is_uniform: bool = True, gc_bias_file: str = None,                                 # coverage model, gc_bias_file TODO:
                  site_dependency: bool = False, site_model: str = None,                             # site dependency model TODO:
@@ -135,7 +135,8 @@ class BSReadSim:
         self.prefix         = prefix
         self.seed           = None if seed < 0 else seed
         self.n_threads      = n_threads
-        self.countLock      = Lock()
+        #self.countLock      = Lock()
+        self.writeLock      = Lock()
         self.verbose        = verbose
 
         # sequencing settings
@@ -143,8 +144,8 @@ class BSReadSim:
         self.pair_end       = pair_end
         self.undirectional  = undirectional
         self.conversion_rate= conversion_rate
-        self.random_err     = random_err
-        self.seq_err        = seq_err
+        self.random_err     = False if error_model else random_err
+        self.err_rate       = err_rate
         self.collect_ch     = collect_ch
         self.asm_sim        = True if asm_file else False
         self.site_dependency= True if site_model else site_dependency
@@ -158,14 +159,16 @@ class BSReadSim:
 
         if self.is_uniform:
             self.gc_bias_file=None
+            self.error_model= None
+            self.qual_model = None
             self.rrbs_model = None
             self.site_model = None
-            self.qual_model = None
         else:
-            self.gc_bias_file=gc_bias_file if gc_bias_file else f'{self.tool_path}/data/model/gc_bias'
+            self.gc_bias_file=gc_bias_file if gc_bias_file else f'{self.tool_path}/data/model/gc_bias.txt'
+            self.error_model= error_model if error_model else f'{self.tool_path}/data/model/error.pickle'
+            self.qual_model = qual_model if qual_model else f'{self.tool_path}/data/model/qual.pickle'
             self.rrbs_model = rrbs_model if rrbs_model else f'{self.tool_path}/data/model/rrbs.pickle'
             self.site_model = site_model if site_model else f'{self.tool_path}/data/model/site.pickle'
-            self.qual_model = qual_model if qual_model else f'{self.tool_path}/data/model/qual.pickle'
 
         # parse genome
         print('Initiating genome...')
@@ -195,6 +198,7 @@ class BSReadSim:
 
         # prepare output
         self.fastq_out  = StreamReads(outdir=outdir, prefix=prefix, pair_end=pair_end, 
+                                      write_lock = self.writeLock,
                                       shuffle=shuffle, ref_fasta=self.ref_fasta, gzip=gzip)
 
         # prepare htsim command
@@ -242,11 +246,6 @@ class BSReadSim:
                 self.pos_map, self.meth_arr, _ = self.meth_db.load_contig(var_contig)   # [pos_map, meth_arr, status]
                 self.variant_profile= self.meth_set.set_var_meth(var_contig, sim_data)  # a dict, can be empty
                 
-                for _, read_pair in read_gen:
-                    print(read_pair)
-                    self.process_read_pair(read_pair)
-                    break
-                
                 if self.pair_end:                                                       # what if read_gen is empty at very beginning
                     job_arr = [executor.submit(self.process_read_pair, read_pair) for _, read_pair in read_gen]
                 else:
@@ -260,6 +259,7 @@ class BSReadSim:
         #     self.tqdm_pbar.close()
 
         self.fastq_out.close()
+        print(job_arr)
         print('Simulation Finished!\n')
 
 
@@ -273,7 +273,7 @@ class BSReadSim:
         self.set_context_state(read_pair[read1_idx])
         self.treat_bisulfite(read_pair[read1_idx])
         self.rev_complement(read_pair)
-        self.add_seq_err(read_pair[read1_idx])
+        self.add_seq_err(read_pair[read1_idx], pattern_idx)
         self.add_qual_score(read_pair[read1_idx])
         self.fastq_out.output_reads(read_pair, read1_idx, pattern_idx)
 
@@ -313,6 +313,7 @@ class BSReadSim:
         # introduce seq errors
         self.add_seq_err(read_pair[read1_idx], pattern_idx)
         self.add_seq_err(read_pair[1-read1_idx],1-pattern_idx)
+        
         # introduce quality scores
         self.add_qual_score(read_pair[0])
         self.add_qual_score(read_pair[1])
@@ -338,11 +339,11 @@ class BSReadSim:
     def retrive_meth_db(self, read_rec):
         '''retrive methylation levels from meth_db, append meth and pos to read_rec'''
         read_meth = np.zeros(self.read_len)
+        read_pos  = read_rec['start'] + np.arange(self.read_len)
         site_flag = np.logical_not(read_rec['ctx'].mask)            # unmasked sites
 
         if np.any(site_flag):                                       # contain methylable bases
             arr_idx  = 2
-            read_pos = read_rec['start'] + np.arange(self.read_len)
 
             if read_rec['flag_pos']:                                # covers mutation position
                 if self.asm_sim:
@@ -371,11 +372,14 @@ class BSReadSim:
         if var_type == 1:           # SNP
             meth_val = [self.variant_profile[pos][0] for pos in pos_arr]
         elif var_type== 3:          # insertion sites will have the same coordinate
-            pos_uniq, pos_count = np.unique(pos_arr, return_counts=True)
-            insert_pos= pos_uniq[pos_count > 1]
+            insert_pos, pos_count = np.unique(pos_arr, return_counts=True) # uniq_pos, pos_count
             meth_val  = []
-            for pos in insert_pos:
-                meth_val += list(self.variant_profile[pos][0])
+            for ix, pos in enumerate(insert_pos):
+                try:
+                    insert_meth = list(self.variant_profile[pos][0][:pos_count[ix]])
+                except:
+                    insert_meth = [0]*pos_count[ix]
+                meth_val += insert_meth
         else:                       # match
             meth_val  = list(self.meth_arr[self.pos_map[pos_arr], arr_idx])
         return meth_val
@@ -396,16 +400,16 @@ class BSReadSim:
                 # it's okay to have idx=0, or np.where returns null
                 comb_meth = np.concatenate((read_rec[0]['meth'][:idx],read_rec[1]['meth']), axis=0)
                 comb_state= self.fetch_meth_state(comb_meth)
-                read_rec[0]['ctx'][np.squeeze(np.where(comb_state[:self.read_len]))] +=1
-                read_rec[1]['ctx'][np.squeeze(np.where(comb_state[-self.read_len:]))]+=1
+                read_rec[0]['ctx'][np.where(comb_state[:self.read_len])[0]] +=1
+                read_rec[1]['ctx'][np.where(comb_state[-self.read_len:])[0]]+=1
             else:
                 read1_state = self.fetch_meth_state(read_rec[0]['meth'])
-                read_rec[0]['ctx'][np.squeeze(np.where(read1_state))] += 1
+                read_rec[0]['ctx'][np.where(read1_state)[0]] += 1
                 read2_state = self.fetch_meth_state(read_rec[1]['meth'])
-                read_rec[1]['ctx'][np.squeeze(np.where(read2_state))] += 1
+                read_rec[1]['ctx'][np.where(read2_state)[0]] += 1
         else:
             read_state = self.fetch_meth_state(read_rec['meth'])
-            read_rec['ctx'][np.squeeze(np.where(read_state))] += 1
+            read_rec['ctx'][np.where(read_state)[0]] += 1
 
 
     def fetch_meth_state(self, read_meth):
@@ -414,16 +418,16 @@ class BSReadSim:
             # generate methylation pattern according to read_meth and distance
             pass
         else:
-            meth_states = np.zeros(len(read_meth))
-            nonzero_idx = np.squeeze(np.where(read_meth))
-            meth_states[nonzero_idx] = bernoulli.rvs(read_meth[nonzero_idx], size = len(nonzero_idx))
+            meth_states = np.zeros(read_meth.size)
+            nonzero_idx = np.where(read_meth)[0]    # this returns a tuple
+            meth_states[nonzero_idx] = bernoulli.rvs(read_meth[nonzero_idx], size = nonzero_idx.size)
         return meth_states
 
 
     def treat_bisulfite(self, read_rec):
         """ bisulfite conversion """
-        unmeth_idx = np.squeeze(np.where(np.bitwise_and(read_rec['ctx'], 0x1)==1)) # behave strange without ==1
-        conv_states= bernoulli.rvs(self.conversion_rate, size=len(unmeth_idx))
+        unmeth_idx = np.where(np.bitwise_and(read_rec['ctx'], 0x1)==1)[0] # behave strange without ==1
+        conv_states= bernoulli.rvs(self.conversion_rate, size=unmeth_idx.size)
         conv_idx   = unmeth_idx[conv_states == 1]   # successfully converted base index
         read_rec['seq'][conv_idx] = np.bitwise_and(read_rec['seq'][conv_idx] + 2, 0x3) # C2T, G2A
         unconv_idx = unmeth_idx[conv_states == 0]   # remains the same base index
@@ -441,12 +445,11 @@ class BSReadSim:
     def add_seq_err(self, read_rec, pattern_idx):
         ''' introduce sequencing error'''
         if self.random_err:
-            err_idx =np.where(bernoulli.rvs(self.seq_err, size = self.read_len))
+            err_idx = np.where(bernoulli.rvs(self.err_rate, size = self.read_len))[0] #cannot np.squeeze
             if np.any(err_idx):
-                base_set = {0,1,2,3}
                 for idx in err_idx:
                     base_ori = read_rec['seq'][idx]
-                    base_err = np.random.choice(base_set.difference(base_ori), size = 1)
+                    base_err = np.random.choice(np.setdiff1d(np.array([0,1,2,3]), base_ori), size = 1)[0]
                     read_rec['seq'][idx] = base_err
                     read_rec['cgr'][idx] = 2
                     read_rec['ctx'][idx] = 5 if (base_ori, base_err)==[(1,3), (2,0)][pattern_idx] else 6
@@ -458,7 +461,7 @@ class BSReadSim:
     def add_qual_score(self, read_rec, qual_num=56):
         '''add quality scores'''
         if self.qual_uniform:
-            qual_arr = np.full(self.read_len, chr(qual_num))
+            qual_arr = np.full(self.read_len, qual_num)
             read_rec['qual'] = qual_arr
         else:
             # generate quality score from a profile TODO:
