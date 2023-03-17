@@ -19,14 +19,12 @@ class StreamHTSIM:
     def __iter__(self):
         htsim = subprocess.Popen(self.sim_cmd, stdout=subprocess.PIPE, universal_newlines=True)
         sim_iter = iter(htsim.stdout.readline, b'')
-
         line  = self.get_line(sim_iter) # line is None when EOF
         while line:
             # collect all variant lines on the contig, after that sim_iter points to read lines
             if line == "Contig Variant Start":
                 variant_contig, variant_dict = self.collect_variants(sim_iter)
                 yield variant_contig, variant_dict
-
             # collect read pairs
             for collect_flag, read_pair in self.collect_reads(sim_iter):
                 if collect_flag: # {1: collect_reads, 0: swith to collect_vars or EOF}
@@ -40,12 +38,12 @@ class StreamHTSIM:
         '''collect variant lines from stdout'''
         variant_dict = {}
         variant_info = {}
-
+        
         while True:
             line = self.get_line(sim_iter)
             if line == 'Contig Variant End':
                 return variant_info['chrom'], variant_dict
-
+            
             variant_info = self.process_variant_line(line)
             if variant_info['pos']:
                 assert variant_info['pos'] not in variant_dict
@@ -55,7 +53,7 @@ class StreamHTSIM:
     def collect_reads(self, sim_iter):
         '''collect read lines from stdout'''
         skip_flag = not self.pair_end
-
+        
         while True:
             line  = self.get_line(sim_iter)
             if not line: # EOF
@@ -84,7 +82,7 @@ class StreamHTSIM:
     def process_variant_line(line: str) -> Dict:
         '''parse variant lines'''
         line_split = line.split('\t')
-
+        
         try:
             chrom, pos, ref, alt, heter_flag = line_split
         except ValueError:
@@ -111,7 +109,7 @@ class StreamHTSIM:
             next(sim_iter)
             next(sim_iter)
             return None
-
+        
         if not line:
             line = next(sim_iter).strip('\n')
         # header, seq, comment process

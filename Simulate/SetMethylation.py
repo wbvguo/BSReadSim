@@ -26,10 +26,10 @@ class SetMethylation:
     :param int  seed        : seed for random methylation generation
     :param bool verbose     : whether to output processing details [True]
     :rtype None
-
+    
+    :var np.array pos_map   : 1d numpy array (same length as contig), value is the row index of meth_arr
     :var np.array meth_arr  : n x 5 numpy array: context, flag, meth_avg, meth_ref, meth_alt
                               - flag: 0 from dist or pool, 1 from CGmap, 2 from ASM, -1 unintialized
-    :var np.array pos_map   : 1d numpy array (same length as contig), value is the row index of meth_arr
     make sure all input coordinates is 0-based
     '''
 
@@ -39,7 +39,7 @@ class SetMethylation:
                  asm_file: str = None, update_boundary: bool = False,
                  collect_ch: bool = True, overwrite_db: bool = False,
                  seed: int = None, verbose: bool = False):
-
+        
         self.ref_dict    = ref_dict
         self.outdir      = outdir
         self.meth_db_path= meth_db_path
@@ -50,25 +50,26 @@ class SetMethylation:
         self.asm_sim     = True if asm_file else False
         self.collect_ch  = collect_ch
         self.overwrite_db= overwrite_db
-        self.seed        = seed
+        self.seed        = None if seed and seed < 0 else seed
         self.verbose     = verbose
         self.meth_arr    = None
         self.pos_map     = None
         self.contig_flag = True
-
+        self.arr_max_size= [0, 0] # pos_map and meth_arr
+        
         self.update_boundary   = update_boundary and not self.asm_sim
         self.context_dict      = {1:'CG', 3:'CHG', 7:'CHH', 9:'CG', 11:'CHG', 15:'CHH'}
         self.base_context_dict = {'C': {'CG':1, 'CHG':3, 'CHH':7}, 'G': {'CG':9, 'CHG':11, 'CHH':15}}
         self.base_context_table= {'C': np.array([[7,3],  [1,1]]),  'G': np.array([[15,11],[9,9]])}
-
+        
         # check existence
         if not outdir:
             raise ValueError('Please specify the output directory!')
         if self.asm_sim and not os.path.exists(asm_file):
             raise ValueError('Please specify allelic specific methylation file correctly for ASM simulation!')
-
         
-        self.meth_db = StreamMethDB(outdir=self.outdir, overwrite_db=self.overwrite_db, ref_dict=self.ref_dict)
+        
+        self.meth_db = StreamMethDB(outdir=self.outdir, overwrite_db=self.overwrite_db)
         self.meth_db.check_outdir()
         
         # initiate
@@ -76,19 +77,21 @@ class SetMethylation:
             self.check_meth_db()
         else:
             self.create_meth_db()
-
+        
         if self.contig_flag and (not self.cgmap_pool) and self.cgmap_file:
-            warnings.warn(f'No Contig in the CGmap file can be found in the reference fasta, please check!')
+            warnings.warn('No Contig in the CGmap file can be found in the reference fasta, please check!')
 
 
     def check_meth_db(self):
-        '''if use previous meth_db object, check if they align'''
+        '''if use previous meth_db object, check if it's consistent with reference fasta'''
         contig_id_list = self.ref_dict.keys()
         for contig_id in contig_id_list:
-            contig_profile = self.meth_db.load_contig(contig_id, is_variant=False)
+            pos_map, meth_arr, _ = self.meth_db.load_contig(contig_id)
+            self.arr_max_size[0] = max(pos_map.shape[0], self.arr_max_size[0])
+            self.arr_max_size[1] = max(meth_arr.shape[0], self.arr_max_size[1])
+            
             self.init_meth_db(contig_id)
-            ref_pos_set = set(np.where(self.pos_map!=4294967295)[0])
-            not_comp_sites = ref_pos_set.difference(set(np.where(contig_profile[0]!=4294967295)[0]))
+            not_comp_sites = np.setdiff1d(np.where(self.pos_map!=4294967295)[0], np.where(pos_map!=4294967295)[0])
             if len(not_comp_sites):
                 warnings.warn(f'{contig_id}: sites in the meth_db is not a subset of the reference')
 
@@ -101,6 +104,8 @@ class SetMethylation:
             self.fill_cgmap(contig_id)
             self.fill_asm(contig_id)
             self.fill_dist(contig_id)
+            self.arr_max_size[0] = max(self.pos_map.shape[0], self.arr_max_size[0])
+            self.arr_max_size[1] = max(self.meth_arr.shape[0], self.arr_max_size[1])
             if self.verbose:
                 print(f"Processed {self.meth_arr.shape[0]} sites from contig {contig_id}")
             # the 3rd item: 1 for boundary updated by variants, 0 for not updated
@@ -113,16 +118,16 @@ class SetMethylation:
         seq = self.ref_dict[contig_id].seq.upper()
         seq_len = len(seq)
         self.pos_map  = np.full(seq_len, -1, dtype=np.uint32) # support max value 4294967295
-
+        
         if self.verbose:
             print(f"\n[Initiating meth_db] for {contig_id}...")
         if self.collect_ch:
             count_c = seq.count("C")
             count_g = seq.count("G")
             arr_size= count_c + count_g
-            self.meth_arr = np.full((arr_size, 5), fill_value=np.NaN, dtype=np.float16)
+            self.meth_arr = np.full((arr_size, 5), fill_value=np.NaN, dtype=np.float32) #check if float16 works
             self.meth_arr[:,1] = -1 # flag, record uninitialized sites
-
+            
             for pos, base in enumerate(seq):
                 if base not in {"C", "G"}:
                     continue
@@ -139,9 +144,9 @@ class SetMethylation:
         else:
             count_c = count_g = seq.count("CG")
             arr_size= count_c + count_g
-            self.meth_arr= np.full((arr_size, 5), fill_value=np.NaN, dtype=np.float16)
+            self.meth_arr= np.full((arr_size, 5), fill_value=np.NaN, dtype=np.float32)
             self.meth_arr[:,1]= -1
-
+            
             for cg_match in re.finditer("CG", str(seq)):
                 pos = cg_match.start()
                 self.meth_arr[idx,  0] = [pos,  1]
@@ -155,7 +160,7 @@ class SetMethylation:
         '''fill sites in the cgmap file'''
         if not self.cgmap_file:
             return None
-
+        
         if self.verbose:
             print(f"Filling CGmap for {contig_id}{' (pool)' if self.cgmap_pool else ''}...", end=" ")
         if self.cgmap_pool:
@@ -163,7 +168,7 @@ class SetMethylation:
             idx_cg  = np.where(np.bitwise_and(self.meth_arr[:,0].astype(np.int16), 0x7)==1)
             np.random.seed(self.seed)
             self.meth_arr[idx_cg, 2] = np.random.choice(meth_level_pool[0], size=len(idx_cg))
-
+            
             if self.collect_ch:
                 idx_chg = np.where(np.bitwise_and(self.meth_arr[:,0].astype(np.int16), 0x7)==3)
                 idx_chh = np.where(np.bitwise_and(self.meth_arr[:,0].astype(np.int16), 0x7)==7)
@@ -189,7 +194,7 @@ class SetMethylation:
                     num_404_pos +=1
                     continue
                 self.meth_arr[arr_idx, 1:3] = [1, float(meth_level)]
-
+                
         self.contig_flag = self.contig_flag and (num_cgmap_pos == 0)
         if self.verbose:
             if num_cgmap_pos:
@@ -209,7 +214,7 @@ class SetMethylation:
         '''fill the allelic specific sites'''
         if not self.asm_sim:
             return None
-
+        
         if self.verbose:
             print(f"Filling ASM for {contig_id}...", end=" ")
         num_asm_pos, num_404_pos = [0,0] # counting
@@ -228,7 +233,7 @@ class SetMethylation:
                     num_404_pos +=1
                     continue
                 self.meth_arr[arr_idx, 1:5] = [2, tot_meth, ref_meth, alt_meth]
-
+                
         if self.verbose:
             if num_asm_pos:
                 ratio_404 = round(num_404_pos / num_asm_pos, 4)
@@ -243,35 +248,33 @@ class SetMethylation:
 
 
     def fill_dist(self, contig_id):
-        '''fill in from beta distribution'''
-        if self.cgmap_pool:
-            return None
-
-        if self.verbose:
+        '''fill in from beta distribution, and deal with NA in for REF/ALT meth'''
+        if self.verbose and not self.cgmap_pool:
             print(f"Filling with beta distribution for {contig_id}...")
         idx_nan = np.isnan(self.meth_arr[:,2]) # hold for each element
         idx_ctx = np.bitwise_and(self.meth_arr[:,0].astype(np.int16), 0x7) # hold for each element
         idx_nan_cg  = np.where((idx_ctx == 1) & idx_nan)[0] # hold for index
-
+        
+        self.meth_arr[idx_nan, 1] = 0
         num_idx_nan_cg = len(idx_nan_cg)
-
+        
         if num_idx_nan_cg:
             self.meth_arr[idx_nan_cg, 2] = self.simu_beta_dist(context="CG", size=num_idx_nan_cg)
-
+        
         if self.collect_ch:
             idx_nan_chg = np.where((idx_ctx == 3) & idx_nan)[0]
             idx_nan_chh = np.where((idx_ctx == 7) & idx_nan)[0]
-
+            
             num_idx_nan_chg = len(idx_nan_chg)
             num_idx_nan_chh = len(idx_nan_chh)
             if num_idx_nan_chg:
                 self.meth_arr[idx_nan_chg, 2]= self.simu_beta_dist(context="CHG", size=num_idx_nan_chg)
             if num_idx_nan_chh:
                 self.meth_arr[idx_nan_chh, 2]= self.simu_beta_dist(context="CHH", size=num_idx_nan_chh)
-
-        self.meth_arr[idx_nan, 1] = 0
-        self.meth_arr[idx_nan, 3] = self.meth_arr[idx_nan, 2]
-        self.meth_arr[idx_nan, 4] = self.meth_arr[idx_nan, 2]
+        
+        idx_nan_asm = np.isnan(self.meth_arr[:,3])
+        self.meth_arr[idx_nan_asm, 3] = self.meth_arr[idx_nan_asm, 2]
+        self.meth_arr[idx_nan_asm, 4] = self.meth_arr[idx_nan_asm, 2]
 
 
     def get_cgmap_pool(self, contig_id):
@@ -285,14 +288,17 @@ class SetMethylation:
 
 
     def set_var_meth(self, contig_id, sim_data, update_boundary=True) -> Dict[str, List]:
-        '''set random methylation due to variants are random, update the meth_arr on the boundary'''
+        '''
+        set random methylation due to variants are random
+        update the meth_arr on the boundary if update_boundary is true
+        '''
         if not sim_data: # can have no variant
             return None
         self.update_boundary = update_boundary
         if update_boundary:
             self.pos_map, self.meth_arr, _ = self.meth_db.load_contig(contig_id)
         var_meth_dict = {}
-
+        
         seq = self.ref_dict[contig_id].seq.upper()
         seq_len = len(seq)
         for pos, variant_info in sim_data.items():
@@ -309,8 +315,8 @@ class SetMethylation:
                 local_seq = f'{seq[(pos-2):(pos)]}{variant_info["alt"]}{seq[(pos):(pos+2)]}'
                 pos_list  = [pos-2, pos-1, pos, pos+1]
                 self.handle_boundary(pos_list, local_seq)
-
-                ins_meth_arr = np.zeros(offset, dtype=np.float16)
+                
+                ins_meth_arr = np.zeros(offset, dtype=np.float32)
                 ins_ctx_arr  = np.zeros(offset, dtype=np.int16)
                 for ins_idx, base in enumerate(variant_info['alt']):
                     if base not in {'C', 'G'}:
@@ -321,7 +327,7 @@ class SetMethylation:
                     context = self.get_cg_context(base, base_d1, base_d2)
                     ins_meth_arr[ins_idx]= self.simu_beta_dist(context=context)[0] # base,3,context
                     ins_ctx_arr[ins_idx] = context
-
+                
                 if np.any(ins_ctx_arr):
                     variant_info['meth'] = ins_meth_arr
                     variant_info['ctx']  = ins_ctx_arr
@@ -331,7 +337,7 @@ class SetMethylation:
                 local_seq = f'{seq[(pos-2):pos]}{variant_info["alt"]}{seq[(pos+1):(pos+3)]}'
                 pos_list  = [pos-2, pos-1, pos+1, pos+2]
                 self.handle_boundary(pos_list, local_seq)
-
+                
                 if base not in {'C', 'G'}:
                     continue
                 updown  = 1 if base == "C" else -1
@@ -374,7 +380,7 @@ class SetMethylation:
         ctx_idx_dict = {'CG':0, 'CHG':1, 'CHH':2}
         idx_ctx_dict = {v: k for k, v in ctx_idx_dict.items()}
         meth_level_pool = self.get_cgmap_pool(contig_id=None)
-
+        
         if context:
             idx = ctx_idx_dict[context]
             meth_list = meth_level_pool[idx]
@@ -394,7 +400,7 @@ class SetMethylation:
             context = self.context_dict[context]
         return beta.rvs(a=self.beta_params[context][0],
                         b=self.beta_params[context][1],
-                        size=size, random_state=self.seed).astype(np.float16)
+                        size=size, random_state=self.seed).astype(np.float32)
 
 
     def get_cg_context(self, base, base_d1, base_d2):
