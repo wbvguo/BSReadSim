@@ -7,8 +7,7 @@ class LockedIterator:
     '''
     def __init__(self, it):
         self.lock = threading.Lock()
-        #self.it = iter(it)
-        self.it = it
+        self.it = iter(it) # otherwise it's not iterable
 
     def __iter__(self): 
         return self
@@ -16,4 +15,3 @@ class LockedIterator:
     def __next__(self):
         with self.lock:
             return next(self.it)
-

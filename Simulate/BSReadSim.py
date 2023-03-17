@@ -8,7 +8,7 @@ from tqdm import tqdm
 from scipy.stats import bernoulli
 from typing import Dict, Union, Tuple
 from threading import Lock
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 
 from LockedIterator import LockedIterator
 from SetMethylation import SetMethylation
@@ -246,7 +246,7 @@ class BSReadSim:
             self.pos_map, self.meth_arr, _ = self.meth_db.load_contig(var_contig)   # [pos_map, meth_arr, status]
             self.variant_profile= self.meth_set.set_var_meth(var_contig, sim_data)  # a dict, can be empty
             
-            with ThreadPoolExecutor(max_workers=self.n_threads) as executor:
+            with ProcessPoolExecutor(max_workers=self.n_threads) as executor:
                 if self.pair_end:                                                       # what if read_gen is empty at very beginning
                     job_arr = [executor.submit(self.process_read_pair, read_pair) for _, read_pair in read_gen]
                 else:
@@ -258,8 +258,7 @@ class BSReadSim:
                     except Exception as exc:
                         print('generated an exception: %s' % (exc))
                     else:
-                        read_pair, read1_idx, pattern_idx = data
-                        self.fastq_out.output_reads(read_pair, read1_idx, pattern_idx)
+                        self.fastq_out.output_reads(data)
                 
                 # if self.verbose:
                 #     for job in job_arr:
@@ -284,7 +283,7 @@ class BSReadSim:
         self.rev_complement(read_pair)
         self.add_seq_err(read_pair[read1_idx], pattern_idx)
         self.add_qual_score(read_pair[read1_idx])
-        self.fastq_out.output_reads(read_pair, read1_idx, pattern_idx)
+        return read_pair
 
 
     def process_read_pair(self, read_pair):
@@ -332,9 +331,8 @@ class BSReadSim:
         # introduce quality scores
         self.add_qual_score(read_pair[0])
         self.add_qual_score(read_pair[1])
-
-        # output
-        self.fastq_out.output_reads(read_pair)
+        
+        return read_pair
 
 
     def mask_context(self, read_rec):
@@ -396,7 +394,7 @@ class BSReadSim:
                     insert_meth = [0]*pos_count[ix]
                 meth_val += insert_meth
         else:                       # match
-            meth_val  = list(self.meth_arr[self.pos_map[pos_arr], arr_idx])
+            meth_val  = list(self.meth_arr[self.pos_map[pos_arr], arr_idx]) # add a try except
         return meth_val
 
 

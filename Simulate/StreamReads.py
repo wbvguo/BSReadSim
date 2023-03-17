@@ -1,29 +1,31 @@
-import subprocess
-from threading import Lock
 import os
-import numpy as np
 import warnings
+import subprocess
+import numpy as np
 
+from threading import Lock
 
 class StreamReads:
     '''stream reads and write into fastq files'''
     def __init__(self, outdir: str = None, prefix: str = None, pair_end: bool = True,
-                 write_lock: Lock = None, shuffle: bool = False, ref_fasta: str = None, gzip: bool = False):
-        self.outdir   = outdir
-        self.prefix   = prefix
-        self.pair_end = pair_end
-        self.shuffle  = shuffle
-        self.ref_fasta= ref_fasta
-        self.gzip     = gzip
-        self.writeLock= write_lock
+                 shuffle: bool = False, seed_file: str = None, gzip: bool = False,
+                 write_lock: Lock = None):
+        self.outdir     = outdir
+        self.prefix     = prefix
+        self.pair_end   = pair_end
+        self.shuffle    = shuffle
+        self.seed_file  = seed_file
+        self.gzip       = gzip
         self.create_fastq()
         
+        self.writeLock= write_lock
+        
         # column context, row cigar
-        self.cigar_table = np.array([['M', 'c', 'C', 'b',  'B', '-', '-', 'a',  'A', 'c', 'C', 'b',  'B', '-', '-', 'a',  'A'], # match
-                                     ['x', 'x', 'X', 'x',  'X', '-', '-', 'x',  'X', 'x', 'X', 'x',  'X', '-', '-', 'x',  'X'], # snp
-                                     ['-', '-', '-', '-',  '-', 'e', 'E', '-',  '-', '-', '-', '-',  '-', 'e', 'E', '-',  '-'], # seq err
-                                     ['i', 'i', 'I', 'i',  'I', '-', '-', 'i',  'I', 'i', 'I', 'i',  'I', '-', '-', 'i',  'I'], # insert
-                                     ['-', '#', '-', '#',  '-', '-', '-', '#',  '-', '#', '-', '#',  '-', '-', '-', '#',  '-']])# convert failed
+        self.cigar_table= np.array([['M', 'c', 'C', 'b',  'B', '-', '-', 'a',  'A', 'c', 'C', 'b',  'B', '-', '-', 'a',  'A'], # match
+                                    ['x', 'x', 'X', 'x',  'X', '-', '-', 'x',  'X', 'x', 'X', 'x',  'X', '-', '-', 'x',  'X'], # snp
+                                    ['-', '-', '-', '-',  '-', 'e', 'E', '-',  '-', '-', '-', '-',  '-', 'e', 'E', '-',  '-'], # seq err
+                                    ['i', 'i', 'I', 'i',  'I', '-', '-', 'i',  'I', 'i', 'I', 'i',  'I', '-', '-', 'i',  'I'], # insert
+                                    ['-', '#', '-', '#',  '-', '-', '-', '#',  '-', '#', '-', '#',  '-', '-', '-', '#',  '-']])# convert failed
 
 
     def create_fastq(self):
@@ -37,18 +39,18 @@ class StreamReads:
         for fastq_file in self.fastq_list:
             if os.path.exists(fastq_file):
                 warnings.warn(f'Fastq file exists, will overwrite... {fastq_file}')
-                os.remove(fastq_file)           
+                os.remove(fastq_file)
             self.output.append(open(fastq_file, 'a'))
 
 
     def output_reads(self, read_pair):
         read_lines = []
         read_order = []
-
+        
         for read_rec in read_pair:
             read_lines.append(self.gen_fastq_lines(read_rec))
             read_order.append(read_rec["read2"])
-
+        
         if self.pair_end:
             self.write_file([read_lines[i] for i in read_order])
         else:
@@ -66,24 +68,30 @@ class StreamReads:
         return f'{id}\n{seq}\n{cmt}\n{qual}\n'
 
 
-    def write_file(self, read_lines):
+    def write_file_lock(self, read_lines):
         """write bisulfite reads to disk"""
         with self.writeLock:
             for idx, line in enumerate(read_lines):
                 self.output[idx].write(line)
-                self.output[idx].flush()
+                self.output[idx].flush() # flush the buffer to ensure immediate writing to file
+
+
+    def write_file(self, read_lines):
+        """write bisulfite reads to disk"""
+        for idx, line in enumerate(read_lines):
+            self.output[idx].write(line)
+            self.output[idx].flush()
 
 
     def close(self):
         '''close the fastq object and shuffle or gzip reads'''
         for obj in self.output:
             obj.close()
-
         if self.gzip or self.shuffle:
             print("Shuffling/Compressing reads\n")
         for fastq in self.fastq_list:
             if self.shuffle:
-                self.shuffle_read(fastq, self.ref_fasta)
+                self.shuffle_read(fastq, self.seed_file)
             if self.gzip:
                 self.gzip_read(fastq)
 

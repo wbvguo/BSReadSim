@@ -4,22 +4,20 @@ from typing import Dict
 
 class StreamMethDB:
     '''
-    write methylation values/variants to disk
+    write/load methylation values or variants to/from disk
     :param str  outdir      : path to the simulation folder
-    :param str  pkl_dir     : subfolder of the meth_db pkl file
     :param bool overwrite_db: if we should overwrite exisiting files
     :rtype None
     '''
 
-    def __init__(self, outdir: str = None, overwrite_db: bool = False, ref_dict: Dict = None):
+    def __init__(self, outdir: str = None, overwrite_db: bool = False):
         self.outdir = outdir
         self.pkl_dir= f'{self.outdir}/pkl/'
         self.tmp_dir= f'{self.outdir}/tmp/'
+        self.ref_pkl= f'{self.pkl_dir}/ref_dict.pkl'
         self.overwrite_db = overwrite_db
         
         self.create_outdir()
-        if ref_dict and overwrite_db:
-            self.save_ref(ref_dict)
 
 
     def create_outdir(self):
@@ -42,47 +40,41 @@ class StreamMethDB:
             print(f"No such folder: {self.tmp_dir}")
 
 
-    def save_ref(self, ref_dict):
-        output_pickle = self.pkl_dir + '/ref_dict.pkl'
-        if not self.overwrite_db and os.path.exists(output_pickle):
-            raise ValueError("cannot save reference dict, overwrite is set to be false\n")
-        with open(output_pickle, 'wb') as file:
-            pickle.dump(ref_dict, file)
+    def save_ref(self, ref_dict: Dict = None, overwrite_db: bool = False):
+        if not self.overwrite_db and not overwrite_db and os.path.exists(self.ref_pkl):
+            raise ValueError("cannot save reference dict, overwrite_db is set to be false\n")
+        with open(self.ref_pkl, 'wb') as FILE:
+            pickle.dump(ref_dict, FILE)
 
 
     def load_ref(self):
-        with open(self.pkl_dir + '/ref_dict.pkl', 'rb') as file:
-            return pickle.load(file)
+        with open(self.ref_pkl, 'rb') as FILE:
+            return pickle.load(FILE)
 
 
-    def output_contig(self, contig_id, contig_profile, is_variant=False):
+    def output_contig(self, contig_id, contig_profile, is_variant=False, overwrite_db: bool = False):
         '''output methylation or variants'''
-        if is_variant:
-            contig_label = f'{contig_id}_variants'
-        else:
-            contig_label = f'{contig_id}_values'
-
-        output_file = f'{self.pkl_dir}/{contig_label}.pkl'
-
-        if not self.overwrite_db and os.path.exists(output_file):
+        type_label = 'variants' if is_variant else 'values'
+        output_file= f'{self.pkl_dir}/{contig_id}_{type_label}.pkl'
+        
+        if not self.overwrite_db and not overwrite_db and  os.path.exists(output_file):
             raise ValueError("Output file exists but overwrite_db is false, please check")
-
-        with open(output_file, 'wb') as file:
-            pickle.dump(contig_profile, file)
+        with open(output_file, 'wb') as FILE:
+            pickle.dump(contig_profile, FILE)
 
 
     def load_contig(self, contig_id, is_variant=False):
-        '''load the contig profiles'''
-        if is_variant:
-            contig_label = f'{contig_id}_variants'
-        else:
-            contig_label = f'{contig_id}_values'
-
+        '''
+        load the contig_profile: pos_map, meth_arr, flag (0 for not updated, 1 for updated by variants)
+        '''
+        type_label = 'variants' if is_variant else 'values'
+        input_file = f'{self.pkl_dir}/{contig_id}_{type_label}.pkl'
+        
         try:
-            with open(f'{self.pkl_dir}/{contig_label}.pkl', 'rb') as file:
-                contig_profile = pickle.load(file)
+            with open(input_file, 'rb') as FILE:
+                contig_profile = pickle.load(FILE)
         except FileNotFoundError:
-            profile_type = 'variant' if is_variant else 'methylation values'
+            profile_type = 'variant' if is_variant else 'methylation'
             print(f'{contig_id}: {profile_type} profile not found in {self.pkl_dir}')
             return None
         else:
