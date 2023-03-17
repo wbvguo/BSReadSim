@@ -1,10 +1,13 @@
 import threading
 
-class LockedIterator(object):
-    '''make generator/iterator thread safe'''
+class LockedIterator:
+    '''
+    make generator/iterator thread safe
+    from https://gist.github.com/platdrag/e755f3947552804c42633a99ffd325d4
+    '''
     def __init__(self, it):
         self.lock = threading.Lock()
-        self.it = iter(it)
+        self.it = iter(it) # otherwise it's not iterable
 
     def __iter__(self): 
         return self
