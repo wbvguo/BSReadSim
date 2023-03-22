@@ -5,6 +5,7 @@ import numpy as np
 
 from threading import Lock
 
+
 class StreamReads:
     '''stream reads and write into fastq files'''
     def __init__(self, outdir: str = None, prefix: str = None, pair_end: bool = True,
@@ -18,7 +19,7 @@ class StreamReads:
         self.gzip       = gzip
         self.create_fastq()
         
-        self.writeLock= write_lock
+        self.writeLock= write_lock if write_lock else Lock()
         
         # column context, row cigar
         self.cigar_table= np.array([['M', 'c', 'C', 'b',  'B', '-', '-', 'a',  'A', 'c', 'C', 'b',  'B', '-', '-', 'a',  'A'], # match
@@ -43,6 +44,25 @@ class StreamReads:
             self.output.append(open(fastq_file, 'a'))
 
 
+    def output_reads_chunk(self, read_pair_list):
+        read_lines = [[],[]]
+        for read_pair in read_pair_list:
+            if read_pair is None:
+                continue
+            read_lines[read_pair[0]['read2']].append(self.gen_fastq_lines(read_pair[0]))
+            read_lines[read_pair[1]['read2']].append(self.gen_fastq_lines(read_pair[1]))
+
+        self.write_file_chunk(read_lines[0], 0)
+        if self.pair_end:
+            self.write_file_chunk(read_lines[1], 1)
+
+
+    def write_file_chunk(self, read_lines, idx):
+        for line in read_lines:
+            self.output[idx].write(line)
+        # self.output[idx].flush() # flush the buffer to ensure immediate writing to file
+
+
     def output_reads(self, read_pair):
         read_lines = []
         read_order = []
@@ -55,6 +75,20 @@ class StreamReads:
             self.write_file([read_lines[i] for i in read_order])
         else:
             self.write_file(read_lines)
+
+
+    def output_reads_lock(self, read_pair):
+        read_lines = []
+        read_order = []
+        
+        for read_rec in read_pair:
+            read_lines.append(self.gen_fastq_lines(read_rec))
+            read_order.append(read_rec["read2"])
+        
+        if self.pair_end:
+            self.write_file_lock([read_lines[i] for i in read_order])
+        else:
+            self.write_file_lock(read_lines)
 
 
     def gen_fastq_lines(self, read_rec):

@@ -60,6 +60,7 @@ class BSReadSim:
     :param bool  collect_ch     : whether to collect/simulate the CHG/CHH sites [False]
     :param bool  update_boundary: whether to change the boundary sites' mehtylation due to mutation [False]
     :param bool  overwrite_db   : whether to overwrite the meth_db if it already exists [True]
+    :param bool  overwrite_bed  : whether to overwrite the bed file for RRBS if it already exists [True]
     :param str   vcf_file       : path to the reference vcf file
     :param float mut_rate       : mutation error rate for random mutation generation [0.0010]
     :param bool  haplo_mode     : simulate only homozygous variants [False]
@@ -74,8 +75,8 @@ class BSReadSim:
     :param int   read_len       : length of simulated reads [100]
     :param float depth          : average sequencing depth for each contigs [20]
     :param float num_reads      : total number of reads to simulate [None]
-    :param bool  random_err     : whether to generate sequencing error randomly [True]
-    :param float err_rate       : sequencing error rate for random error generation[0.005]
+    :param bool  random_error   : whether to generate sequencing error randomly [True]
+    :param float error_rate     : sequencing error rate for random error generation[0.005]
     :param float propN_cutoff   : reference segments where the proportion of ambiguous bases, - or N,
                                   greater than threshold will be skipped [0.05]
     :param bool  site_dependency: whether to consider site-site dependency on the read-level methylation [False]
@@ -112,9 +113,10 @@ class BSReadSim:
                  insert_mean: int = 400, insert_std: int = 25,                                      # fragment setting
                  insert_min: int = 100, insert_max: int = 1000,
                  read_len: int = 100, depth: int = 20, num_reads: int = None,                       # reads setting
-                 propN_cutoff: float = 0.05, conversion_rate: float = 0.998,                        
+                 propN_cutoff: float = 0.05, conversion_rate: float = 0.998,                 
+                 overwrite_bed:bool = True, middle_cuts: bool =True, cover_uniform:bool=True, rrbs_uniform:bool=True,
                  undirectional: bool = False, pair_end: bool = True,                                # sequencing protocol
-                 random_err= True, err_rate: float = 0.005, error_model: str = None,                # sequencing error TODO:
+                 random_error= True, error_rate: float = 0.005, error_model: str = None,                # sequencing error TODO:
                  qual_uniform: bool =True, qual_model: str = None,                                  # quality model, TODO:
                  is_uniform: bool = True, gc_bias_file: str = None,                                 # coverage model, gc_bias_file TODO:
                  site_dependency: bool = False, site_model: str = None,                             # site dependency model TODO:
@@ -141,8 +143,20 @@ class BSReadSim:
         # set experiment
         print('Initiating experiment...')
         self.experiment = SetExperiment(ref_dict=self.ref_dict, outdir=self.outdir, num_reads=num_reads,
+                                        collect_ch = collect_ch, overwrite_bed= overwrite_bed, asm_file=asm_file,
+                                        vcf_file = vcf_file, middle_cuts=middle_cuts, mut_rate=mut_rate,
+                                        haplo_mode = haplo_mode, seed = seed, 
+                                        mut_indel_frac= mut_indel_frac,indel_ext_prob= indel_ext_prob, 
+                                        insert_mean=insert_mean,insert_std=insert_std,
+                                        propN_cutoff=propN_cutoff,conversion_rate=conversion_rate,
+                                        undirectional=undirectional, random_error=random_error,error_rate=error_rate,
+                                        error_model=error_model,
+                                        qual_uniform=qual_uniform,qual_model=qual_model,
+                                        cover_uniform=cover_uniform,gc_bias_file=gc_bias_file,
+                                        site_dependency=site_dependency,site_model=site_model,
                                         depth=depth, read_len=read_len, pair_end=pair_end, is_uniform=is_uniform,
-                                        probe_bed_file=probe_bed_file, cut_site_str=cut_site_str, rrbs_model=rrbs_model,
+                                        probe_bed_file=probe_bed_file, cut_site_str=cut_site_str, rrbs_model=rrbs_model,rrbs_uniform=rrbs_uniform,probe_deviation=probe_deviation,
+                                        collect_stats=collect_stats,
                                         insert_min=insert_min, insert_max=insert_max)
         self.htsim_path = self.experiment.htsim_path
         self.htsim_opts = self.experiment.htsim_opts
@@ -162,7 +176,7 @@ class BSReadSim:
                                          verbose=verbose,
                                          seed=meth_seed)
         self.meth_db    = self.meth_set.meth_db
-        self.meth_db.create_share_arr(self.meth_set.arr_max_size)
+        #self.meth_db.create_share_arr(self.meth_set.arr_max_size)
         
         # prepare output
         self.fastq_out  = StreamReads(outdir=outdir, prefix=prefix, pair_end=pair_end,

@@ -9,44 +9,37 @@ from StreamReads import StreamReads
 
 class DataProcessor:
     def __init__(self, read_gen, n_workers=4, 
-                 processor: ReadProcessor = None, fastq_out: StreamReads = None):
+                 processor: ReadProcessor = None, fastq_out: StreamReads = None,
+                 max_qsize: int = 1000):
         self.read_gen   = read_gen
         self.n_workers  = n_workers
         self.processor  = processor
         self.fastq_out  = fastq_out
+        self.max_qsize  = max_qsize
+        self.end_signal = False
 
     def start_processing_2q(self):
-        self.in_queue   = queue.Queue()
         self.out_queue  = queue.Queue()
         self.writer_thread = threading.Thread(target=self.write_fastq)
         self.writer_thread.start()
-
+        
         #self.pool = ThreadPool(self.n_workers)
         with ThreadPoolExecutor(max_workers=self.n_workers) as executor:
-            task_list= []
             for _, read_pair in self.read_gen:
-                self.in_queue.put(read_pair)
-                
-            for _ in range(self.n_workers):
-                task = executor.submit(self.worker)
-                task_list.append(task)
-        
-        for task in task_list:
-            task.result()
+                future = executor.submit(self.worker, read_pair)
+                #future.add_done_callback(lambda f: self.output_queue.put(f.result()))
+
+            executor.shutdown(wait=True)
+        self.end_signal = True
 
 
     def write_fastq(self):
         while True:
-            try:
-                read_pair = self.out_queue.get(timeout=1)
-            except queue.Empty:
-                if not any(p.is_alive() for p in self.pool._pool):
+            if self.out_queue.qsize() > self.max_qsize or self.end_signal:
+                chunk_size = self.out_queue.qsize() if self.end_signal else self.max_qsize
+                self.fastq_out.output_reads_chunk([self.out_queue.get() for _ in range(chunk_size)])
+                if self.end_signal:
                     break
-                else:
-                    continue
-            if read_pair is None:
-                break
-            self.fastq_out.output_reads(read_pair)
 
 
     def stop(self):
@@ -56,14 +49,9 @@ class DataProcessor:
         self.writer_thread.join()
 
 
-    def worker(self):
-        while True:
-            data = self.in_queue.get()
-            if data is None:
-                break
-            result = self.processor.process_read_pair2(data)
-            self.out_queue.put(result)
-
+    def worker(self, read_pair):
+        result = self.processor.process_read_pair2(read_pair)
+        self.out_queue.put(result)
 
     # def spawn_workers(self):
     #     for i in range(self.n_workers):

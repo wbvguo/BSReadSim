@@ -40,7 +40,6 @@
 #include <algorithm>
 #include "kseq.h"
 #include "vcf.h"
-#include "htsim.h"
 KSEQ_INIT(gzFile, gzread)
 
 #define PACKAGE_VERSION "1.0.3"
