@@ -1,8 +1,6 @@
 import random
 import numpy as np
 import pickle
-
-from scipy.stats import bernoulli
 from typing import Dict
 
 from SetExperiment import SetExperiment
@@ -16,6 +14,11 @@ class ReadProcessor:
         self.pos_map    = pos_map
         self.var_profile= var_profile
         self.experiment = experiment
+        if self.experiment.random_error:
+            self.experiment.err_arr = np.full((self.experiment.read_len), self.experiment.error_rate)
+        if self.experiment.qual_uniform:
+            self.experiment.qual_arr= np.full(self.experiment.read_len, 56)
+        self.experiment.conv_arr= np.full(self.experiment.read_len, self.experiment.conversion_rate)
 
 
     def process_read_pair2(self, read_pair):
@@ -316,17 +319,16 @@ class ReadProcessor:
             # generate methylation pattern according to read_meth and distance
             pass
         else:
-            meth_states = np.zeros(read_meth.size)
-            nonzero_idx = np.where(read_meth)[0]    # this returns a tuple
-            meth_states[nonzero_idx] = bernoulli.rvs(read_meth[nonzero_idx], size = nonzero_idx.size)
+            meth_states = self.bernoulli(read_meth)
         return meth_states
 
 
     def treat_bisulfite(self, read_rec):
         """ bisulfite conversion """
-        unmeth_idx = np.where(np.bitwise_and(read_rec['ctx'], 0x1)==1)[0] # behave strange without ==1
-        conv_states= bernoulli.rvs(self.experiment.conversion_rate, size=unmeth_idx.size)
-        conv_idx   = unmeth_idx[conv_states == 1]   # successfully converted base index
+        meth_states = np.bitwise_and(read_rec['ctx'], 0x1)==1 # behave strange without ==1
+        conv_states = self.bernoulli(self.experiment.conv_arr)
+        
+        conv_idx   = np.where(np.logical_and(meth_states, conv_states))[0]   # successfully converted base index
         read_rec['seq'][conv_idx] = np.bitwise_and(read_rec['seq'][conv_idx] + 2, 0x3) # C2T, G2A
         unconv_idx = unmeth_idx[conv_states == 0]   # remains the same base index
         read_rec['cgr'][unconv_idx]= 4
@@ -345,7 +347,7 @@ class ReadProcessor:
     def add_seq_err(self, read_rec):
         ''' introduce sequencing error'''
         if self.experiment.random_error:
-            err_idx = np.where(bernoulli.rvs(self.experiment.error_rate, size = self.experiment.read_len))[0] #cannot np.squeeze
+            err_idx = np.where(self.bernoulli(self.experiment.err_arr))[0] #cannot np.squeeze
             if np.any(err_idx):
                 for idx in err_idx:
                     base_ori = read_rec['seq'][idx]
@@ -361,9 +363,8 @@ class ReadProcessor:
     def add_qual_score(self, read_rec, qual_num=56):
         '''add quality scores'''
         if self.experiment.qual_uniform:
-            qual_arr = np.full(self.experiment.read_len, qual_num)
-            qual_arr[[0,-1][read_rec['strand']^read_rec['conv']]] = qual_num -1 # denote the 5' end
-            read_rec['qual'] = qual_arr
+            read_rec['qual'] = deepcopy(self.experiment.qual_arr)
+            read_rec['qual'][[0,-1][read_rec['strand']^read_rec['conv']]] = qual_num -1 # denote the 5' end
         else:
             # generate quality score from a profile TODO:
             pass
@@ -379,3 +380,8 @@ class ReadProcessor:
     def load_pickle(self, file_id):
         with open(f'{self.experiment.tmp_dir}/{file_id}.pkl', 'rb') as FILE:
             return pickle.load(FILE)
+
+    def bernoulli(self, prob_arr: np.array = None):
+        '''scipy.stats.bernoulli.rvs is ~30 times slower than'''
+        return np.random.random(size = prob_arr.size) < prob_arr
+
