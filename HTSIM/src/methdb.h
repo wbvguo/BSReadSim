@@ -4,33 +4,34 @@
 #include <vector>
 #include <random>
 #include <gsl/gsl_randist.h>
-#include "htsim2.h"
+#include <zlib.h>
 #include "kseq.h"
 #include "vcf.h"
-
+#include "struct.h"
 
 // create/stream MethDB
-void create_methdb(const kseq_t *ks, uint32_t *pos_idx_arr, std::vector<meth_rec>& meth_vec);
+void create_methdb(const kseq_t *ks, uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec);
 
 void save_methdb(std::vector<meth_rec>& meth_vec, char *fname);
 
 void parse_methdb_line(char *line, meth_rec *tmp_meth);
 
-void load_methdb(uint32_t *pos_idx_arr, std::vector<meth_rec>& meth_vec, char *fname);
+void load_methdb(uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec, char *fname);
 
+void update_methdb(uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec, mutseq_t *hap1, mutseq_t *hap2, bool bool_asm_set, bool bool_update_boundary);
 
 // for CGmap
 int parse_cgmap_line(char *line, char *chr_id, meth_rec *tmp_meth);
 
 void pool_cgmap(std::vector<meth_rec>& meth_vec, int seed);
 
-void fill_cgmap_chr(char *fname, char *chr_id, uint32_t *pos_idx_arr, std::vector<meth_rec>& meth_vec, bool cgmap_pool, int seed);
+void fill_cgmap_chr(char *fname, char *chr_id, uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec, bool cgmap_pool, int seed);
 
 
 // for ASM
 int parse_asm_line(char *line, char *chr_id, meth_rec *tmp_meth);
 
-void fill_asm_chr(char *fname, char *chr_id, uint32_t *pos_idx_arr, std::vector<meth_rec>& meth_vec);
+void fill_asm_chr(char *fname, char *chr_id, uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec);
 
 
 // fill with distribution
