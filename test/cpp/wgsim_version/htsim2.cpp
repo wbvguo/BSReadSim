@@ -39,12 +39,12 @@
 #include <vector>
 #include <map>
 #include <algorithm>
-#include "htsim2.h"
 #include "kseq.h"
 #include "vcf.h"
+
 #include "mode.h"
 #include "methdb.h"
-
+#include "htsim2.h"
 KSEQ_INIT(gzFile, gzread)
 
 #define PACKAGE_VERSION "1.0.3"
@@ -135,15 +135,15 @@ typedef struct {
 } mutseq_t;
 
 
-std::vector<snp_rec> snp_vec;
-std::vector<cut_rec> cut_vec;
-std::vector<frag_rec> frag_vec;
-std::vector<cut_pos>  cutpos_vec;
-std::vector<probe_rec> probe_vec;
 std::vector<float> eff_vec;
-std::map<std::string, chr_rec> chr_count;
+std::vector<snp_rec> snp_vec;
+// std::vector<cut_rec> cut_vec;
+// std::vector<cut_pos>  cutpos_vec;
 std::vector<meth_rec> meth_vec;
 std::vector<param_rec> param_vec;
+std::vector<frag_rec> frag_vec;
+std::vector<probe_rec> probe_vec;
+std::map<std::string, chr_rec> chr_count;
 
 // initialize random generator for general distributions
 std::random_device rd;
@@ -967,7 +967,7 @@ int main(int argc, char *argv[])
     char none_default[] = "None";
     char *chr_id    = none_default;
     char *vcf_file  = none_default;
-    char *cut_str   = none_default;
+    // char *cut_str   = none_default;
     char *bias_file = none_default;
     char *bed_file  = none_default; 
     char *asm_file  = none_default; 
@@ -1010,7 +1010,7 @@ int main(int argc, char *argv[])
             case 'T': tech_mode  = atoi(optarg); break;
             case 'u': is_uniform = atoi(optarg)!=0; break;
             case 'B': bias_file  = optarg; break;
-            case 'x': cut_str    = optarg; break;
+            // case 'x': cut_str    = optarg; break;
             case 'b': bed_file   = optarg; break;
             case 'D': sd_center  = atoi(optarg); break;
         }
@@ -1023,7 +1023,7 @@ int main(int argc, char *argv[])
 
     bool bool_chr_set   = strcmp(chr_id,  "None") && strlen(chr_id);
     bool bool_vcf_set   = strcmp(vcf_file,"None") && strlen(vcf_file);
-    bool bool_site_set  = strcmp(cut_str, "None") && strlen(cut_str);
+    // bool bool_site_set  = strcmp(cut_str, "None") && strlen(cut_str);
     bool bool_probe_set = strcmp(bed_file,"None") && strlen(bed_file);
     bool bool_bias_set  = strcmp(bias_file,"None") && strlen(bias_file);
     bool bool_asm_set   = strcmp(asm_file, "None") && strlen(asm_file);
@@ -1032,17 +1032,31 @@ int main(int argc, char *argv[])
 
 
     // check legal input mode and corresponding files
+    // if (tech_mode==2 || bool_probe_set){
+    //     fprintf(stderr, "Simulating targeted sequencing reads:\n");
+    //     if (!bool_probe_set){fprintf(stderr, "ERROR: Please specify probe bed file path\n");exit(EXIT_FAILURE);}
+    //     if (bool_site_set){fprintf(stderr, "WARNING: Cut site is set, ignored in this mode\n");}
+    //     tech_mode = 2;
+    // } else if (tech_mode==1 || bool_site_set){
+    //     fprintf(stderr, "Simulating restricted enzyme cutting reads:\n");
+    //     if (!bool_site_set){fprintf(stderr, "ERROR: Please specify enzyme cutting site\n");exit(EXIT_FAILURE);}
+    //     if (bool_probe_set){fprintf(stderr, "WARNING: Probe file is set, ignored in this mode\n");}
+    //     tech_mode = 1;
+    //     parse_cut_rec(cut_str, cut_vec);
+    // } else {
+    //     fprintf(stderr, "Simulating whole genome reads:\n");
+    //     if(!is_uniform && !bool_bias_set){fprintf(stderr, "ERROR: Please specify GC-Bias file when specifying -u as 0\n");exit(EXIT_FAILURE);}
+    //     if(bool_bias_set){parse_bias_file(bias_file, eff_vec); is_uniform = false;}
+    //     tech_mode = 0;
+    // }
     if (tech_mode==2 || bool_probe_set){
         fprintf(stderr, "Simulating targeted sequencing reads:\n");
         if (!bool_probe_set){fprintf(stderr, "ERROR: Please specify probe bed file path\n");exit(EXIT_FAILURE);}
-        if (bool_site_set){fprintf(stderr, "WARNING: Cut site is set, ignored in this mode\n");}
         tech_mode = 2;
-    } else if (tech_mode==1 || bool_site_set){
+    } else if (tech_mode==1 || bool_probe_set){
         fprintf(stderr, "Simulating restricted enzyme cutting reads:\n");
-        if (!bool_site_set){fprintf(stderr, "ERROR: Please specify enzyme cutting site\n");exit(EXIT_FAILURE);}
-        if (bool_probe_set){fprintf(stderr, "WARNING: Probe file is set, ignored in this mode\n");}
+        if (!bool_probe_set){fprintf(stderr, "ERROR: Please specify probe bed file path\n");exit(EXIT_FAILURE);}
         tech_mode = 1;
-        parse_cut_rec(cut_str, cut_vec);
     } else {
         fprintf(stderr, "Simulating whole genome reads:\n");
         if(!is_uniform && !bool_bias_set){fprintf(stderr, "ERROR: Please specify GC-Bias file when specifying -u as 0\n");exit(EXIT_FAILURE);}
@@ -1065,9 +1079,14 @@ int main(int argc, char *argv[])
     uint64_t tot_chr_len = 0, tot_eff_len = 0;
     float tot_score = 0;
     while ((l = kseq_read(ks)) >= 0) {
-        if (l < mean_insert+3*sd_insert){fprintf(stderr, "[%s] skip contig '%s' as it is shorter than %d!\n", __func__, ks->name.s, mean_insert+3*sd_insert); continue;}
+        if (bool_chr_set) {if (strcmp(chr_id, ks->name.s)!=0){continue;}}
+        if (l < mean_insert+3*sd_insert){
+            fprintf(stderr, "[%s] skip contig '%s' as it is shorter than %d!\n", __func__, ks->name.s, mean_insert+3*sd_insert); 
+            continue;
+        }
+        
         tmp_len = {};
-        cal_length_chr(ks, &tmp_len, tech_mode, bed_file, min_insert, max_insert, probe_vec, cutpos_vec, cut_vec);
+        collect_len_score_chr(ks, &tmp_len, bed_file, probe_vec);
         chr_count[std::string(ks->name.s)] = tmp_len;
         tot_chr_len += tmp_len.chr_len;
         tot_eff_len += tmp_len.eff_len;
@@ -1083,24 +1102,31 @@ int main(int argc, char *argv[])
 
     // check input chr_id, calculate the count for contig(s)
     if (bool_chr_set){
+        // calculate the count for selected contig
         std::string chr_id_str = std::string(chr_id);
         if (!chr_count.count(chr_id_str)){fprintf(stderr, "ERROR: Contig id '%s' is not found in the fasta file, please check!\n", chr_id); exit(EXIT_FAILURE);}
+
         uint64_t contig_eff_len = chr_count[chr_id_str].eff_len;
         uint64_t contig_len = chr_count[chr_id_str].chr_len;
         chr_N = chr_N == 0? (contig_eff_len * depth)/(size_l + size_r) : chr_N;
         fprintf(stderr, "[%s] Contig %s specified, total length: %lu, effective length: %lu, #reads: %lu\n", __func__, chr_id, contig_len, contig_eff_len, chr_N);
         chr_count[chr_id_str].count = chr_N;
     } else {
-        int num_contigs = (int)chr_count.size();
+        // calculate the count for all contigs
         if (chr_N > 0) {fprintf(stderr, "ERROR: -n is specified but not -c. Exit... (please note the difference of -n and -N)\n"); exit(EXIT_FAILURE);}
+        
+        int num_contigs = (int)chr_count.size();
         N = N == 0? (tot_eff_len * depth)/(size_l + size_r) : N;
         fprintf(stderr, "[%s] Found %d contig sequences, total length: %lu, effective length: %lu\n", __func__, num_contigs, tot_chr_len, tot_eff_len);
         fprintf(stderr, "[%s] No contig id specified, will generate %lu reads from all contigs\n", __func__, N);
-        uint64_t cum_count = 0;
+        
+        uint64_t cum_count = 0, tmp_count =0;
         for (auto it = chr_count.begin(); it != chr_count.end(); ++it) {
-            it->second.count = (uint64_t)(it->second.score * N / tot_score);
-            cum_count += it->second.count;
+            tmp_count = tech_mode ==2 ? (uint64_t)(it->second.score * N / tot_score) : (uint64_t)(it->second.eff_len * N / tot_eff_len);
+            it->second.count = tmp_count;
+            cum_count += tmp_count;
         }
+
         int rest_count = N - cum_count;
         if(rest_count < 0){fprintf(stderr, "[%s] Read count calculation went wrong \n", __func__); exit(EXIT_FAILURE);} // should never happen
         int step_size  = rest_count > num_contigs ? (int)(rest_count/num_contigs): 1; //hopefully rest_count is small, evenly distributed to contigs

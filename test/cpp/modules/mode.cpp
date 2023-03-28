@@ -1,12 +1,12 @@
-#include <algorithm>
 #include <stdint.h>
 #include <vector>
-#include "mode.h"
-#include "htsim2.h"
+#include <zlib.h>
 #include "kseq.h"
 #include "vcf.h"
+#include "struct.h"
 
 
+KSEQ_INIT(gzFile, gzread)
 
 // for VCF
 void parse_vcf_chr(char *fname, char *chr_id, std::vector<snp_rec>& snp_vec)
@@ -166,8 +166,48 @@ int parse_bed_line(char *line, char *chr_id, probe_rec *tmp_probe, probe_meta *t
 	tmp_probe->pos_l = start;
 	tmp_probe->pos_r = end;
     tmp_probe->score = score;
-    tmp_probe->strand= strand;
+    tmp_probe->strand= (int8_t) strand;
     
+    tmp_probe_meta->chr_id = chr_id;
+    tmp_probe_meta->name   = name;
+    return 0;
+}
+
+int parse_bed_line_rrbs(char *line, char *chr_id, probe_rec *tmp_probe, probe_meta *tmp_probe_meta)
+{
+	char *p, *q, *contig, *name = 0;
+    int i, start, end, strand, cut_l, cut_r;
+	float score;
+
+	for (i = 0, p = q = line;; ++q) {
+		if (*q == '\t' || *q == '\0') {
+			int c = *q;
+			*q = 0;
+            switch (i) {
+            case 0: contig = p; break;
+            case 1: start  = atoi(p); break;
+            case 2: end    = atoi(p); break;
+            case 3: name   = strdup(p); break;
+            case 4: score  = atof(p); break;        // TODO: need to test what if score is "." 
+            case 5: strand = int(strcmp(p,"+")==0)-int(strcmp(p,"-")==0); break; //1,0,-1
+            case 7: cut_l  = atoi(p); break;
+            case 8: cut_r  = atoi(p); break;
+            default: break;}
+            if(i==0 && strcmp(contig, chr_id)){return 1;} // termenate early if not equal
+			++i, p = q + 1;
+			if (i > 9 || c == '\0') break;
+		}
+	}
+
+    if(i < 9){fprintf(stderr, "[%s] Skip invalid probe: chr %s, name %s...\n", __func__, chr_id, name); return 0;}
+
+	tmp_probe->pos_l = start;
+	tmp_probe->pos_r = end;
+    tmp_probe->score = score;
+    tmp_probe->strand= (int8_t) strand;
+    tmp_probe->cut_l= (int8_t) cut_l;
+    tmp_probe->cut_r= (int8_t) cut_r;
+
     tmp_probe_meta->chr_id = chr_id;
     tmp_probe_meta->name   = name;
     return 0;
@@ -205,91 +245,6 @@ void parse_bed_chr(char *fname, char *chr_id, std::vector<probe_rec>& probe_vec)
 }
 
 
-// for RRBS
-void parse_cut_rec(char *cut_str, std::vector<cut_rec>& cut_vec)
-{
-    cut_vec.clear();
-    int c, idx = 0;
-    cut_rec tmp_cut;
-    
-    for(int i =0; cut_str[i] !='\0'; ++i){
-        if (cut_str[i] == '|'){tmp_cut.idx = idx; continue;}
-        if (cut_str[i] == ','){
-            if (tmp_cut.idx >=0) {
-                tmp_cut.len = idx;
-                cut_vec.push_back(tmp_cut);
-                tmp_cut = {}; idx = 0; continue; // empty the struct, restart
-            } else {
-                fprintf (stderr, "[%s] ERROR: Invalid enzyme site format (%s). Exit... \n", __func__, cut_str); exit (EXIT_FAILURE);
-            }
-        }
-        ++idx;
-        c = nst_nt4_table[(int)cut_str[i]];
-        tmp_cut.seq.push_back(c);
-    }
-    if(tmp_cut.idx >=0){tmp_cut.len = idx; cut_vec.push_back(tmp_cut);}
-}
-
-void gen_cut_pos(const kseq_t *ks, std::vector<cut_pos>& cutpos_vec, std::vector<cut_rec>& cut_vec)
-{
-    cutpos_vec.clear(); // clean the container
-
-    std::vector<mut_t> rseq_ref(ks->seq.l); // TODO: create cut_pos without create rseq_ref
-
-    for (int i = 0; i != ks->seq.l; ++i) {
-        rseq_ref.push_back((mut_t)nst_nt4_table[(int)ks->seq.s[i]]);
-    }
-
-    std::vector<mut_t>::iterator ptr_begin = rseq_ref.begin();  // can repalce the type with `auto`
-    std::vector<mut_t>::iterator ptr_end   = rseq_ref.end();
-    std::vector<mut_t>::iterator iter_curr = rseq_ref.begin();  // current
-    std::vector<mut_t>::iterator iter_temp = rseq_ref.begin();  // temp
-    std::vector<mut_t>::iterator iter_save = rseq_ref.begin();  // save
-    //printf("%d %d\n", ptr_begin, ptr_end);
-
-    int count = 0; 
-    cut_pos tmp_cutpos;
-    while (iter_curr < ptr_end)
-    {
-        // printf("========%i========\n", count);
-        // printf("%d %d %d\n", iter_curr, iter_temp, iter_save);
-        //initiate
-        int min_pos = ptr_end - ptr_begin;
-        int site_pos= min_pos;
-        int type_idx = -1;
-
-        // printf("[%d %d %d]\n", min_pos, site_pos, type_idx);
-        for (int j = 0; j < cut_vec.size(); ++j) {
-            iter_temp = std::search(iter_curr, ptr_end, cut_vec[j].seq.begin(), cut_vec[j].seq.end());
-            // printf("%d %d %d\n", iter_curr, iter_temp);
-            site_pos = iter_temp - ptr_begin;
-            if(site_pos < min_pos){
-                min_pos = site_pos;
-                type_idx= j;
-                iter_save= iter_temp;
-            }
-        }
-        // printf("[%d %d %d]\n", min_pos, site_pos, type_idx);
-        // printf("%d %d %d\n", iter_curr, iter_temp, iter_save);
-
-        if(type_idx >=0){
-            tmp_cutpos = {};
-            tmp_cutpos.pos = min_pos + cut_vec[type_idx].idx;
-            tmp_cutpos.type= type_idx;
-            cutpos_vec.push_back(tmp_cutpos);
-            iter_curr = iter_save + cut_vec[type_idx].len; // need to check for other int types
-        }
-        // printf("%d %d %d\n", iter_curr, iter_temp, iter_save);
-        // ++count;
-        // if(count >= 20){
-        //     break;
-        // }
-    }
-}
-
-//gen cut fragment
-
-
 // for GC-bias
 void parse_bias_file(char *fname, std::vector<float>& eff_vec)
 {
@@ -306,46 +261,35 @@ void parse_bias_file(char *fname, std::vector<float>& eff_vec)
 
 
 // for length calculation
-void cal_length_chr(const kseq_t *ks, chr_rec *tmp_len, int tech_mode, char *bed_file, int min_insert, int max_insert, 
-                    std::vector<probe_rec>& probe_vec, std::vector<cut_pos>& cutpos_vec, std::vector<cut_rec>& cut_vec)
+void collect_len_score_chr(const kseq_t *ks, chr_rec *tmp_len, char *bed_file, std::vector<probe_rec>& probe_vec)
 {
     uint64_t eff_len;
+    float sum_score;
+    bool bool_bed_set = strcmp(bed_file,"None") && strlen(bed_file);
 
-    if(tech_mode==2){                       // targeted sequencing
+    if(bool_bed_set){                       // targeted sequencing or
         parse_bed_chr(bed_file, ks->name.s, probe_vec);
-        int pos_l, pos_r, len;
-        int pos_l_prev=0, pos_r_prev=0;
+        int len, pos_l, pos_r, pos_l_prev, pos_r_prev;
+        float score;
         for (size_t i = 0; i < probe_vec.size(); ++i){
             pos_l = probe_vec[i].pos_l;
             pos_r = probe_vec[i].pos_r;
             len   = pos_r - pos_r;
-            // deal with overlap probes
+            score = probe_vec[i].score;
+            // deal with overlap regions
             if ((pos_l < pos_r_prev) && (pos_l > pos_l_prev)){ 
                 len = (pos_r > pos_r_prev) ? (pos_r - pos_r_prev) : 0;
             }
             eff_len += len;
+            sum_score += score;
             pos_l_prev = pos_l;
             pos_r_prev = pos_r;
         }
-    }else if (tech_mode==1){                // reduced representative sequencing 
-        gen_cut_pos(ks, cutpos_vec, cut_vec);
-        int len;
-        for (int i = -1 ; i <= (int)cutpos_vec.size(); ++i){
-            if(i == -1 || i == (int)cutpos_vec.size()){
-                if(i==-1){
-                    len = cutpos_vec[0].pos - 0;
-                }else{
-                    len = (int) ks->seq.l - cutpos_vec[i-1].pos;
-                }
-            }else{
-                len = cutpos_vec[i+1].pos - cutpos_vec[i].pos;
-            }
-            len = len >= min_insert && len <= max_insert? len : 0;
-            eff_len += len;
-        }
     }else{                                  // whole genome
         eff_len = ks->seq.l;
+        sum_score = eff_len;
     }
     tmp_len->chr_len = ks->seq.l;
     tmp_len->eff_len = eff_len;
+    tmp_len->score   = sum_score;
 }
