@@ -1,102 +1,19 @@
 #include <vector>
 #include <map>
+#include <zlib.h>
 #include <random>
 #include <gsl/gsl_randist.h>
-#include <zlib.h>
 #include "kseq.h"
 #include "vcf.h"
 #include "struct.h"
 
-
 KSEQ_INIT(gzFile, gzread)
-
-enum muttype_t {NOCHANGE = 0, INSERT = 0x1000, SUBSTITUTE = 0xe000, DELETE = 0xf000};
-typedef unsigned short mut_t;
-static mut_t mutmsk = (mut_t)0xf000;
-
-//  global variables, only changed at program start.
-static double ERR_RATE  = 0.005;
-static double MUT_RATE  = 0.01;
-static double INDEL_FRAC= 0.15;
-static double INDEL_EXTN= 0.3;
-static double MAX_N_RATIO=0.05;
-
-static int MEAN_INSERT  = 500;
-static int SD_INSERT    = 50;
-static int MIN_INSERT   = 100;
-static int MAX_INSERT   = 1000;
-static int SIZE_L       = 100;
-static int SIZE_R       = 100;
-static int SD_CENTER    = 50;
-static int BIN_SIZE     = 100;
-
-static uint8_t MATCH    = 0x00;
-static uint8_t SNV      = 0x10;
-static uint8_t INSR     = 0x30;
-static uint8_t CONVT    = 0x50; // reserved, not used
-static uint8_t SEQERR   = 0x90;
-const  uint8_t mut_table[16] = {
-    0, 1, 0, 2, 
-    0, 0, 0, 0, 
-    0, 3, 3, 3, 
-    3, 3, 3, 3
-}; // MXIE
-
-static uint8_t CG = 0x01; //5to3
-static uint8_t CHG= 0x03;
-static uint8_t CHH= 0x07;
-static uint8_t GC = 0x09; //3to5
-static uint8_t GDC= 0x0b;
-static uint8_t GDD= 0x0f;
-//0110**: 24-27; 01**10: 18, 22, 30; 01****: the rest of 16-31
-//1001**: 36-39; 10**01: 33, 41, 45; 10****: the rest of 32-47
-//encode not as 1,3,5; have problem with print 5 (or 13) when putcns
-const uint8_t cg_context_table[64] = {
-    0,   0,   0,   0,    0,   0,   0,   0, 
-    0,   0,   0,   0,    0,   0,   0,   0, 
-    CHH, CHH, CHG, CHH,  CHH, CHH, CHG, CHH, 
-    CG,  CG,  CG,  CG,	 CHH, CHH, CHG, CHH, 
-    GDD, GDC, GDD, GDD,  GC,  GC,  GC,  GC, 
-    GDD, GDC, GDD, GDD,  GDD, GDC, GDD, GDD,
-    0,   0,   0,   0,    0,   0,   0,   0, 
-    0,   0,   0,   0,    0,   0,   0,   0, 
-};
-
-const uint8_t cg_table[5] = {0, 1, 1, 0, 0}; // for C/G check
-
-const uint8_t nst_nt4_table[256] = {
-    4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4, 
-    4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4, 
-    4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 5 /*'-'*/, 4, 4,
-    4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4, 
-    4, 0, 4, 1,  4, 4, 4, 2,  4, 4, 4, 4,  4, 4, 4, 4, 
-    4, 4, 4, 4,  3, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4, 
-    4, 0, 4, 1,  4, 4, 4, 2,  4, 4, 4, 4,  4, 4, 4, 4, 
-    4, 4, 4, 4,  3, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4, 
-    4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4, 
-    4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4, 
-    4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4, 
-    4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4, 
-    4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4, 
-    4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4, 
-    4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4, 
-    4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4
-};
-
-
-std::vector<float> eff_vec;
-std::vector<snp_rec> snp_vec;
-std::vector<frag_rec> frag_vec;
-std::vector<meth_rec> meth_vec;
-std::vector<param_rec> param_vec;
-std::vector<probe_rec> probe_vec;
-std::map<std::string, chr_rec> chr_count;
+#include "methdb.h" // must be here otherwise .h will not be recognized
 
 
 std::map<std::string, int> base_map = {{"C", 0}, {"G",1}};
 std::map<std::string, int> context_map = {{"CG",1}, {"CHG",3}, {"CHH",7}};
 std::map<int, int> params_map = {{1,0}, {3,1}, {7,2}, {9,0}, {11,1}, {15,2}}; //idx in param_vec
-
 
 
 // create/stream MethDB
@@ -505,92 +422,3 @@ void fill_beta(std::vector<meth_rec>& meth_vec, std::vector<param_rec>& param_ve
     gsl_rng_free(rng);
 }
 
-
-
-// test in the main function
-int main()
-{
-    fprintf(stderr, "Test\n");
-    char ref_file[]     = "/home/wbguo/iproject/BSReadSim/test/data/ref/BSB_test.fa";
-    char cgmap_file[]   = "/home/wbguo/iproject/BSReadSim/test/data/sim/pe_d/sim.CGmap.gz";
-    char asm_file[]     = "/home/wbguo/iproject/BSReadSim/test/data/sim/pe_d/sim.asm.gz";
-    char param_str[]    = "0.5|0.5,0.05|0.05,0.05|0.05";
-    char methdb_file[]  = "/home/wbguo/iproject/BSReadSim/test/data/sim/pe_d/methdb";
-    char contig_id[]    = "chr10";
-
-
-    // parse reference
-    kseq_t *ks;
-    gzFile   fp_fa;
-    char *fn = ref_file;
-    char *out_fn = methdb_file;
-
-    fp_fa = gzopen(fn, "r");
-    ks = kseq_init(fp_fa);
-    int l;
-    parse_param(param_str, param_vec);
-
-    while ((l = kseq_read(ks)) >= 0) {
-        if (strcmp(ks->name.s, contig_id) != 0){continue;}
-        fprintf(stderr, "[%s] contig '%s' \n", __func__, ks->name.s);
-        
-
-        // uint32_t* posidx_arr = (uint32_t*)malloc(ks->seq.l * sizeof(uint32_t));
-        // if (posidx_arr == NULL) {fprintf(stderr, "ERROR: could not allocate memory\n");exit(EXIT_FAILURE);} else {
-        //     memset(posidx_arr, 0, ks->seq.l * sizeof(uint32_t));
-        // }
-        // fprintf(stderr, "%ld\n", ks->seq.l);
-
-        // create_methdb(ks, posidx_arr, meth_vec);
-        // //// checked
-        // // for(size_t i = 0; i < meth_vec.size(); i++){ 
-        // //     fprintf(stdout, "%d\t%f\t%f\t%d\t%d\n", meth_vec[i].pos, meth_vec[i].meth[0], meth_vec[i].meth[1], meth_vec[i].context, meth_vec[i].type);
-        // // }
-
-        // // fill with CGmap
-        // fill_cgmap_chr(cgmap_file, ks->name.s, posidx_arr, meth_vec, false, 0);
-        // //fill_cgmap_chr(cgmap_file, ks->name.s, posidx_arr, meth_vec, true, 0);
-        // //// checked
-        // // for(size_t i = 0; i < meth_vec.size(); i++){
-        // //     fprintf(stdout, "%d\t%f\t%f\t%d\t%d\n", meth_vec[i].pos, meth_vec[i].meth[0], meth_vec[i].meth[1], meth_vec[i].context, meth_vec[i].type);
-        // // }
-
-        // fill_asm_chr(asm_file, ks->name.s, posidx_arr, meth_vec);
-        // // checked
-        // // for(size_t i = 0; i < meth_vec.size(); i++){
-        // //     fprintf(stdout, "%d\t%f\t%f\t%d\t%d\n", meth_vec[i].pos, meth_vec[i].meth[0], meth_vec[i].meth[1], meth_vec[i].context, meth_vec[i].type);
-        // // }
-
-        // fill_beta(meth_vec, param_vec, 1);
-        // // // checked
-        // // for(size_t i = 0; i < meth_vec.size(); i++){
-        // //     fprintf(stdout, "%d\t%f\t%f\t%d\t%d\n", meth_vec[i].pos, meth_vec[i].meth[0], meth_vec[i].meth[1], meth_vec[i].context, meth_vec[i].type);
-        // // }
-
-        // // write methdb
-        // // checked
-        // save_methdb(meth_vec, out_fn);
-
-
-        uint32_t* posidx_arr = (uint32_t*)malloc(ks->seq.l * sizeof(uint32_t));
-        if (posidx_arr == NULL) {fprintf(stderr, "ERROR: could not allocate memory\n");exit(EXIT_FAILURE);} else {
-            memset(posidx_arr, 0, ks->seq.l * sizeof(uint32_t));
-        }
-        fprintf(stderr, "%ld\n", ks->seq.l);
-
-        create_methdb(ks, posidx_arr, meth_vec);
-        load_methdb(posidx_arr, meth_vec, out_fn);
-        
-        for(size_t i = 0; i < meth_vec.size(); i++){
-            fprintf(stdout, "%d\t%f\t%f\t%d\t%d\n", meth_vec[i].pos, meth_vec[i].meth[0], meth_vec[i].meth[1], meth_vec[i].context, meth_vec[i].type);
-        }
-    }
-
-    kseq_destroy(ks);
-    return 0;
-}
-
-//compile: under HTSIM
-//c++ -g -O3 -fpermissive src/methdb.cpp -o methdb -Bstatic -lz \
--I/home/wbguo/iproject/BSReadSim/HTSLIB/htslib/ -L/home/wbguo/iproject/BSReadSim/HTSLIB/ \
--lhts -Wl,-rpath /home/wbguo/iproject/BSReadSim/HTSLIB -lgsl -lgslcblas //-Wall

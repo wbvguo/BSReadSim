@@ -1,19 +1,18 @@
-#ifndef HTSIM_H
-#define HTSIM_H
+#ifndef STRUCT_H
+#define STRUCT_H
 #include <stdint.h>
-#include <string.h>
 #include <vector>
-#include <map>
 
-typedef unsigned short mut_t;
 
 /*-------------------------variable-------------------------*/
-// extern const uint8_t nst_nt4_table[256];
-// extern const uint8_t cg_table[5];
-// extern const uint8_t cg_context_table[64];
-// extern std::map<std::string, int> base_map;
-// extern std::map<std::string, int> context_map;
-// extern std::map<int, int> params_map;
+extern const uint8_t nst_nt4_table[256];
+extern const uint8_t cg_table[5];
+extern const uint8_t cg_context_table[64];
+
+// if the leftmost 4 bit is non-zero, then it must be snp or indel
+enum muttype_t {NOCHANGE = 0, INSERT = 0x1000, SUBSTITUTE = 0xe000, DELETE = 0xf000};
+typedef unsigned short mut_t;
+const mut_t mutmsk;
 
 
 /*-------------------------struct-------------------------*/
@@ -84,6 +83,14 @@ typedef struct {
     int l, m; /* length and maximum buffer size */
     mut_t *s; /* sequence */
 } mutseq_t;
+
+
+typedef struct {
+    float ERR_RATE      = 0.005;
+    float MUT_RATE      = 0.01;
+    float INDEL_FRAC    = 0.15;
+    float INDEL_EXTN    = 0.3;
+} mut_params;
 
 #endif
 
