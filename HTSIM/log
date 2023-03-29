@@ -1,7 +1,0 @@
-Simulating whole genome reads:
-Reference genome file: /home/wbguo/iproject/BSReadSim/test/data/ref/BSB_test.fa
-[main] Calculating the length and count of the reference sequences...
-[main] Contig chr10 specified, total length: 423500, effective length: 423500, #reads: 21175
-[main] No VCF input, will generate SNP randomly if mutation rate is nonzero
-[htsim] seed = 1680041066
-[sim_core] contig 'chr10': simulate 21175 reads...
