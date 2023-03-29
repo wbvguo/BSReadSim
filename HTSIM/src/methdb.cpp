@@ -102,13 +102,16 @@ std::map<int, int> params_map = {{1,0}, {3,1}, {7,2}, {9,0}, {11,1}, {15,2}}; //
 // create/stream MethDB
 void create_methdb(const kseq_t *ks, uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec)
 {
-    meth_vec.clear();               // clean the container
+    int k = ks->seq.l;
+    meth_vec.clear();               // clean the container and reserve
+    meth_vec.reserve(k/2);
+    
     meth_rec tmp_meth;
-    meth_vec.push_back(tmp_meth);   // put the unitialized meth_rec into as the first element
+    meth_vec.push_back(tmp_meth);   // put the unitialized meth_rec as the first element
 
     int c, c_d1, c_d2;
     uint32_t ix = 1;
-    int k = ks->seq.l;
+    
     for (int i = 0; i < k; ++i) {
         c = nst_nt4_table[(int)ks->seq.s[i]];
         if (cg_table[(uint8_t) c]){
@@ -163,21 +166,23 @@ void update_methdb(uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec, mutseq
     }
 }
 
-void save_methdb(std::vector<meth_rec>& meth_vec, char *fname)
+void save_methdb(std::vector<meth_rec>& meth_vec, const char *fname)
 {
     FILE* fp = fopen(fname, "w");
     if(fp==NULL){fprintf(stderr, "[%s] ERROR: open methdb file: %s failed. Exit...", __func__, fname); exit (EXIT_FAILURE);}
 
     meth_rec tmp_meth;
-    for (size_t i=0; i < meth_vec.size(); ++i){
+    for (size_t i=1; i < meth_vec.size(); ++i){
         tmp_meth = meth_vec[i];
-        fprintf(fp, "%d\t%f\t%f\t%d\t%d", tmp_meth.pos, tmp_meth.meth[0], tmp_meth.meth[1], tmp_meth.context, tmp_meth.type);
+        fprintf(fp, "%d\t%f\t%f\t%d\t%d\n", tmp_meth.pos, tmp_meth.meth[0], tmp_meth.meth[1], tmp_meth.context, tmp_meth.type);
+        if (ferror(fp)) {fprintf(stderr, "[%s] ERROR: failed to write to file %s. Exit...", __func__, fname);exit(EXIT_FAILURE);}
     }
     fclose(fp);
 }
 
 void parse_methdb_line(char *line, meth_rec *tmp_meth)
 {
+    // if (line == NULL) {fprintf(stderr, "[%s] ERROR: input line is null. Exit...\n", __func__); exit(EXIT_FAILURE);}
 	char *p, *q= 0;
     int i, pos=-1;
 	float ref_meth=-1, alt_meth=-1;
@@ -221,7 +226,7 @@ void load_methdb(uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec, char *fn
     int num_tot_site= 0;
 
     while ((ret = hts_getline(fp, KS_SEP_LINE, &line)) >= 0) {
-        parse_methdb_line(line.s, &tmp_meth); //might need to test
+        parse_methdb_line(line.s, &tmp_meth);
         if (tmp_meth.pos == -1) {continue;}
         ++num_tot_site;
 
@@ -236,9 +241,11 @@ void load_methdb(uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec, char *fn
     }
     free(line.s);
     if ((ret=hts_close(fp))){fprintf(stderr,"[%s] ERROR: hts_close(%s): non-zero status %d\n", __func__, fname, ret); exit(ret);}
-    float ratio_404 = (float)num_404_site/num_tot_site;
-    if(ratio_404 > 0.5){fprintf(stderr,"[%s] WARNING: over 50%% sites in CGmap file are not compatible with reference genome, please check!\n", __func__); exit(1);}
-    fprintf(stderr,"[%s] %d sites found in cgmap, among them %.2f%% sites not compatiable\n", __func__, num_tot_site, ratio_404);
+    if(num_tot_site==0){fprintf(stderr,"[%s] no valid site found in methdb file: %s. Skip...\n", __func__, fname); /*exit (EXIT_FAILURE);*/}else{
+        float ratio_404 = (float)num_404_site/num_tot_site;
+        if(ratio_404 > 0.5){fprintf(stderr,"[%s] WARNING: over 50%% sites in CGmap file are not compatible with reference genome, please check!\n", __func__); exit(1);}
+        fprintf(stderr,"[%s] %d sites found in cgmap, among them %.2f%% sites not compatiable\n", __func__, num_tot_site, ratio_404);
+    }
 }
 
 
@@ -268,11 +275,12 @@ int parse_cgmap_line(char *line, char *chr_id, meth_rec *tmp_meth)
 		}
 	}
 
-    if(i < 5){fprintf(stderr, "[%s] Skip invalid site: chr %s, position %d...\n", __func__, chr_id, pos); return 0;}
+    if(i < 5){fprintf(stderr, "[%s] Skip invalid site: chr %s, position %d...\n", __func__, chr_id, pos); free(base); free(context); return 0;}
 
     tmp_meth->meth[0]  = meth;
     tmp_meth->pos      = pos - 1; // convert to 0-based
     tmp_meth->context  = base_map[base] << 3 | context_map[std::string(context)];
+    free(base); free(context);
     return 0;
 }
 
@@ -293,15 +301,27 @@ void pool_cgmap(std::vector<meth_rec>& meth_vec, int seed)
 
     if (seed <= 0) seed = time(0)&0x7fffffff;
     std::mt19937 eng(seed);
-    std::uniform_int_distribution<> dist_cg(0, cg_vec.size()-1);
-    std::uniform_int_distribution<> dist_chg(0, chg_vec.size()-1);
-    std::uniform_int_distribution<> dist_chh(0, chh_vec.size()-1); // check if the vector can be length of 0
+    std::uniform_int_distribution<> dist_cg;
+    std::uniform_int_distribution<> dist_chg;
+    std::uniform_int_distribution<> dist_chh;
+    bool cg_filled  = !cg_vec.empty();
+    bool chg_filled = !chg_vec.empty();
+    bool chh_filled = !chh_vec.empty();
+    if (cg_filled) {dist_cg  = std::uniform_int_distribution<>(0, cg_vec.size()  - 1);}
+    if (chg_filled){dist_chg = std::uniform_int_distribution<>(0, chg_vec.size() - 1);}
+    if (chh_filled){dist_chh = std::uniform_int_distribution<>(0, chh_vec.size() - 1);}
 
-    for (size_t i=0; i < meth_vec.size(); ++i){
-        int tmp_context = meth_vec[i].context &0x7;
-        if(tmp_context == 1){meth_vec[i].meth[0] = cg_vec[dist_cg(eng)];
-        }else if (tmp_context == 3){meth_vec[i].meth[0] = chg_vec[dist_chg(eng)];
-        }else{meth_vec[i].meth[0] = chh_vec[dist_chh(eng)];}
+    for (size_t i = 1; i < meth_vec.size(); ++i) {
+        int tmp_context = meth_vec[i].context & 0x7;
+        if (tmp_context == 1 && cg_filled) {
+            meth_vec[i].meth[0] = cg_vec[dist_cg(eng)];
+        } else if (tmp_context == 3 && chg_filled) {
+            meth_vec[i].meth[0] = chg_vec[dist_chg(eng)];
+        } else if (tmp_context == 7 && chh_filled) {
+            meth_vec[i].meth[0] = chh_vec[dist_chh(eng)];
+        }
+        meth_vec[i].meth[1] = meth_vec[i].meth[0];
+        meth_vec[i].type = 10;
     }
 }
 
@@ -323,7 +343,7 @@ void fill_cgmap_chr(char *fname, char *chr_id, uint32_t *posidx_arr, std::vector
         if (collect_present == false && collect_previous == true) { break; } // finished collecting
         // a new round, save last status
         collect_previous= collect_present;
-        int skip_status = parse_cgmap_line(line.s, chr_id, &tmp_meth); //might need to test
+        int skip_status = parse_cgmap_line(line.s, chr_id, &tmp_meth);
         if(skip_status){collect_present = false; continue;}
         if (tmp_meth.pos == -1) {continue;}
         ++num_tot_site;
@@ -337,12 +357,13 @@ void fill_cgmap_chr(char *fname, char *chr_id, uint32_t *posidx_arr, std::vector
     }
     free(line.s);
     if ((ret=hts_close(fp))){fprintf(stderr,"[%s] ERROR: hts_close(%s): non-zero status %d\n", __func__, fname, ret); exit(ret);}
-    float ratio_404 = (float)num_404_site/num_tot_site;
-    if(ratio_404 > 0.5){fprintf(stderr,"[%s] WARNING: over 50%% sites in CGmap file are not compatible with reference genome, please check!\n", __func__); exit(1);}
-    fprintf(stderr,"[%s] Contig %s: %d sites found in cgmap, among them %.2f%% sites not compatiable\n", __func__, chr_id, num_tot_site, ratio_404);
-
+    if(num_tot_site == 0){fprintf(stderr,"[%s] no valid sites found in CGmap file: %s. Skip...\n", __func__, fname); /*exit (EXIT_FAILURE);*/}else{
+        float ratio_404 = (float)num_404_site/num_tot_site;
+        if(ratio_404 > 0.5){fprintf(stderr,"[%s] WARNING: over 50%% sites in CGmap file are not compatible with reference genome, please check!\n", __func__); exit(1);}
+        fprintf(stderr,"[%s] Contig %s: %d sites found in cgmap, among them %.2f%% sites not compatiable\n", __func__, chr_id, num_tot_site, ratio_404);
+    }
+    
     if(cgmap_pool){pool_cgmap(meth_vec, seed);}
-    for (size_t i=0; i < meth_vec.size(); ++i){meth_vec[i].meth[1]  = meth_vec[i].meth[0];}
 }
 
 
@@ -372,11 +393,12 @@ int parse_asm_line(char *line, char *chr_id, meth_rec *tmp_meth)
 		}
 	}
 
-    if(i < 5){fprintf(stderr, "[%s] Skip invalid site: chr %s, position %d...\n", __func__, chr_id, pos); return 0;}
+    if(i < 5){fprintf(stderr, "[%s] Skip invalid site: chr %s, position %d...\n", __func__, chr_id, pos); free(base); return 0;}
 
     tmp_meth->pos     = pos - 1;     // 0-based
     tmp_meth->meth[0] = ref_meth;
     tmp_meth->meth[1] = alt_meth;
+    free(base);
     return 0;
 }
 
@@ -398,7 +420,7 @@ void fill_asm_chr(char *fname, char *chr_id, uint32_t *posidx_arr, std::vector<m
         if (collect_present == false && collect_previous == true) { break; } // finished collecting
         // a new round, save last status
         collect_previous= collect_present;
-        int skip_status = parse_cgmap_line(line.s, chr_id, &tmp_meth); //might need to test
+        int skip_status = parse_asm_line(line.s, chr_id, &tmp_meth); //might need to test
         if(skip_status){collect_present = false; continue;}
         if (tmp_meth.pos == -1) {continue;}
         ++num_tot_site;
@@ -412,9 +434,11 @@ void fill_asm_chr(char *fname, char *chr_id, uint32_t *posidx_arr, std::vector<m
     }
     free(line.s);
     if ((ret=hts_close(fp))){fprintf(stderr,"[%s] ERROR: hts_close(%s): non-zero status %d\n", __func__, fname, ret); exit(ret);}
-    float ratio_404 = (float)num_404_site/num_tot_site;
-    if(ratio_404 > 0.5){fprintf(stderr,"[%s] WARNING: over 50%% sites in ASM file are not compatiable with reference genome, please check!\n", __func__); exit(1);}
-    fprintf(stderr,"[%s] Contig %s: %d sites found in cgmap, among them %.2f%% sites not compatiable\n", __func__, chr_id, num_tot_site, ratio_404);    
+    if(num_tot_site == 0){fprintf(stderr,"[%s] no valid sites found in ASM file: %s. Skip...\n", __func__, fname); /*exit (EXIT_FAILURE);*/}else{
+        float ratio_404 = (float)num_404_site/num_tot_site;
+        if(ratio_404 > 0.5){fprintf(stderr,"[%s] WARNING: over 50%% sites in ASM file are not compatiable with reference genome, please check!\n", __func__); exit(1);}
+        fprintf(stderr,"[%s] Contig %s: %d sites found in cgmap, among them %.2f%% sites not compatiable\n", __func__, chr_id, num_tot_site, ratio_404);   
+    }
 }
 
 
@@ -426,15 +450,15 @@ void parse_param(char *param_str, std::vector<param_rec>& param_vec)
     std::string tmp_str;
     
     for(int i =0; param_str[i] !='\0'; ++i){
-        if (param_str[i] == '|'){
+        if (param_str[i] == '|'){               // alpha found
             tmp_param.alpha = stof(tmp_str);
             tmp_str.clear();
-        } else if (param_str[i] == ',') {
+        } else if (param_str[i] == ',') {       // beta found
             tmp_param.beta  = stof(tmp_str);
-            if (tmp_param.alpha>=0 && tmp_param.beta>=0){param_vec.push_back(tmp_param);}else{
-                // parameter string can be can be illegal negative
-                fprintf (stderr, "[%s] ERROR: Invalid parameter format (%s). Exit... \n", __func__, param_str); exit (EXIT_FAILURE);
+            if (tmp_param.alpha < 0 || tmp_param.beta < 0){
+                fprintf (stderr, "[%s] ERROR: parameter cannot be negative (%s). Exit... \n", __func__, param_str); exit (EXIT_FAILURE);
             }
+            param_vec.push_back(tmp_param);
             tmp_str.clear();
             tmp_param = {};
             continue;
@@ -442,12 +466,14 @@ void parse_param(char *param_str, std::vector<param_rec>& param_vec)
             tmp_str += param_str[i];
         }
     }
-    // when finished, check tmp_str (deals with forgetting the last ',')
+
+    // Check for an incomplete parameter at the end (missing comma)
     if (!tmp_str.empty()){
         tmp_param.beta  = stof(tmp_str);
-        if (tmp_param.alpha>=0 && tmp_param.beta>=0){param_vec.push_back(tmp_param);}else{
-            fprintf (stderr, "[%s] ERROR: Invalid parameter format (%s). Exit... \n", __func__, param_str); exit (EXIT_FAILURE);
+        if (tmp_param.alpha < 0 || tmp_param.beta < 0){
+            fprintf (stderr, "[%s] ERROR: parameter cannot be negative (%s). Exit... \n", __func__, param_str); exit (EXIT_FAILURE);
         }
+        param_vec.push_back(tmp_param);
     }
 }
 
@@ -458,29 +484,33 @@ float gen_beta(gsl_rng *rng, uint8_t context, std::vector<param_rec>& param_vec)
 
 void fill_beta(std::vector<meth_rec>& meth_vec, std::vector<param_rec>& param_vec, int seed)
 {
-    const gsl_rng_type * T;
-    gsl_rng *rng;
+    if(param_vec.size()==0){fprintf(stderr,"[%s] ERROR: No parameter provided. Exit...\n", __func__); exit(1);}
+    
+    const gsl_rng_type * T = gsl_rng_default;
+    gsl_rng *rng = gsl_rng_alloc(T);
     gsl_rng_env_setup();
-    T = gsl_rng_default;
-    rng = gsl_rng_alloc(T);
     if (seed <= 0) seed = time(0)&0x7fffffff;
     gsl_rng_set(rng, seed);
 
-    for (size_t i=0; i < meth_vec.size(); ++i){
-        //detect if it's not filled
-        if(meth_vec[i].type){continue;}
-        meth_vec[i].meth[0] = gen_beta(rng, meth_vec[i].context, param_vec);
-        meth_vec[i].meth[1] = meth_vec[i].meth[0];
-        meth_vec[i].type    = 8;
+    for (size_t i=1; i < meth_vec.size(); ++i){
+        if(meth_vec[i].type){
+            if(meth_vec[i].meth[1] < 0){meth_vec[i].meth[1]  = meth_vec[i].meth[0];}
+        }else{
+            //if it's not filled
+            meth_vec[i].meth[0] = gen_beta(rng, meth_vec[i].context, param_vec);
+            meth_vec[i].meth[1] = meth_vec[i].meth[0];
+            meth_vec[i].type    = 8;
+        }
     }
+    gsl_rng_free(rng);
 }
 
 
 
-// main & test
+// test in the main function
 int main()
 {
-    fprintf(stderr, "check\n");
+    fprintf(stderr, "Test\n");
     char ref_file[]     = "/home/wbguo/iproject/BSReadSim/test/data/ref/BSB_test.fa";
     char cgmap_file[]   = "/home/wbguo/iproject/BSReadSim/test/data/sim/pe_d/sim.CGmap.gz";
     char asm_file[]     = "/home/wbguo/iproject/BSReadSim/test/data/sim/pe_d/sim.asm.gz";
@@ -493,12 +523,55 @@ int main()
     kseq_t *ks;
     gzFile   fp_fa;
     char *fn = ref_file;
+    char *out_fn = methdb_file;
+
     fp_fa = gzopen(fn, "r");
     ks = kseq_init(fp_fa);
     int l;
+    parse_param(param_str, param_vec);
 
     while ((l = kseq_read(ks)) >= 0) {
+        if (strcmp(ks->name.s, contig_id) != 0){continue;}
         fprintf(stderr, "[%s] contig '%s' \n", __func__, ks->name.s);
+        
+
+        // uint32_t* posidx_arr = (uint32_t*)malloc(ks->seq.l * sizeof(uint32_t));
+        // if (posidx_arr == NULL) {fprintf(stderr, "ERROR: could not allocate memory\n");exit(EXIT_FAILURE);} else {
+        //     memset(posidx_arr, 0, ks->seq.l * sizeof(uint32_t));
+        // }
+        // fprintf(stderr, "%ld\n", ks->seq.l);
+
+        // create_methdb(ks, posidx_arr, meth_vec);
+        // //// checked
+        // // for(size_t i = 0; i < meth_vec.size(); i++){ 
+        // //     fprintf(stdout, "%d\t%f\t%f\t%d\t%d\n", meth_vec[i].pos, meth_vec[i].meth[0], meth_vec[i].meth[1], meth_vec[i].context, meth_vec[i].type);
+        // // }
+
+        // // fill with CGmap
+        // fill_cgmap_chr(cgmap_file, ks->name.s, posidx_arr, meth_vec, false, 0);
+        // //fill_cgmap_chr(cgmap_file, ks->name.s, posidx_arr, meth_vec, true, 0);
+        // //// checked
+        // // for(size_t i = 0; i < meth_vec.size(); i++){
+        // //     fprintf(stdout, "%d\t%f\t%f\t%d\t%d\n", meth_vec[i].pos, meth_vec[i].meth[0], meth_vec[i].meth[1], meth_vec[i].context, meth_vec[i].type);
+        // // }
+
+        // fill_asm_chr(asm_file, ks->name.s, posidx_arr, meth_vec);
+        // // checked
+        // // for(size_t i = 0; i < meth_vec.size(); i++){
+        // //     fprintf(stdout, "%d\t%f\t%f\t%d\t%d\n", meth_vec[i].pos, meth_vec[i].meth[0], meth_vec[i].meth[1], meth_vec[i].context, meth_vec[i].type);
+        // // }
+
+        // fill_beta(meth_vec, param_vec, 1);
+        // // // checked
+        // // for(size_t i = 0; i < meth_vec.size(); i++){
+        // //     fprintf(stdout, "%d\t%f\t%f\t%d\t%d\n", meth_vec[i].pos, meth_vec[i].meth[0], meth_vec[i].meth[1], meth_vec[i].context, meth_vec[i].type);
+        // // }
+
+        // // write methdb
+        // // checked
+        // save_methdb(meth_vec, out_fn);
+
+
         uint32_t* posidx_arr = (uint32_t*)malloc(ks->seq.l * sizeof(uint32_t));
         if (posidx_arr == NULL) {fprintf(stderr, "ERROR: could not allocate memory\n");exit(EXIT_FAILURE);} else {
             memset(posidx_arr, 0, ks->seq.l * sizeof(uint32_t));
@@ -506,24 +579,18 @@ int main()
         fprintf(stderr, "%ld\n", ks->seq.l);
 
         create_methdb(ks, posidx_arr, meth_vec);
-        //for (size_t i = 0; i < ks->seq.l; i++){fprintf(stdout, "%ld\t%d\n", i, posidx_arr[i]);}
-
-        // fill with CGmap
-        fill_cgmap_chr(cgmap_file, contig_id, posidx_arr, meth_vec, false, 0);
-
-        fill_asm_chr(asm_file, ks->name.s, posidx_arr, meth_vec);
-        fill_beta(meth_vec, param_vec, 1);
- 
+        load_methdb(posidx_arr, meth_vec, out_fn);
+        
         for(size_t i = 0; i < meth_vec.size(); i++){
             fprintf(stdout, "%d\t%f\t%f\t%d\t%d\n", meth_vec[i].pos, meth_vec[i].meth[0], meth_vec[i].meth[1], meth_vec[i].context, meth_vec[i].type);
         }
-        break;
     }
-
 
     kseq_destroy(ks);
     return 0;
 }
 
 //compile: under HTSIM
-//c++ -g -O3 -fpermissive   src/methdb.cpp -o methdb -Bstatic -lz  -I/home/wbguo/iproject/BSReadSim/HTSLIB/htslib/ -L/home/wbguo/iproject/BSReadSim/HTSLIB/ -lhts -Wl,-rpath /home/wbguo/iproject/BSReadSim/HTSLIB -lgsl -lgslcblas
+//c++ -g -O3 -fpermissive src/methdb.cpp -o methdb -Bstatic -lz \
+-I/home/wbguo/iproject/BSReadSim/HTSLIB/htslib/ -L/home/wbguo/iproject/BSReadSim/HTSLIB/ \
+-lhts -Wl,-rpath /home/wbguo/iproject/BSReadSim/HTSLIB -lgsl -lgslcblas //-Wall

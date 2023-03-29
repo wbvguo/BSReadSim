@@ -61,7 +61,7 @@ typedef struct {
     uint32_t chr_len= 0;
     uint32_t eff_len= 0;
     uint32_t count  = 0;
-    float   score = 0;
+    float    score  = 0;
 } chr_rec;                  /*each struct take <= 16 bytes*/
 
 
@@ -70,7 +70,7 @@ typedef struct {
     int pos = -1;
     float meth[2]  = {-1,-1};
     uint8_t context= 0;     /*1,3,7;9,11,15 for the context*/
-    uint8_t type   = 0;     /*0,1,2,4,8 for cgmap, pool, asm, beta*/
+    uint8_t type   = 0;     /*0,2,4,8,10 for uninitial, cgmap, asm, beta, pool*/
     // int16_t asm_ofs= 0;     /*0,1 for asm*/
 } meth_rec;                 /*each struct take 15 bytes*/
 

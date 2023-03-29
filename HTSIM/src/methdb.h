@@ -12,13 +12,13 @@
 // create/stream MethDB
 void create_methdb(const kseq_t *ks, uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec);
 
-void save_methdb(std::vector<meth_rec>& meth_vec, char *fname);
+void update_methdb(uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec, mutseq_t *hap1, mutseq_t *hap2, bool bool_asm_set, bool bool_update_boundary);
+
+void save_methdb(std::vector<meth_rec>& meth_vec, const char *fname);
 
 void parse_methdb_line(char *line, meth_rec *tmp_meth);
 
 void load_methdb(uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec, char *fname);
-
-void update_methdb(uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec, mutseq_t *hap1, mutseq_t *hap2, bool bool_asm_set, bool bool_update_boundary);
 
 // for CGmap
 int parse_cgmap_line(char *line, char *chr_id, meth_rec *tmp_meth);
