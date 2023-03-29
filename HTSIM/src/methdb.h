@@ -2,9 +2,10 @@
 #define METHDB_H
 
 #include <vector>
+#include <map>
+#include <zlib.h>
 #include <random>
 #include <gsl/gsl_randist.h>
-#include <zlib.h>
 #include "kseq.h"
 #include "vcf.h"
 #include "struct.h"
