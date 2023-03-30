@@ -53,22 +53,6 @@ KSEQ_INIT(gzFile, gzread)
 #define PACKAGE_VERSION "1.0.3"
 
 
-//  global variables, only changed at program start.
-static float ERR_RATE  = 0.005;
-static float MUT_RATE  = 0.01;
-static float INDEL_FRAC= 0.15;
-static float INDEL_EXTN= 0.3;
-static float MAX_N_RATIO=0.05;
-
-static int MEAN_INSERT  = 500;
-static int SD_INSERT    = 50;
-static int MIN_INSERT   = 100;
-static int MAX_INSERT   = 1000;
-static int SIZE_L       = 100;
-static int SIZE_R       = 100;
-static int SD_CENTER    = 50;
-static int BIN_SIZE     = 100;
-
 static uint8_t MATCH    = 0x00;
 static uint8_t SNV      = 0x10;
 static uint8_t INSR     = 0x30;
@@ -117,20 +101,20 @@ bool compare_frag_rec(const frag_rec &a, const frag_rec &b)
 }
 
 void gen_frag_vec(std::uniform_int_distribution<int> *dis_ud, std::discrete_distribution<int> *dis_dd, 
-                    uint32_t *posidx_arr, std::vector<frag_rec> &frag_vec, int chunk_size, int tech_mode, bool is_uniform)
+                    uint32_t *posidx_arr, std::vector<frag_rec> &frag_vec, expt_param *expt_set)
 {
     frag_rec tmp_frag;
     int pos_l, pos_r, insert_dev, insert_len, frag_idx, probe_center, frag_center, i;
 
     frag_vec.clear();
-    if(tech_mode ==2){
-        for(i = 0; i < chunk_size; ++i){
-            frag_idx = is_uniform ? (*dis_ud)(gen) : (*dis_dd)(gen);
+    if(expt_set->tech_mode ==2){
+        for(i = 0; i < expt_set->chunk_size; ++i){
+            frag_idx = expt_set->is_uniform ? (*dis_ud)(gen) : (*dis_dd)(gen);
             probe_rec tmp_probe = probe_vec[frag_idx];
             probe_center = (tmp_probe.pos_l + tmp_probe.pos_r) >> 1;
-            frag_center= probe_center + (int)(SD_CENTER * dis_rn(gen_rn));
-            insert_dev = (int)(SD_INSERT * dis_rn(gen_rn));
-            insert_len = std::max(MIN_INSERT, std::min(MEAN_INSERT + insert_dev, MAX_INSERT));
+            frag_center= probe_center + (int)(expt_set->sd_center * dis_rn(gen_rn));
+            insert_dev = (int)(expt_set->sd_insert * dis_rn(gen_rn));
+            insert_len = std::max(expt_set->min_insert, std::min(expt_set->mean_insert + insert_dev, expt_set->max_insert));
             
             tmp_frag.pos_l = frag_center - (insert_len>>1);
             tmp_frag.pos_r = frag_center + (insert_len>>1); 
@@ -139,9 +123,9 @@ void gen_frag_vec(std::uniform_int_distribution<int> *dis_ud, std::discrete_dist
             frag_vec.push_back(tmp_frag);
             tmp_frag = {};
         }
-    }else if (tech_mode == 1){
-        for(i = 0; i < chunk_size; ++i){
-            frag_idx = is_uniform ? (*dis_ud)(gen) : (*dis_dd)(gen);
+    }else if (expt_set->tech_mode == 1){
+        for(i = 0; i < expt_set->chunk_size; ++i){
+            frag_idx = expt_set->is_uniform ? (*dis_ud)(gen) : (*dis_dd)(gen);
             probe_rec tmp_probe = probe_vec[frag_idx];
             tmp_frag.pos_l = tmp_probe.pos_l;
             tmp_frag.pos_r = tmp_frag.pos_r;
@@ -151,11 +135,11 @@ void gen_frag_vec(std::uniform_int_distribution<int> *dis_ud, std::discrete_dist
             tmp_frag = {};
         }
     }else{
-        if(is_uniform){
-            for(i = 0; i < chunk_size; ++i){
+        if(expt_set->is_uniform){
+            for(i = 0; i < expt_set->chunk_size; ++i){
                 pos_l = (*dis_ud)(gen);
-                insert_dev = (int)(SD_INSERT * dis_rn(gen_rn));
-                insert_len = std::max(MIN_INSERT, std::min(MEAN_INSERT + insert_dev, MAX_INSERT));
+                insert_dev = (int)(expt_set->sd_insert * dis_rn(gen_rn));
+                insert_len = std::max(expt_set->min_insert, std::min(expt_set->mean_insert + insert_dev, expt_set->max_insert));
                 //pos_r = std::min(pos_l + insert_len, tot_size -2); //will not pass boundary
                 tmp_frag.pos_l = pos_l;
                 tmp_frag.pos_r = pos_l+insert_len;
@@ -165,14 +149,14 @@ void gen_frag_vec(std::uniform_int_distribution<int> *dis_ud, std::discrete_dist
                 tmp_frag = {};
             }
         }else{
-            while ((int)frag_vec.size()< chunk_size){
+            while ((int)frag_vec.size()< expt_set->chunk_size){
                 pos_l = (*dis_ud)(gen);
-                insert_dev = (int)(SD_INSERT * dis_rn(gen_rn));
-                insert_len = std::max(MIN_INSERT, std::min(MEAN_INSERT + insert_dev, MAX_INSERT));
+                insert_dev = (int)(expt_set->sd_insert * dis_rn(gen_rn));
+                insert_len = std::max(expt_set->min_insert, std::min(expt_set->mean_insert + insert_dev, expt_set->max_insert));
                 pos_r = pos_l + insert_len;
                 int gc_count =0;
                 for(int kk = pos_l; kk <= pos_r; ++kk){gc_count += (posidx_arr[kk] & 0x2)>>1;}
-                float gc_prob = eff_vec[(int)(gc_count*BIN_SIZE/insert_len+0.5)];
+                float gc_prob = eff_vec[(int)(gc_count*expt_set->bin_size/insert_len+0.5)];
                 if(dis_ru(gen_ru) > gc_prob){   // when initiate eff_vec, judge the value in case it's too small
                     tmp_frag.pos_l = pos_l;
                     tmp_frag.pos_r = pos_r;
@@ -187,24 +171,24 @@ void gen_frag_vec(std::uniform_int_distribution<int> *dis_ud, std::discrete_dist
     std::sort(frag_vec.begin(), frag_vec.end(), compare_frag_rec);
 }
 
-void check_frag_vec(std::vector<frag_rec> &frag_vec, mutseq_t *hap1, mutseq_t *hap2, int tech_mode)
+void check_frag_vec(std::vector<frag_rec> &frag_vec, mutseq_t *hap1, mutseq_t *hap2, expt_param *expt_set)
 {
     // find out the start position for read2, TODO: check if the boundaries satisfy for RRBS
-    if(tech_mode == 1){
+    if(expt_set->tech_mode == 1){
         mutseq_t *ret[2];
         ret[0] = hap1; ret[1] = hap2;
         for(size_t i =0; i < frag_vec.size(); ++i){
             int start2 = frag_vec[i].pos_r;
             int haplo  = frag_vec[i].haplo;
-            for(int k=0; k < SIZE_R; k++){
+            for(int k=0; k < expt_set->size_r; k++){
                 int c = ret[haplo]->s[start2], mut_type = c & mutmsk;
                 if(mutmsk == DELETE){
                     --start2;
                     --k;
                 }else if(mutmsk == INSERT){
                     int num_ins = mut_type>>12;
-                    if(k + num_ins > SIZE_R){
-                        start2 -= SIZE_R - k;
+                    if(k + num_ins > expt_set->size_r){
+                        start2 -= expt_set->size_r - k;
                     }else{
                         start2 -= num_ins;
                         k += num_ins;
@@ -217,14 +201,13 @@ void check_frag_vec(std::vector<frag_rec> &frag_vec, mutseq_t *hap1, mutseq_t *h
         }
     }else{
         for(size_t i =0; i < frag_vec.size(); ++i){
-            frag_vec[i].start2 = frag_vec[i].pos_r - SIZE_R;
+            frag_vec[i].start2 = frag_vec[i].pos_r - expt_set->size_r;
         }
     }
 }
 
-void sim_core(const char *fn, bool is_hap, bool is_uniform, int tech_mode, int output_fmt, int chunk_size,
-                char *vcf_file, char *bed_file, char *chr_id,
-                bool methdb_save, char *methdb_file, char *cgmap_file, bool cgmap_pool, char *asm_file, int meth_seed)
+void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char *methdb_file, char *cgmap_file, char *asm_file, 
+                expt_param *expt_set, mut_param *mut_set, meth_param *meth_set)
 {
     kseq_t *ks;
     mutseq_t rseq[2];
@@ -234,89 +217,73 @@ void sim_core(const char *fn, bool is_hap, bool is_uniform, int tech_mode, int o
     int8_t  *tmp_offset[2]; 	// save offset per base
     uint8_t *tmp_context[2];	// save context (CG, CHG, CHH)
     mut_t *target;
-    int size[2], Q, max_size, l = 0;
+    int size[2], Q, max_length;
 
-    max_size = std::max(SIZE_L, SIZE_R);
-    tmp_seq[0] = (uint8_t*)calloc(max_size+2, 1);
-    tmp_seq[1] = (uint8_t*)calloc(max_size+2, 1);
-    tmp_offset[0]= (int8_t*)calloc(max_size+2, 1);
-    tmp_offset[1]= (int8_t*)calloc(max_size+2, 1);
-    tmp_context[0] = (uint8_t*)calloc(max_size+2, 1);   // save context and mutation type
-    tmp_context[1] = (uint8_t*)calloc(max_size+2, 1);
-    size[0] = SIZE_L; size[1] = SIZE_R;
+    max_length = std::max(expt_set->size_l, expt_set->size_r);
+    tmp_seq[0] = (uint8_t*)calloc(max_length+2, 1);
+    tmp_seq[1] = (uint8_t*)calloc(max_length+2, 1);
+    tmp_offset[0]= (int8_t*)calloc(max_length+2, 1);
+    tmp_offset[1]= (int8_t*)calloc(max_length+2, 1);
+    tmp_context[0] = (uint8_t*)calloc(max_length+2, 1);   // save context and mutation type
+    tmp_context[1] = (uint8_t*)calloc(max_length+2, 1);
+    size[0] = expt_set->size_l; size[1] = expt_set->size_r;
 
     // TODO: thouroughly check i++ and ++i
-
-    Q = (ERR_RATE == 0.0)? 'I' : (int)(-10.0 * log(ERR_RATE) / log(10.0) + 0.499) + 33;
-
-    bool bool_chr_set   = strcmp(chr_id, "None") && strlen(chr_id);
-    bool bool_vcf_set   = strcmp(vcf_file,"None") && strlen(vcf_file);
-    bool bool_methdb_set= strcmp(methdb_file,"None") && strlen(methdb_file);
-    bool bool_cgmap_set = strcmp(cgmap_file,"None") && strlen(cgmap_file);
-    bool bool_asm_set   = strcmp(asm_file,"None") && strlen(asm_file);
-    bool bool_cgmap_pool= cgmap_pool;
-    bool bool_methdb_save=methdb_save;
-
-    mut_params tmp_params   = {};
-    tmp_params.ERR_RATE     = ERR_RATE;
-    tmp_params.MUT_RATE     = MUT_RATE;
-    tmp_params.INDEL_FRAC   = INDEL_FRAC;
-    tmp_params.INDEL_EXTN   = INDEL_EXTN;
+    Q = (expt_set->err_rate == 0.0)? 'I' : (int)(-10.0 * log(expt_set->err_rate) / log(10.0) + 0.499) + 33;
 
 
     // start simulate
     fp_fa = gzopen(fn, "r");
     ks = kseq_init(fp_fa);
-
+    int l = 0;
     while ((l = kseq_read(ks)) >= 0) {  //here l is the chromosome length
-        if (bool_chr_set) {if (strcmp(chr_id, ks->name.s)!=0){continue;}}
-        if (l < MEAN_INSERT + 3 * SD_INSERT) {continue;}
+        if (expt_set->is_chr_set) {if (strcmp(chr_id, ks->name.s)!=0){continue;}}
+        if (l < expt_set->mean_insert + 3 * expt_set->sd_insert) {continue;}
+
         n_pairs = chr_count[std::string(ks->name.s)].count;
         if(!n_pairs){fprintf(stderr, "[%s] skip contig '%s' for its #reads is 0...\n", __func__, ks->name.s); continue;}
         fprintf(stderr, "[%s] contig '%s': simulate %ld reads...\n", __func__, ks->name.s, n_pairs);
 
         // Initialize pos_idx array as 0, last 2 bits: whether it's C/G, if it's a SNP position (base can be either REF/ALT)
-        // uint8_t posidx_arr[ks->seq.l] = {0}; // only work when length is small, otherwise overflow
-        uint32_t* posidx_arr = (uint32_t*)malloc(ks->seq.l * sizeof(uint32_t));
-        if (posidx_arr == NULL) {fprintf(stderr, "ERROR: could not allocate memory\n");exit(EXIT_FAILURE);} else {
-            memset(posidx_arr, 0, ks->seq.l * sizeof(uint32_t));
-        }
+        // uint8_t posidx_arr[ks->seq.l] = {0}; // only work when length is small, otherwise stack overflow
+        uint32_t* posidx_arr = (uint32_t*) calloc(ks->seq.l, sizeof(uint32_t));
+        if (posidx_arr == NULL) { fprintf(stderr, "ERROR: could not allocate memory\n");exit(EXIT_FAILURE);}
 
         // introduce mutations and print them to stdout
         fprintf(stdout, "Contig Variant Start\n");
-        if(bool_vcf_set){
+        if(mut_set->is_vcf_set){
             sim_mut_vcf(ks, vcf_file, rseq, rseq+1, posidx_arr, snp_vec);
-            if(snp_vec.size() == 0){fprintf(stdout, "%s\n", ks->name.s);}   //if no variants, print chromosome id
+            if(snp_vec.size() == 0){fprintf(stdout, "%s\n", ks->name.s);}       //if no variants, print chromosome id
         } else {
-            sim_mut_diref(ks, is_hap, rseq, rseq+1, posidx_arr, &tmp_params);
-            if(MUT_RATE == 0.0){fprintf(stdout, "%s\n", ks->name.s);}       //if no variants, print chromosome id            
+            sim_mut_diref(ks, mut_set, rseq, rseq+1, posidx_arr);
+            if(mut_set->mut_rate == 0.0){fprintf(stdout, "%s\n", ks->name.s);}  //if no variants, print chromosome id
         }
-        sim_print_mutref(ks->name.s, ks, rseq, rseq+1, output_fmt);
+        sim_print_mutref(ks->name.s, ks, rseq, rseq+1, expt_set->output_fmt);
         fprintf(stdout, "Contig Variant End\n");
 
         bool bool_update_boundary = false;
 
         // load or create the methdb
-        if(bool_methdb_set){
+        if(meth_set->is_methdb_set){
             // can check methdb_file's filename is the same as ks.name
             load_methdb(posidx_arr, meth_vec, methdb_file); 
         }else{
             create_methdb(ks, posidx_arr, meth_vec);
-            if(bool_cgmap_set){fill_cgmap_chr(cgmap_file, ks->name.s, posidx_arr, meth_vec, bool_cgmap_pool, meth_seed);}
-            if(bool_asm_set){fill_asm_chr(asm_file, ks->name.s, posidx_arr, meth_vec);}
-            fill_beta(meth_vec, param_vec, meth_seed);
-            update_methdb(posidx_arr, meth_vec, rseq, rseq+1, bool_asm_set, bool_update_boundary);  //update methdb with genetic variants
-            if(bool_methdb_save){save_methdb(meth_vec, methdb_file);}
+            if(meth_set->is_cgmap_set){fill_cgmap_chr(cgmap_file, ks->name.s, posidx_arr, meth_vec, meth_set);}
+            if(meth_set->is_asm_set){fill_asm_chr(asm_file, ks->name.s, posidx_arr, meth_vec);}
+            fill_beta(meth_vec, param_vec, meth_set->seed_meth);
+            update_methdb(posidx_arr, meth_vec, rseq, rseq+1, meth_set->is_asm_set, bool_update_boundary);  //update methdb with genetic variants
+            if(meth_set->methdb_save){save_methdb(meth_vec, methdb_file);}
         }
 
         // initialize distributions to generate read positions
-        uint64_t unif_begin = 2, unif_end = ks->seq.l-MAX_INSERT-2;         //ensure read doesn't pass boundary with 2 base offset
+        uint64_t unif_begin = 2, unif_end = ks->seq.l-expt_set->max_insert-2;         //ensure read doesn't pass boundary with 2 base offset
         std::vector<float> weights;
 
-        if(tech_mode){
+        if(expt_set->tech_mode){
             parse_bed_chr(bed_file, ks->name.s, probe_vec);
             if(probe_vec.size() == 0){continue;} // parse probe, skip if empty
-            if(is_uniform){unif_begin = 0; unif_end = probe_vec.size()-1;}else{
+            if(expt_set->is_uniform){unif_begin = 0; unif_end = probe_vec.size()-1;}else{
                 std::vector<float> weights(probe_vec.size());
                 for(int i=0; i < (int)probe_vec.size(); ++i){ weights.push_back(probe_vec[i].score);}
             }
@@ -328,11 +295,11 @@ void sim_core(const char *fn, bool is_hap, bool is_uniform, int tech_mode, int o
         frag_rec tmp_frag;
         while(ii < n_pairs){// the core loop
             // generate #chunk_size fragments records
-            gen_frag_vec(&dis_ud, &dis_dd, posidx_arr, frag_vec, chunk_size, tech_mode, is_uniform);
-            check_frag_vec(frag_vec, rseq, rseq+1, tech_mode); // check if the fragments are valid, fill start2
+            gen_frag_vec(&dis_ud, &dis_dd, posidx_arr, frag_vec, expt_set);
+            check_frag_vec(frag_vec, rseq, rseq+1, expt_set); // check if the fragments are valid, fill start2
             
             // generate the read sequences
-            int tmp_chunk = std::min(chunk_size, (int)(n_pairs - ii));
+            int tmp_chunk = std::min(expt_set->chunk_size, (int)(n_pairs - ii));
             ii += tmp_chunk;
             for(int idx=0; idx < tmp_chunk; ++idx){
                 tmp_frag = frag_vec[idx];
@@ -390,7 +357,7 @@ void sim_core(const char *fn, bool is_hap, bool is_uniform, int tech_mode, int o
                                 ++k;                                            \
                             }                                                   \
                         }                                                       \
-                        if(bool_asm_set){cover_pos[x] |= posidx_arr[i] & 0x1;}  \
+                        if(meth_set->is_asm_set){cover_pos[x] |= posidx_arr[i] & 0x1;}  \
                     }                                                           \
                     if (k != size[x]) {ext_coor[x] = -10;}                      \
                 } while (0)
@@ -409,7 +376,7 @@ void sim_core(const char *fn, bool is_hap, bool is_uniform, int tech_mode, int o
                             tmp_seq[j][i] = 4;
                         }
                     }
-                    if ((double)n_n / size[j] > MAX_N_RATIO) break;
+                    if ((double)n_n / size[j] > expt_set->maxN_ratio) break;
                 }
                 if (j < 2) { --ii; continue; }  // too many ambiguous bases on one of the reads
                 
@@ -420,7 +387,7 @@ void sim_core(const char *fn, bool is_hap, bool is_uniform, int tech_mode, int o
                 int flag_indel= n_indel[0] | n_indel[1];                    //whether read1/2 has indel
 
                 // print reads to stdout: mode 0 print string (WGS), else print chars&numbers (WGBS)
-                if(output_fmt == 0){
+                if(expt_set->output_fmt == 0){
                     // flip and get the reverse complementary
                     int is_flip = drand48() < 0.5? 0 : 1;
                     int tmp_cigar, tmp_base;
@@ -443,7 +410,7 @@ void sim_core(const char *fn, bool is_hap, bool is_uniform, int tech_mode, int o
                         // sequence (introduce random sequencing error)
                         for (i = 0; i < size[jj]; ++i) {
                             int c = tmp_seq[jj][i];
-                            if (drand48() < ERR_RATE){
+                            if (drand48() < expt_set->err_rate){
                                 // c = (c + (int)(drand48() * 3.0 + 1)) & 3; // random sequencing errors
                                 c = (c + 1) & 3; // recurrent sequencing errors
                                 ++n_err[jj];
@@ -512,7 +479,7 @@ void sim_core(const char *fn, bool is_hap, bool is_uniform, int tech_mode, int o
     }
 
     fprintf(stderr, "[%s] Generated %lu read pairs, with %lu contain SNP, %lu contain INDEL", __func__, tot_pairs, tot_sub, tot_indel);
-    if (output_fmt == 0){fprintf(stderr, " and %lu contain sequencing errors\n", tot_err);} else{fprintf(stderr, "\n");}
+    if (expt_set->output_fmt == 0){fprintf(stderr, " and %lu contain sequencing errors\n", tot_err);} else{fprintf(stderr, "\n");}
     kseq_destroy(ks);
     gzclose(fp_fa);
     free(tmp_seq[0]); free(tmp_seq[1]);
@@ -530,20 +497,20 @@ static int simu_usage()
     fprintf(stderr, "Usage:   htsim [options] <ref.fa> \n\n");
     fprintf(stderr, "Options:\n");
     fprintf(stderr, "general setting:\n");
-    fprintf(stderr, "         -I INT        mean insert size (outer distance between 2 ends) [500]\n");
-    fprintf(stderr, "         -J INT        standard deviation of insert size [50]\n");
-    fprintf(stderr, "         -K INT        minimum insert size [100]\n");
-    fprintf(stderr, "         -L INT        maximum insert size [1000]\n");
+    fprintf(stderr, "         -I INT        mean insert size (outer distance between 2 ends) [%d]\n", MEAN_INSERT);
+    fprintf(stderr, "         -J INT        standard deviation of insert size [%d]\n", SD_INSERT);
+    fprintf(stderr, "         -K INT        minimum insert size [%d]\n", MIN_INSERT);
+    fprintf(stderr, "         -L INT        maximum insert size [%d]\n", MAX_INSERT);
     fprintf(stderr, "         -c STRING     contig name, only output reads from this contig, default is to output all contigs [None]\n");
-    fprintf(stderr, "         -C INT        chunk size for read generation [5000]\n");
+    fprintf(stderr, "         -C INT        chunk size for read generation [%d]\n", CHUNK_SIZE);
     fprintf(stderr, "         -n INT        number of read pairs to generate for specified contig, disabled by default [0]\n");
     fprintf(stderr, "         -N INT        total number of read pairs to generate, will caculate from depth when N is 0 [0]\n");
-    fprintf(stderr, "         -d INT        average sequencing depth, only used when n/N is not specified [10]\n");
-    fprintf(stderr, "         -1 INT        length of the first read [70]\n");
-    fprintf(stderr, "         -2 INT        length of the second read [70]\n");
+    fprintf(stderr, "         -d INT        average sequencing depth, only used when n/N is not specified [%d]\n", DEPTH);
+    fprintf(stderr, "         -1 INT        length of the first read [%d]\n", SIZE_L);
+    fprintf(stderr, "         -2 INT        length of the second read [%d]\n", SIZE_R);
     fprintf(stderr, "         -E FLOAT      base error rate (set to be 0 for bisulfite sequencing) [%.3f]\n", ERR_RATE);
     fprintf(stderr, "         -A FLOAT      disgard if the fraction of ambiguous bases higher than FLOAT [%.2f]\n", MAX_N_RATIO);
-    fprintf(stderr, "         -O INT        output format: 0 for letters; nonzero for ascii numbers (for python module) [0]\n");
+    fprintf(stderr, "         -O INT        output format: 0 for letters; nonzero for ascii numbers (for python module) [%d]\n", OUTPUT_FMT);
     fprintf(stderr, "mutation setting:\n");
     fprintf(stderr, "         -v STRING     path to the genetic variant file (.vcf/vcf.gz) [None]\n");
     fprintf(stderr, "         -R FLOAT      rate of mutations [%.4f]\n", MUT_RATE);
@@ -560,11 +527,11 @@ static int simu_usage()
     fprintf(stderr, "         -S INT        seed for methylation value generation (for cgmap pool or beta distribution) [-1]\n");
     fprintf(stderr, "         -P STRING     Parameter string for beta distribution [-1]\n");
     fprintf(stderr, "technology setting:\n");
-    fprintf(stderr, "         -T INT        technology: 0 for Whole genome; 1 for Reduced representation; 2 for Targeted [0]\n");
+    fprintf(stderr, "         -T INT        technology: 0 for Whole genome; 1 for Reduced representation; 2 for Targeted [%d]\n", TECH_MODE);
     fprintf(stderr, "         -u INT        uniform coverage: 0 for diable, nonzero for enable [1]\n");
     fprintf(stderr, "         -B STRING     GC Bias reference for WGS/WGBS, only used when -u set to be 0 [None]\n");
     fprintf(stderr, "         -b STRING     BED file for reduced-representation / targeted sequencing (.bed/.bed.gz) [None]\n");
-    fprintf(stderr, "         -D INT        fragment center's deviaiton from the probe center [50]\n");
+    fprintf(stderr, "         -D INT        fragment center's deviaiton from the probe center [%d]\n", SD_CENTER);
     fprintf(stderr, "\n");
     return 1;
 }
@@ -573,170 +540,107 @@ int main(int argc, char *argv[])
 {
     //default
     uint64_t N  = 0, chr_N  = 0;
-    bool is_hap = false, is_uniform = true;
-    int tech_mode = 0, output_fmt = 0, seed_snp = -1, seed_meth = -1, depth = 10, methdb_save =0, cgmap_pool=0, chunk_size=5000;
+    // bool is_hap = false, is_uniform = true;
+    // int output_fmt = 0, seed_snp = -1, seed_meth = -1, depth = 10, methdb_save =0, cgmap_pool=0, chunk_size=5000;
 
     char none_default[] = "None";
-    char param_defult[] = "0.5|0.5,0.05|0.05,0.05|0.05";
+    char param_default[]= "0.5|0.5,0.05|0.05,0.05|0.05";
     char *chr_id    = none_default;
     char *vcf_file  = none_default;
     char *bias_file = none_default;
+    char *cut_str   = none_default;
     char *bed_file  = none_default; 
     char *asm_file  = none_default; 
     char *cgmap_file= none_default;
+    char *param_str = param_default;
     char *methdb_file= none_default; // checked, will not intefere with vcf_file
-    char *param_str = param_defult;
 
+    expt_param expt_set;
+    meth_param meth_set;
+    mut_param  mut_set;
 
     //update default from command line
     int c = 0;
-    while ((c = getopt(argc, argv, "I:J:K:L:c:C:n:N:d:1:2:E:A:O:v:R:F:X:H:s:a:m:p:W:M:S:P:T:u:B:b:D:")) >= 0) {
+    while ((c = getopt(argc, argv, "I:J:K:L:c:C:n:N:d:1:2:E:A:O:v:R:F:X:H:s:a:m:p:W:M:S:P:T:u:B:b:D:x:")) >= 0) {
         switch (c) {
-            case 'I': MEAN_INSERT= atoi(optarg); break;
-            case 'J': SD_INSERT  = atoi(optarg); break;
-            case 'K': MIN_INSERT = atoi(optarg); break;
-            case 'L': MAX_INSERT = atoi(optarg); break;
-            case 'c': chr_id     = optarg; break;
-            case 'C': chunk_size = atoi(optarg); break;
+            case 'I': expt_set.mean_insert= atoi(optarg); break;
+            case 'J': expt_set.sd_insert  = atoi(optarg); break;
+            case 'K': expt_set.min_insert = atoi(optarg); break;
+            case 'L': expt_set.max_insert = atoi(optarg); break;
+            case 'd': expt_set.depth      = atof(optarg); break;
+            case '1': expt_set.size_l     = atoi(optarg); break;
+            case '2': expt_set.size_r     = atoi(optarg); break;
+            case 'E': expt_set.err_rate   = atof(optarg); break;
+            case 'C': expt_set.chunk_size = atoi(optarg); break;
+            case 'A': expt_set.maxN_ratio = atof(optarg); break;
+            case 'D': expt_set.sd_center  = atoi(optarg); break;
+            case 'T': expt_set.tech_mode  = atoi(optarg); break;
+            case 'u': expt_set.is_uniform = atoi(optarg)!=0; break;
+            case 'O': expt_set.output_fmt = atoi(optarg); break;
+
+            case 'R': mut_set.mut_rate    = atof(optarg); break;
+            case 'F': mut_set.indel_frac  = atof(optarg); break;
+            case 'X': mut_set.indel_extn  = atof(optarg); break;
+            case 'H': mut_set.is_hap      = atoi(optarg)!=0; break;
+            case 's': mut_set.seed_snp    = atoi(optarg); break;
+
+            case 'S': meth_set.seed_meth  = atoi(optarg); break;
+            case 'W': meth_set.methdb_save= atoi(optarg)!=0; break;
+            case 'p': meth_set.cgmap_pool = atoi(optarg)!=0; break;
+
             case 'n': chr_N      = atoi(optarg); break;
             case 'N': N          = atoi(optarg); break;
-            case 'd': depth      = atoi(optarg); break;
-            case '1': SIZE_L     = atoi(optarg); break;
-            case '2': SIZE_R     = atoi(optarg); break;
-            case 'E': ERR_RATE   = atof(optarg); break;
-            case 'A': MAX_N_RATIO= atof(optarg); break;
-            case 'O': output_fmt = atoi(optarg); break;
+            case 'c': chr_id     = optarg; break;
             case 'v': vcf_file   = optarg; break;
-            case 'R': MUT_RATE   = atof(optarg); break;
-            case 'F': INDEL_FRAC = atof(optarg); break;
-            case 'X': INDEL_EXTN = atof(optarg); break;
-            case 'H': is_hap     = atoi(optarg)!=0; break;
-            case 's': seed_snp   = atoi(optarg); break;
             case 'a': asm_file   = optarg; break;
             case 'm': cgmap_file = optarg; break;
-            case 'p': cgmap_pool = atoi(optarg); break;
-            case 'W': methdb_save= atoi(optarg); break;
             case 'M': methdb_file= optarg; break;
-            case 'S': seed_meth  = atoi(optarg); break;
             case 'P': param_str  = optarg; break;
-            case 'T': tech_mode  = atoi(optarg); break;
-            case 'u': is_uniform = atoi(optarg)!=0; break;
             case 'B': bias_file  = optarg; break;
             case 'b': bed_file   = optarg; break;
-            case 'D': SD_CENTER  = atoi(optarg); break;
+            case 'x': cut_str    = optarg; break;
         }
     }
     if (argc - optind < 1) return simu_usage();
-    if (seed_snp <= 0) seed_snp  = time(0)&0x7fffffff;
-    if (seed_meth<= 0) seed_meth = time(0)&0x7fffffff;
+    if (mut_set.seed_snp <= 0) mut_set.seed_snp    = time(0)&0x7fffffff;
+    if (meth_set.seed_meth<= 0) meth_set.seed_meth = time(0)&0x7fffffff;
+    expt_set.min_insert = std::max(std::max(expt_set.size_l, expt_set.size_r), expt_set.min_insert); // ensure MIN_INSERT >= SIZE_L or SIZE_R
+
     parse_param(param_str, param_vec);
-
-    MIN_INSERT = std::max(std::max(SIZE_L, SIZE_R), MIN_INSERT); // ensure MIN_INSERT >= SIZE_L or SIZE_R
-
-    bool bool_chr_set   = strcmp(chr_id,  "None") && strlen(chr_id);
-    bool bool_vcf_set   = strcmp(vcf_file,"None") && strlen(vcf_file);
-    // bool bool_site_set  = strcmp(cut_str, "None") && strlen(cut_str);
-    bool bool_probe_set = strcmp(bed_file,"None") && strlen(bed_file);
-    bool bool_bias_set  = strcmp(bias_file,"None") && strlen(bias_file);
-    // bool bool_asm_set   = strcmp(asm_file, "None") && strlen(asm_file);
-    // bool bool_cgmap_set = strcmp(cgmap_file, "None") && strlen(cgmap_file);
-    // bool bool_methdb_set= strcmp(methdb_file, "None") && strlen(methdb_file);
+    expt_set.is_chr_set   = strcmp(chr_id, "None") && strlen(chr_id);
+    expt_set.is_bias_set  = strcmp(bias_file,"None")&& strlen(bias_file);
+    expt_set.is_bed_set   = strcmp(bed_file,"None") && strlen(bed_file);
+    expt_set.is_site_set  = strcmp(cut_str, "None") && strlen(cut_str);
+    mut_set.is_vcf_set    = strcmp(vcf_file,"None") && strlen(vcf_file);
+    meth_set.is_asm_set   = strcmp(asm_file, "None") && strlen(asm_file);
+    meth_set.is_cgmap_set = strcmp(cgmap_file, "None")&& strlen(cgmap_file);
+    meth_set.is_methdb_set= strcmp(methdb_file, "None")&& strlen(methdb_file);
     
-    
-    if (tech_mode==2 || bool_probe_set){
+    if (expt_set.tech_mode==2 || expt_set.is_bed_set){
         fprintf(stderr, "Simulating targeted sequencing reads:\n");
-        if (!bool_probe_set){fprintf(stderr, "ERROR: Please specify probe bed file path\n");exit(EXIT_FAILURE);}
-        tech_mode = 2;
-    } else if (tech_mode==1 || bool_probe_set){
+        if (!expt_set.is_bed_set){fprintf(stderr, "ERROR: Please specify probe bed file path\n");exit(EXIT_FAILURE);}
+        expt_set.tech_mode = 2;
+    } else if (expt_set.tech_mode==1 || expt_set.is_bed_set){
         fprintf(stderr, "Simulating restricted enzyme cutting reads:\n");
-        if (!bool_probe_set){fprintf(stderr, "ERROR: Please specify probe bed file path\n");exit(EXIT_FAILURE);}
-        tech_mode = 1;
+        if (!expt_set.is_bed_set){fprintf(stderr, "ERROR: Please specify probe bed file path\n");exit(EXIT_FAILURE);}
+        expt_set.tech_mode = 1;
     } else {
         fprintf(stderr, "Simulating whole genome reads:\n");
-        if(!is_uniform && !bool_bias_set){fprintf(stderr, "ERROR: Please specify GC-Bias file when specifying -u as 0\n");exit(EXIT_FAILURE);}
-        if(bool_bias_set){parse_bias_file(bias_file, eff_vec); is_uniform = false; BIN_SIZE = eff_vec.size();}
-        tech_mode = 0;
+        if(!expt_set.is_uniform && !expt_set.is_bias_set){fprintf(stderr, "ERROR: Please specify GC-Bias file when specifying -u as 0\n");exit(EXIT_FAILURE);}
+        if(expt_set.is_bias_set){parse_bias_file(bias_file, eff_vec); expt_set.is_uniform = false; expt_set.bin_size = eff_vec.size();}
+        expt_set.tech_mode = 0;
     }
 
-
-    // check existence of fasta, parse the length
-    kseq_t *ks;
-    gzFile fp_fa;
-    fp_fa = gzopen(argv[optind], "r");
-    ks = kseq_init(fp_fa);
-    if (!fp_fa) { fprintf (stderr, "ERROR: gzopen of '%s' failed: %s. Exit... \n", argv[optind], strerror (errno)); exit (EXIT_FAILURE);}
     fprintf(stderr, "Reference genome file: %s\n", argv[optind]);
+    if (expt_set.is_bed_set) {fprintf(stderr, "BED file: %s\n", bed_file);}
 
-    fprintf(stderr, "[%s] Calculating the length and count of the reference sequences...\n", __func__);
-    int l;
-    chr_rec tmp_len;
-    uint64_t tot_chr_len = 0, tot_eff_len = 0;
-    float tot_score = 0;
-    while ((l = kseq_read(ks)) >= 0) {
-        if (bool_chr_set) {if (strcmp(chr_id, ks->name.s)!=0){continue;}}
-        if (l < MEAN_INSERT+3*SD_INSERT){
-            fprintf(stderr, "[%s] skip contig '%s' as it is shorter than %d!\n", __func__, ks->name.s, MEAN_INSERT+3*SD_INSERT); 
-            continue;
-        }
-        
-        tmp_len = {};
-        collect_len_score_chr(ks, &tmp_len, bed_file, probe_vec);
-        chr_count[std::string(ks->name.s)] = tmp_len;
-        tot_chr_len += tmp_len.chr_len;
-        tot_eff_len += tmp_len.eff_len;
-        tot_score   += tmp_len.score;
-    }
-    kseq_destroy(ks);
-    gzclose(fp_fa);
-
-
-    // check if fasta is empty
-    if (!chr_count.size()) { fprintf (stderr, "ERROR: Input fasta is empty: %s. Exit... \n", argv[optind]); exit (EXIT_FAILURE);}
-
-
-    // check input chr_id, calculate the count for contig(s)
-    if (bool_chr_set){
-        // calculate the count for selected contig
-        std::string chr_id_str = std::string(chr_id);
-        if (!chr_count.count(chr_id_str)){fprintf(stderr, "ERROR: Contig id '%s' is not found in the fasta file, please check!\n", chr_id); exit(EXIT_FAILURE);}
-
-        uint64_t contig_eff_len = chr_count[chr_id_str].eff_len;
-        uint64_t contig_len = chr_count[chr_id_str].chr_len;
-        chr_N = chr_N == 0? (contig_eff_len * depth)/(SIZE_L + SIZE_R) : chr_N;
-        fprintf(stderr, "[%s] Contig %s specified, total length: %lu, effective length: %lu, #reads: %lu\n", __func__, chr_id, contig_len, contig_eff_len, chr_N);
-        chr_count[chr_id_str].count = chr_N;
-    } else {
-        // calculate the count for all contigs
-        if (chr_N > 0) {fprintf(stderr, "ERROR: -n is specified but not -c. Exit... (please note the difference of -n and -N)\n"); exit(EXIT_FAILURE);}
-        
-        int num_contigs = (int)chr_count.size();
-        N = N == 0? (tot_eff_len * depth)/(SIZE_L + SIZE_R) : N;
-        fprintf(stderr, "[%s] Found %d contig sequences, total length: %lu, effective length: %lu\n", __func__, num_contigs, tot_chr_len, tot_eff_len);
-        fprintf(stderr, "[%s] No contig id specified, will generate %lu reads from all contigs\n", __func__, N);
-        
-        uint64_t cum_count = 0, tmp_count =0;
-        for (auto it = chr_count.begin(); it != chr_count.end(); ++it) {
-            tmp_count = tech_mode ==2 ? (uint64_t)(it->second.score * N / tot_score) : (uint64_t)(it->second.eff_len * N / tot_eff_len);
-            it->second.count = tmp_count;
-            cum_count += tmp_count;
-        }
-
-        int rest_count = N - cum_count;
-        if(rest_count < 0){fprintf(stderr, "[%s] Read count calculation went wrong \n", __func__); exit(EXIT_FAILURE);} // should never happen
-        int step_size  = rest_count > num_contigs ? (int)(rest_count/num_contigs): 1; //hopefully rest_count is small, evenly distributed to contigs
-        auto it = chr_count.begin();
-        while (rest_count > 0){ 
-            int alloc_count  = std::min(step_size, rest_count);
-            it->second.count+= alloc_count; 
-            rest_count -= alloc_count;
-            ++it;
-        }
-    }
+    // check existence of fasta, parse the length and calculate the count for each chr_id
+    cal_chr_count(argv[optind], chr_id, bed_file, N, chr_N, &expt_set, probe_vec, chr_count);
 
 
     // check input vcf file
     FILE *vcf;
-    if (bool_vcf_set) {
+    if (mut_set.is_vcf_set) {
         if((vcf=fopen(vcf_file,"r"))){fprintf(stderr, "[%s] VCF file exists, use it to simulate reads\n", __func__); fclose(vcf);
         }else{fprintf(stderr, "ERROR: The specified VCF file does not exist, please check!\n"); exit(EXIT_FAILURE);}
     } else {
@@ -744,10 +648,10 @@ int main(int argc, char *argv[])
     }
 
 
-    fprintf(stderr, "[htsim] seed = %d\n", seed_snp);
-    srand48(seed_snp);
+    fprintf(stderr, "[htsim] snp seed = %d, meth seed = %d\n", mut_set.seed_snp, meth_set.seed_meth);
+    srand48(mut_set.seed_snp);
 
-    sim_core(argv[optind], is_hap, is_uniform, tech_mode, output_fmt, chunk_size, vcf_file, bed_file, chr_id, methdb_save, methdb_file, cgmap_file, cgmap_pool, asm_file, seed_meth);
+    sim_core(argv[optind], vcf_file, bed_file, chr_id, methdb_file, cgmap_file, asm_file, &expt_set, &mut_set, &meth_set);
 
     return 0;
 }

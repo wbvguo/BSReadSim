@@ -45,3 +45,23 @@ const uint8_t nst_nt4_table[256] = {
 
 const mut_t mutmsk = (mut_t)0xf000;
 
+
+//  global variables.
+const float ERR_RATE    = 0.005;
+const float MUT_RATE    = 0.01;
+const float INDEL_FRAC  = 0.15;
+const float INDEL_EXTN  = 0.3;
+const float MAX_N_RATIO = 0.05;
+
+const int DEPTH         = 100;
+const int MEAN_INSERT   = 500;
+const int SD_INSERT     = 50;
+const int MIN_INSERT    = 100;
+const int MAX_INSERT    = 1000;
+const int SIZE_L        = 100;
+const int SIZE_R        = 100;
+const int SD_CENTER     = 50;
+const int BIN_SIZE      = 100;
+const int TECH_MODE     = 0; 
+const int OUTPUT_FMT    = 0;
+const int CHUNK_SIZE    = 1000000;

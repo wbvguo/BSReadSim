@@ -242,7 +242,7 @@ void pool_cgmap(std::vector<meth_rec>& meth_vec, int seed)
     }
 }
 
-void fill_cgmap_chr(char *fname, char *chr_id, uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec, bool cgmap_pool, int seed)
+void fill_cgmap_chr(char *fname, char *chr_id, uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec, meth_param *meth_set)
 {
     htsFile *fp = hts_open(fname,"rb");
     if(fp == 0 ){ fprintf(stderr,"[%s] ERROR: open CGmap file: %s failed: %s. Exit...\n", __func__, fname, strerror (errno)); exit (EXIT_FAILURE);}
@@ -280,7 +280,7 @@ void fill_cgmap_chr(char *fname, char *chr_id, uint32_t *posidx_arr, std::vector
         fprintf(stderr,"[%s] Contig %s: %d sites found in cgmap, among them %.2f%% sites not compatiable\n", __func__, chr_id, num_tot_site, ratio_404);
     }
     
-    if(cgmap_pool){pool_cgmap(meth_vec, seed);}
+    if(meth_set->cgmap_pool){pool_cgmap(meth_vec, meth_set->seed_meth);}
 }
 
 
