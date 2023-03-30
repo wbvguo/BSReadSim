@@ -8,20 +8,24 @@
 #include "vcf.h"
 #include "struct.h"
 
-// for VCF
-void parse_vcf_chr(char *fname, char *chr_id, std::vector<snp_rec>& snp_vec);
 
 // for BED
-int parse_bed_line(char *line, char *chr_id, probe_rec *tmp_probe, probe_meta *tmp_probe_meta);
+int parse_bed_line(char *line, char *chr_id, frag_rec *tmp_probe);
 
-void parse_bed_chr(char *fname, char *chr_id, std::vector<probe_rec>& probe_vec);
+int parse_bed_line_rrbs(char *line, char *chr_id, frag_rec *tmp_probe);
+
+void parse_bed_chr(char *fname, char *chr_id, std::vector<frag_rec>& probe_vec);
 
 
 // for GC-bias
 void parse_bias_file(char *fname, std::vector<float>& eff_vec);
 
 
-// for length calculation
-void collect_len_score_chr(const kseq_t *ks, chr_rec *tmp_len, char *bed_file, std::vector<probe_rec>& probe_vec);
+// for length and count calculation
+void collect_len_score_chr(const kseq_t *ks, chr_rec *tmp_len, char *bed_file, std::vector<frag_rec>& probe_vec);
+
+void cal_chr_count(const char *fn, char *chr_id, char *bed_file, uint64_t N, uint64_t chr_N, 
+                    expt_param *expt_set, std::vector<frag_rec>& probe_vec, std::map<std::string, chr_rec> &chr_count);
+
 
 #endif

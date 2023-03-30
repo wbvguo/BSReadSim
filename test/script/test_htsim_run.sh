@@ -15,7 +15,6 @@
 
 #test fa.gz 
 
-# input VCF file
 
 #################### SNP
 

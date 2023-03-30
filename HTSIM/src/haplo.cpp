@@ -230,10 +230,11 @@ void sim_mut_vcf(const kseq_t *ks, char * vcf_file, mutseq_t *hap1, mutseq_t *ha
     }
 }
 
-void sim_mut_diref(const kseq_t *ks, bool is_hap, mutseq_t *hap1, mutseq_t *hap2, uint32_t *posidx_arr, mut_params *tmp_params)
+void sim_mut_diref(const kseq_t *ks, mut_param *mut_set, mutseq_t *hap1, mutseq_t *hap2, uint32_t *posidx_arr)
 {
     int i, deleting = 0;
     mutseq_t *ret[2];
+    //TODO: drand48() -> sth else
 
     ret[0] = hap1; ret[1] = hap2;
     ret[0]->l = ks->seq.l; ret[1]->l = ks->seq.l;
@@ -245,25 +246,25 @@ void sim_mut_diref(const kseq_t *ks, bool is_hap, mutseq_t *hap1, mutseq_t *hap2
         c = ret[0]->s[i] = ret[1]->s[i] = (mut_t)nst_nt4_table[(int)ks->seq.s[i]];
         if (cg_table[c]) {posidx_arr[i]= 2;}
         if (deleting) {
-            if (drand48() < tmp_params->INDEL_EXTN) {
+            if (drand48() < mut_set->indel_extn) {
                 if (deleting & 1) ret[0]->s[i] |= DELETE;
                 if (deleting & 2) ret[1]->s[i] |= DELETE;
                 posidx_arr[i] |= 1;
                 continue;
             } else deleting = 0;
         }
-        if (c < 4 && drand48() < tmp_params->MUT_RATE) { // mutation
-            if (drand48() >= tmp_params->INDEL_FRAC) { // substitution
+        if (c < 4 && drand48() < mut_set->mut_rate) { // mutation
+            if (drand48() >= mut_set->indel_frac) { // substitution
                 double r = drand48();
                 c = (c + (int)(r * 3.0 + 1)) & 3;
-                if (is_hap || drand48() < 0.333333) { // hom
+                if (mut_set->is_hap || drand48() < 0.333333) { // hom
                     ret[0]->s[i] = ret[1]->s[i] = SUBSTITUTE|c;
                 } else { // het
                     ret[drand48()<0.5?0:1]->s[i] = SUBSTITUTE|c;
                 }
             } else { // indel
                 if (drand48() < 0.5) { // deletion
-                    if (is_hap || drand48() < 0.333333) { // hom-del
+                    if (mut_set->is_hap || drand48() < 0.333333) { // hom-del
                         ret[0]->s[i] = ret[1]->s[i] = DELETE;
                         deleting = 3;
                     } else { // het-del
@@ -275,9 +276,9 @@ void sim_mut_diref(const kseq_t *ks, bool is_hap, mutseq_t *hap1, mutseq_t *hap2
                     do {
                         num_ins++;
                         ins = (ins << 2) | (int)(drand48() * 4.0);
-                    } while (num_ins < 4 && drand48() < tmp_params->INDEL_EXTN);
+                    } while (num_ins < 4 && drand48() < mut_set->indel_extn);
 
-                    if (is_hap || drand48() < 0.333333) { // hom-ins
+                    if (mut_set->is_hap || drand48() < 0.333333) { // hom-ins
                         ret[0]->s[i] = ret[1]->s[i] = (num_ins << 12) | (ins << 4) | c;
                     } else { // het-ins
                         ret[drand48()<0.5?0:1]->s[i] = (num_ins << 12) | (ins << 4) | c;

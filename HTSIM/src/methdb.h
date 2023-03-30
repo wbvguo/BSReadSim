@@ -26,7 +26,7 @@ int parse_cgmap_line(char *line, char *chr_id, meth_rec *tmp_meth);
 
 void pool_cgmap(std::vector<meth_rec>& meth_vec, int seed);
 
-void fill_cgmap_chr(char *fname, char *chr_id, uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec, bool cgmap_pool, int seed);
+void fill_cgmap_chr(char *fname, char *chr_id, uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec, meth_param *meth_set);
 
 
 // for ASM
