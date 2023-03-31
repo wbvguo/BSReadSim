@@ -28,8 +28,8 @@ int parse_bed_line(char *line, char *chr_id, frag_rec *tmp_probe)
             case 1: start  = atoi(p); break;
             case 2: end    = atoi(p); break;
             case 3: name   = strdup(p); break;
-            case 4: score  = atof(p); break;        // TODO: need to test what if score is "." 
-            case 5: strand = int(strcmp(p,"+")==0)-int(strcmp(p,"-")==0); break; //1,2,3
+            case 4: score  = atof(p); break;        // will give 0 when not a number
+            case 5: strand = ((int)(strcmp(p,"+")!=0)<<1) | (int)(strcmp(p,"-")!=0); break; //1,2,3
             default: break;}
             if(i==0 && strcmp(contig, chr_id)){return 1;} // termenate early if not equal
 			++i, p = q + 1;
@@ -64,7 +64,7 @@ int parse_bed_line_rrbs(char *line, char *chr_id, frag_rec *tmp_probe)
             case 2: end    = atoi(p); break;
             case 3: name   = strdup(p); break;
             case 4: score  = atof(p); break;
-            case 5: strand = int(strcmp(p,"+")==0)-int(strcmp(p,"-")==0); break; //1,2,3
+            case 5: strand = ((int)(strcmp(p,"+")!=0)<<1) | (int)(strcmp(p,"-")!=0); break; //1,2,3
             case 7: cut_l  = atoi(p); break;
             case 8: cut_r  = atoi(p); break;
             default: break;}
@@ -80,14 +80,14 @@ int parse_bed_line_rrbs(char *line, char *chr_id, frag_rec *tmp_probe)
 	tmp_probe->pos_l = start;
 	tmp_probe->pos_r = end;
     tmp_probe->score = score;
-    tmp_probe->strand= (int8_t) strand;
-    tmp_probe->cut_l= (int8_t) cut_l;
-    tmp_probe->cut_r= (int8_t) cut_r;
+    tmp_probe->haplo = (int8_t) strand;
+    tmp_probe->cut_l = (int8_t) cut_l;
+    tmp_probe->cut_r = (int8_t) cut_r;
 
     return 0;
 }
 
-void parse_bed_chr(char *fname, char *chr_id, std::vector<frag_rec>& probe_vec)
+void parse_bed_chr(char *fname, char *chr_id, std::vector<frag_rec>& probe_vec, int tech_mode)
 {
     probe_vec.clear();  // clean the container
 
@@ -101,12 +101,14 @@ void parse_bed_chr(char *fname, char *chr_id, std::vector<frag_rec>& probe_vec)
     char *chr_current;
     bool collect_present = false;
     bool collect_previous= false;
+    int (*parse_bed_ptr)(char*, char*, frag_rec*);
+    if(tech_mode==1){parse_bed_ptr = &parse_bed_line_rrbs;}else{parse_bed_ptr = &parse_bed_line;}
 
     while ((ret = hts_getline(fp, KS_SEP_LINE, &line)) >= 0) {
         if (collect_present == false && collect_previous == true) { break; } // finished collecting
         // a new round, save last status
         collect_previous= collect_present;
-        int skip_status = parse_bed_line(line.s, chr_id, &tmp_probe); //might need to test
+        int skip_status = (*parse_bed_ptr)(line.s, chr_id, &tmp_probe); //might need to test
         if(skip_status){collect_present = false; continue;}
         probe_vec.push_back(tmp_probe);
         tmp_probe      = {};
@@ -133,14 +135,14 @@ void parse_bias_file(char *fname, std::vector<float>& eff_vec)
 
 
 // for length calculation
-void collect_len_score_chr(const kseq_t *ks, chr_rec *tmp_len, char *bed_file, std::vector<frag_rec>& probe_vec)
+void collect_len_score_chr(const kseq_t *ks, chr_rec *tmp_len, char *bed_file, int tech_mode, std::vector<frag_rec>& probe_vec)
 {
     uint32_t eff_len=0;
     float sum_score=0;
     bool bool_bed_set = strcmp(bed_file,"None") && strlen(bed_file);
 
     if(bool_bed_set){                       // targeted sequencing or
-        parse_bed_chr(bed_file, ks->name.s, probe_vec);
+        parse_bed_chr(bed_file, ks->name.s, probe_vec, tech_mode);
         int len, pos_l, pos_r, pos_l_prev, pos_r_prev;
         float score = 0;
         for (size_t i = 0; i < probe_vec.size(); ++i){
@@ -193,7 +195,7 @@ void cal_chr_count(const char *fn, char *chr_id, char *bed_file, uint64_t N, uin
         }
         
         tmp_len = {};
-        collect_len_score_chr(ks, &tmp_len, bed_file, probe_vec);
+        collect_len_score_chr(ks, &tmp_len, bed_file, expt_set->tech_mode, probe_vec);
         chr_count[std::string(ks->name.s)] = tmp_len;
         tot_chr_len += tmp_len.chr_len;
         tot_eff_len += tmp_len.eff_len;

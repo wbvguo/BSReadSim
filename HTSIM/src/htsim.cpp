@@ -71,10 +71,10 @@ const  uint8_t mut_table[16] = {
 
 std::vector<float> eff_vec;
 std::vector<snp_rec> snp_vec;
-std::vector<frag_rec> frag_vec;
 std::vector<meth_rec> meth_vec;
+std::vector<frag_rec> frag_vec;
+std::vector<frag_rec> probe_vec;
 std::vector<param_rec> param_vec;
-std::vector<probe_rec> probe_vec;
 std::map<std::string, chr_rec> chr_count;
 
 
@@ -91,15 +91,6 @@ std::mt19937 gen_ru(ru());
 std::uniform_real_distribution<float> dis_ru(0.0,1.0);
 
 
-bool compare_frag_rec(const frag_rec &a, const frag_rec &b)
-{
-    if (a.haplo != b.haplo) {
-        return a.haplo < b.haplo;
-    } else {
-        return a.pos_l < b.pos_r;
-    }
-}
-
 void gen_frag_vec(std::uniform_int_distribution<int> *dis_ud, std::discrete_distribution<int> *dis_dd, 
                     uint32_t *posidx_arr, std::vector<frag_rec> &frag_vec, expt_param *expt_set)
 {
@@ -110,7 +101,7 @@ void gen_frag_vec(std::uniform_int_distribution<int> *dis_ud, std::discrete_dist
     if(expt_set->tech_mode ==2){
         for(i = 0; i < expt_set->chunk_size; ++i){
             frag_idx = expt_set->is_uniform ? (*dis_ud)(gen) : (*dis_dd)(gen);
-            probe_rec tmp_probe = probe_vec[frag_idx];
+            frag_rec tmp_probe = probe_vec[frag_idx];
             probe_center = (tmp_probe.pos_l + tmp_probe.pos_r) >> 1;
             frag_center= probe_center + (int)(expt_set->sd_center * dis_rn(gen_rn));
             insert_dev = (int)(expt_set->sd_insert * dis_rn(gen_rn));
@@ -126,7 +117,7 @@ void gen_frag_vec(std::uniform_int_distribution<int> *dis_ud, std::discrete_dist
     }else if (expt_set->tech_mode == 1){
         for(i = 0; i < expt_set->chunk_size; ++i){
             frag_idx = expt_set->is_uniform ? (*dis_ud)(gen) : (*dis_dd)(gen);
-            probe_rec tmp_probe = probe_vec[frag_idx];
+            frag_rec tmp_probe = probe_vec[frag_idx];
             tmp_frag.pos_l = tmp_probe.pos_l;
             tmp_frag.pos_r = tmp_frag.pos_r;
             tmp_frag.strand= drand48()<0.5?0:1;     // denotes the strand
@@ -168,12 +159,12 @@ void gen_frag_vec(std::uniform_int_distribution<int> *dis_ud, std::discrete_dist
             }
         }
     }
-    std::sort(frag_vec.begin(), frag_vec.end(), compare_frag_rec);
+    std::sort(frag_vec.begin(), frag_vec.end());
 }
 
 void check_frag_vec(std::vector<frag_rec> &frag_vec, mutseq_t *hap1, mutseq_t *hap2, expt_param *expt_set)
 {
-    // find out the start position for read2, TODO: check if the boundaries satisfy for RRBS
+    // find out the start position for read2, expecially for RRBS
     if(expt_set->tech_mode == 1){
         mutseq_t *ret[2];
         ret[0] = hap1; ret[1] = hap2;
@@ -197,11 +188,11 @@ void check_frag_vec(std::vector<frag_rec> &frag_vec, mutseq_t *hap1, mutseq_t *h
                     --start2;
                 }
             }
-            frag_vec[i].start2 = start2;
+            frag_vec[i].score = start2;
         }
     }else{
         for(size_t i =0; i < frag_vec.size(); ++i){
-            frag_vec[i].start2 = frag_vec[i].pos_r - expt_set->size_r;
+            frag_vec[i].score = frag_vec[i].pos_r - expt_set->size_r;
         }
     }
 }
@@ -281,7 +272,7 @@ void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char
         std::vector<float> weights;
 
         if(expt_set->tech_mode){
-            parse_bed_chr(bed_file, ks->name.s, probe_vec);
+            parse_bed_chr(bed_file, ks->name.s, probe_vec, expt_set->tech_mode);
             if(probe_vec.size() == 0){continue;} // parse probe, skip if empty
             if(expt_set->is_uniform){unif_begin = 0; unif_end = probe_vec.size()-1;}else{
                 std::vector<float> weights(probe_vec.size());
@@ -309,7 +300,7 @@ void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char
                 //j hold read1/read2, k hold the length of read, ix hold the cursor that transverses the read
                 int n_sub[2]={0,0}, n_indel[2]={0,0}, n_err[2]={0,0}, cover_pos[2]={0,0}; 
                 int ext_coor[2], i, j, k, ix;
-                int start[2] = {tmp_frag.pos_l, tmp_frag.start2};
+                int start[2] = {tmp_frag.pos_l, (int)tmp_frag.score};
                 int end[2] = {start[0], start[1]};
                 int offset[2] = {0, 0};
 

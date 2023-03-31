@@ -8,14 +8,38 @@
 
 
 KSEQ_INIT(gzFile, gzread)
+#include "rrcut.h"
+
 
 void parse_cut_site(char *cut_str, std::vector<cut_rec>& cut_vec)
 {
+    // check if cut_str is valid (seprate by ',' and '|' intercjangeably, 
+    // never || without comma in between or ,, without | in between)
+    bool vline_flag = false;
+    bool comma_flag = false;
+
+    for(int i =0; cut_str[i] !='\0'; ++i){
+        if(cut_str[i] == ' '){continue;}
+        if(cut_str[i] == '|'){
+            if(vline_flag){fprintf (stderr, "[%s] ERROR: Invalid enzyme site format '%s'. Exit... \n", __func__, cut_str); exit (EXIT_FAILURE);}
+            vline_flag = true; comma_flag = false;
+        }else if(cut_str[i] == ','){
+            if(comma_flag){fprintf (stderr, "[%s] ERROR: Invalid enzyme site format '%s'. Exit... \n", __func__, cut_str); exit (EXIT_FAILURE);}
+            comma_flag = true; vline_flag = false;
+        }else{
+            if(nst_nt4_table[(int)cut_str[i]]==4 && (cut_str[i] != 'N' || cut_str[i] != 'n')){
+                fprintf (stderr, "[%s] ERROR: Invalid enzyme site format '%s'. Exit... \n", __func__, cut_str); exit (EXIT_FAILURE);
+            }
+        }
+    }
+
+
     cut_vec.clear();
     int c, idx = 0;
     cut_rec tmp_site;
     
     for(int i =0; cut_str[i] !='\0'; ++i){
+        if(cut_str[i] == ' '){continue;}
         if (cut_str[i] == '|'){tmp_site.idx = idx; continue;}
         if (cut_str[i] == ','){
             if (tmp_site.idx >=0) {
@@ -78,9 +102,7 @@ void gen_cut_pos(mutseq_t *hap1, mutseq_t *hap2, std::vector<cutpos_rec>& cutpos
         cutpos_vec.push_back(tmp_cutpos);
     }
 
-    // sort the vector
-    // Sort by name
-    std::sort(cutpos_vec.begin(), cutpos_vec.end(), [](const cutpos_rec& p1, const cutpos_rec& p2) { return p1.pos < p2.pos;});
+    std::sort(cutpos_vec.begin(), cutpos_vec.end());
 }
 
 void gen_cut_frag(const kseq_t *ks, expt_param *expt_set, std::vector<frag_rrbs_rec> &frag_vec, std::vector<cutpos_rec>& cutpos_vec, std::vector<cut_rec>& cut_vec)
@@ -91,8 +113,8 @@ void gen_cut_frag(const kseq_t *ks, expt_param *expt_set, std::vector<frag_rrbs_
     int frag_len;
     frag_rrbs_rec tmp_frag;
 
-    auto order_pos = [](const frag_rrbs_rec& p1, const frag_rrbs_rec& p2) {return p1.pos_r < p2.pos_r;};
     std::map<int8_t, int8_t> cut_map;
+    std::map<int8_t, int8_t> tmp_cutmap;
     for(size_t i=0; i<cut_vec.size(); ++i){cut_map[(int8_t)i] = 0;}
     
     for (int i = -1; i <= int(cutpos_vec.size()); ++i){
@@ -139,11 +161,11 @@ void gen_cut_frag(const kseq_t *ks, expt_param *expt_set, std::vector<frag_rrbs_
         int haplotype   = cutpos_vec[i].haplo;
         int8_t left_cut = cutpos_vec[i].type;
         
-        std::map<frag_rrbs_rec, int, decltype(order_pos)> frag_map(order_pos);
+        std::map<frag_rrbs_rec, int> frag_map;
         frag_map.clear();
 
         // first hap1
-        std::map<int8_t, int8_t> tmp_cutmap(cut_map);
+        tmp_cutmap = cut_map;
         ++tmp_cutmap[cutpos_vec[i].type];
         for(int j=i+1; j < cutpos_vec.size(); ++j){
             if((cutpos_vec[j].haplo & 0x2) == 0){continue;} // skip hap2-only cuts
@@ -164,7 +186,7 @@ void gen_cut_frag(const kseq_t *ks, expt_param *expt_set, std::vector<frag_rrbs_
         }
 
         // then hap2
-        std::map<int8_t, int8_t> tmp_cutmap(cut_map);
+        tmp_cutmap = cut_map;
         ++tmp_cutmap[cutpos_vec[i].type];
         for(int j=i+1; j < cutpos_vec.size(); ++j){    
             if((cutpos_vec[j].haplo & 0x1) == 0){continue;} // skip hap1-only cuts
@@ -195,7 +217,7 @@ void gen_cut_frag(const kseq_t *ks, expt_param *expt_set, std::vector<frag_rrbs_
 void output_rrcut_bed(const char *fname, const char *chr_id, std::vector<frag_rrbs_rec> &frag_vec)
 {
     FILE* fp = fopen(fname, "w");
-    if(fp==NULL){fprintf(stderr, "[%s] ERROR: open rrbs bed file: %s failed. Exit...", __func__, fname); exit (EXIT_FAILURE);}
+    if(fp==NULL){fprintf(stderr, "[%s] ERROR: open rrbs bed file: %s failed. Exit... \n", __func__, fname); exit (EXIT_FAILURE);}
 
     frag_rrbs_rec tmp_frag;
     int map_size = frag_vec[0].n_cuts.size();
@@ -204,7 +226,7 @@ void output_rrcut_bed(const char *fname, const char *chr_id, std::vector<frag_rr
         fprintf(fp, "%s\t%d\t%d\t.\t1\t%d\t%d\t%d", chr_id, tmp_frag.pos_l, tmp_frag.pos_r, tmp_frag.haplo, tmp_frag.cut_l, tmp_frag.cut_r);
         for(int j=0; j < map_size; ++j){fprintf(fp, "\t%d", tmp_frag.n_cuts[j]);}
         fprintf(fp, "\n");
-        if (ferror(fp)) {fprintf(stderr, "[%s] ERROR: failed to write to file %s. Exit...", __func__, fname);exit(EXIT_FAILURE);}
+        if (ferror(fp)) {fprintf(stderr, "[%s] ERROR: failed to write to file %s. Exit... \n", __func__, fname);exit(EXIT_FAILURE);}
     }
     fclose(fp);
 }
