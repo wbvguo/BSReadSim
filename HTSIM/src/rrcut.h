@@ -9,6 +9,7 @@
 #include "vcf.h"
 #include "struct.h"
 
+
 void parse_cut_site(char *cut_str, std::vector<cut_rec>& cut_vec);
 
 void gen_cut_pos(mutseq_t *hap1, mutseq_t *hap2, std::vector<cutpos_rec>& cutpos_vec, std::vector<cut_rec>& cut_vec);
