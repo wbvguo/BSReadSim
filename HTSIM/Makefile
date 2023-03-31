@@ -30,13 +30,13 @@ BASE_PATH = $(shell pwd | xargs dirname)
 
 EXE=		htsim
 LIBS=		-Bstatic -lz 
-HTSLIB=		-I$(BASE_PATH)/HTSLIB/htslib/ -L$(BASE_PATH)/HTSLIB/ -lhts -Wl,-rpath $(BASE_PATH)/HTSLIB
+HTSLIB=		-I$(BASE_PATH)/HTSLIB/htslib/ -L$(BASE_PATH)/HTSLIB/ -lhts -Wl,-rpath $(BASE_PATH)/HTSLIB -lgsl -lgslcblas #-Wall
 CXX=c++
 
 CXXFLAGS=	-g -O3 -fpermissive $(ARCH_FLAGS) #-Wall ##-xSSE2
 
 htsim:
-	$(CXX) $(CXXFLAGS) src/htsim.cpp -o $(EXE) $(LIBS) $(HTSLIB) 
+	$(CXX) $(CXXFLAGS) src/htsim.cpp src/haplo.cpp src/methdb.cpp src/mode.cpp src/struct.cpp -o $(EXE) $(LIBS) $(HTSLIB) 
 
 
 clean:

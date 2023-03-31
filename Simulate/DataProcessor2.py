@@ -1,90 +1,54 @@
 import multiprocessing
 import queue
 import threading
-import numpy as np
-import pickle
 
+from multiprocessing.pool import ThreadPool
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from ReadProcessor import ReadProcessor
 from StreamReads import StreamReads
-from StreamMethDB import StreamMethDB
 
 class DataProcessor:
-    def __init__(self, contig_id: str = None, read_gen, n_process=4, 
-                 processor: ReadProcessor = None, arr_max_size: List = None,
-                 fastq_out: StreamReads = None, meth_db: StreamMethDB = None):
+    def __init__(self, read_gen, n_workers=4, 
+                 processor: ReadProcessor = None, fastq_out: StreamReads = None):
         self.read_gen   = read_gen
-        self.n_process  = n_process
-        self.out_queue  = multiprocessing.Queue()
-        self.pool = multiprocessing.Pool(self.n_process)
-        self.writer_thread = threading.Thread(target=self.write_fastq, args=())
+        self.n_workers  = n_workers
         self.processor  = processor
         self.fastq_out  = fastq_out
-        self.meth_db    = meth_db
-        self.shared_pos_map = None
-        self.shared_meth_arr= None
-        self.contig_id  = contig_id
-        self.arr_max_size= arr_max_size
 
-    def start_processing_mp(self, ):
-        # start the thread for writing to the file
-        self.create_share_arr(self.arr_max_size)
-        self.load_contig_share(self.contig_id)
+    def start_processing_2q(self):
+        self.out_queue  = queue.Queue()
+        self.writer_thread = threading.Thread(target=self.write_fastq)
+        self.writer_thread.start()
         
-        writer_thread = threading.Thread(target=self.write_fastq)
-        writer_thread.start()
+        #self.pool = ThreadPool(self.n_workers)
+        with ThreadPoolExecutor(max_workers=self.n_workers) as executor:
+            for _, read_pair in self.read_gen:
+                future = executor.submit(self.worker, read_pair)
+                #future.add_done_callback(lambda f: self.output_queue.put(f.result()))
 
-        # use imap_unordered to apply the processing function to each piece of data
-        for result in self.pool.imap_unordered(self.processor.process_read_pair3, self.read_gen):
-            # put the result into the queue for the writer thread to process
-            self.out_queue.put(result)
-
-        # add None to the queue to signal the writer thread to exit
-        # self.out_queue.put(None)
-        # writer_thread.join()
-
+            executor.shutdown(wait=True)
+        self.out_queue.put(None)
+        self.writer_thread.join()
 
     def write_fastq(self):
         while True:
-            try:
-                read_pair = self.out_queue.get(timeout=1)
-            except queue.Empty:
-                if not any(p.is_alive() for p in self.pool._pool):
-                    break
-                else:
-                    continue
+            read_pair = self.out_queue.get(timeout=1)
             if read_pair is None:
                 break
             self.fastq_out.output_reads(read_pair)
 
-
     def stop(self):
-        self.pool.close()
-        self.pool.join()
+        # self.pool.close()
+        # self.pool.join()
         self.out_queue.put(None)
         self.writer_thread.join()
 
 
-    def create_share_arr(self, max_arr_size):
-        shared_data1 = multiprocessing.RawArray('I', max_arr_size[0])
-        shared_data2 = multiprocessing.RawArray('f', max_arr_size[1]*5)
-        self.shared_pos_map = np.frombuffer(shared_data1, dtype=np.uint32)
-        self.shared_meth_arr= np.frombuffer(shared_data2, dtype=np.float32).reshape((max_arr_size[1], 5))
+    def worker(self, read_pair):
+        result = self.processor.process_read_pair2(read_pair)
+        self.out_queue.put(result)
 
-
-    def load_contig_share(self, contig_id):
-        '''load the contig profiles'''
-        input_file = f'{self.meth_db.tmp_dir}/{contig_id}_values.pkl'
-        
-        try:
-            with open(input_file, 'rb') as FILE:
-                contig_profile = pickle.load(FILE)
-        except FileNotFoundError:
-            print(f'{contig_id}: methylation profile not found in {self.meth_db.tmp_dir}')
-            return None
-        else:
-            # copy the data from the original numpy array to the shared numpy array
-            self.shared_pos_map[:]   = np.zeros_like(self.shared_pos_map)
-            self.shared_meth_arr[:,:]= np.zeros_like(self.shared_meth_arr)
-            self.shared_pos_map[:contig_profile[0].shape[0]]   = contig_profile[0][:]
-            self.shared_meth_arr[:contig_profile[1].shape[0],:]= contig_profile[1][:,:]
+    # def spawn_workers(self):
+    #     for i in range(self.n_workers):
+    #         self.pool.apply_async(self.worker)
 
