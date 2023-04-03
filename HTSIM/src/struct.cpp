@@ -1,6 +1,6 @@
 #include <stdint.h>
 #include "struct.h"
-
+const char PACKAGE_VERSION[] ="1.0.3";
 
 static uint8_t CG = 0x01; //5to3
 static uint8_t CHG= 0x03;

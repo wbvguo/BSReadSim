@@ -9,6 +9,13 @@
 
 KSEQ_INIT(gzFile, gzread)
 #include "rrcut.h"
+#include "haplo.h"
+
+
+std::vector<cut_rec> cut_vec;
+std::vector<snp_rec> snp_vec;
+std::vector<cutpos_rec> cutpos_vec;
+std::vector<frag_rrbs_rec> frag_rrbs_vec;
 
 
 void parse_cut_site(char *cut_str, std::vector<cut_rec>& cut_vec)
@@ -216,7 +223,7 @@ void gen_cut_frag(const kseq_t *ks, expt_param *expt_set, std::vector<frag_rrbs_
 
 void output_rrcut_bed(const char *fname, const char *chr_id, std::vector<frag_rrbs_rec> &frag_vec)
 {
-    FILE* fp = fopen(fname, "w");
+    FILE* fp = fopen(fname, "a");
     if(fp==NULL){fprintf(stderr, "[%s] ERROR: open rrbs bed file: %s failed. Exit... \n", __func__, fname); exit (EXIT_FAILURE);}
 
     frag_rrbs_rec tmp_frag;
@@ -231,3 +238,123 @@ void output_rrcut_bed(const char *fname, const char *chr_id, std::vector<frag_rr
     fclose(fp);
 }
 
+static int simu_usage()
+{
+    fprintf(stderr, "\n");
+    fprintf(stderr, "rrcut (a module in htsim) for Reduced Representative fragment generation)\n");
+    fprintf(stderr, "Version: %s\n", PACKAGE_VERSION);
+    fprintf(stderr, "Contact: Wenbin Guo <wbguo@ucla.edu>; \n\n");
+    fprintf(stderr, "Usage:   rrcut [options] <ref.fa> \n\n");
+    fprintf(stderr, "Options:\n");
+    fprintf(stderr, "general setting:\n");
+    fprintf(stderr, "         -K INT        minimum insert size [%d]\n", MIN_INSERT);
+    fprintf(stderr, "         -L INT        maximum insert size [%d]\n", MAX_INSERT);
+    fprintf(stderr, "         -c STRING     contig name, only output reads from this contig, default is to output all contigs [None]\n");
+    fprintf(stderr, "mutation setting:\n");
+    fprintf(stderr, "         -v STRING     path to the genetic variant file (.vcf/vcf.gz) [None]\n");
+    fprintf(stderr, "         -R FLOAT      rate of mutations [%.4f]\n", MUT_RATE);
+    fprintf(stderr, "         -F FLOAT      fraction of indels [%.2f]\n", INDEL_FRAC);
+    fprintf(stderr, "         -X FLOAT      probability an indel is extended [%.2f]\n", INDEL_EXTN);
+    fprintf(stderr, "         -H INT        haplotype mode: 0 for disable, nonzero for enable (all variants are homozygotes) [0]\n");
+    fprintf(stderr, "         -s INT        seed for random generator [-1]\n");
+    fprintf(stderr, "technology setting:\n");
+    fprintf(stderr, "         -b STRING     output BED file, output to stdout if not specified [None]\n");
+    fprintf(stderr, "         -x STRING     enzyme cutting site string for reduced representation sequencing [None]\n");
+    fprintf(stderr, "\n");
+    return 1;
+}
+
+int main(int argc, char *argv[])
+{
+    // default parameters
+    char none_default[] = "None";
+    char *chr_id    = none_default;
+    char *vcf_file  = none_default;
+    char *cut_str   = none_default;
+    char *bed_file  = none_default;
+
+    expt_param expt_set;
+    mut_param  mut_set;
+
+    //update parameters from command line
+    int c = 0;
+    while ((c = getopt(argc, argv, "K:L:R:F:X:H:s:c:v:b:x:")) >= 0) {
+        switch (c) {
+            case 'K': expt_set.min_insert = atoi(optarg); break;
+            case 'L': expt_set.max_insert = atoi(optarg); break;
+            
+            case 'R': mut_set.mut_rate    = atof(optarg); break;
+            case 'F': mut_set.indel_frac  = atof(optarg); break;
+            case 'X': mut_set.indel_extn  = atof(optarg); break;
+            case 'H': mut_set.is_hap      = atoi(optarg)!=0; break;
+            case 's': mut_set.seed_snp    = atoi(optarg); break;
+
+            case 'c': chr_id     = optarg; break;
+            case 'v': vcf_file   = optarg; break;
+            case 'b': bed_file   = optarg; break;
+            case 'x': cut_str    = optarg; break;
+        }
+    }
+    if (argc - optind < 1) return simu_usage();
+    if (mut_set.seed_snp <= 0) mut_set.seed_snp    = time(0)&0x7fffffff;
+    
+    expt_set.min_insert = std::max(std::max(expt_set.size_l, expt_set.size_r), expt_set.min_insert); // ensure MIN_INSERT >= SIZE_L or SIZE_R
+    expt_set.is_chr_set   = strcmp(chr_id, "None") && strlen(chr_id);
+    expt_set.is_bed_set   = strcmp(bed_file,"None") && strlen(bed_file);
+    expt_set.is_site_set  = strcmp(cut_str, "None") && strlen(cut_str);
+    mut_set.is_vcf_set    = strcmp(vcf_file,"None") && strlen(vcf_file);
+
+
+    // check input parameters
+    if(!expt_set.is_bed_set){fprintf(stderr, "ERROR: please specify the output BED file!\n"); exit(EXIT_FAILURE);}
+    // if the bed if designated, delete it
+    FILE *bed;
+    if (bed = fopen(bed_file, "r")) { fclose(bed); remove(bed_file);}
+    FILE *vcf;
+    if (mut_set.is_vcf_set) {
+        if((vcf=fopen(vcf_file,"r"))){fprintf(stderr, "[%s] VCF file exists, use it to simulate reads\n", __func__); fclose(vcf);
+        }else{}
+    } else {
+        fprintf(stderr, "[%s] No VCF input, will generate SNP randomly if mutation rate is nonzero\n", __func__);
+    }
+
+
+    // parse the cut site, hold
+    parse_cut_site(cut_str, cut_vec);
+    
+
+    // parse reference
+    kseq_t *ks;
+    mutseq_t rseq[2];
+    gzFile fp_fa;
+
+    fp_fa = gzopen(argv[optind], "r");
+    ks = kseq_init(fp_fa);
+    int l;
+    while ((l = kseq_read(ks)) >= 0) {  //here l is the chromosome length
+        if (expt_set.is_chr_set) {if (strcmp(chr_id, ks->name.s)!=0){continue;}}
+        if (l < expt_set.mean_insert + 3 * expt_set.sd_insert) {continue;}
+
+        uint32_t* posidx_arr = (uint32_t*) calloc(ks->seq.l, sizeof(uint32_t));
+        if (posidx_arr == NULL) { fprintf(stderr, "ERROR: could not allocate memory\n");exit(EXIT_FAILURE);}
+
+        // introduce mutations and print them to stdout
+        //fprintf(stdout, "Contig Variant Start\n");
+        if(mut_set.is_vcf_set){
+            sim_mut_vcf(ks, vcf_file, rseq, rseq+1, posidx_arr, snp_vec);
+            if(snp_vec.size() == 0){fprintf(stdout, "%s\n", ks->name.s);}       //if no variants, print chromosome id
+        } else {
+            sim_mut_diref(ks, &mut_set, rseq, rseq+1, posidx_arr);
+            if(mut_set.mut_rate == 0.0){fprintf(stdout, "%s\n", ks->name.s);}  //if no variants, print chromosome id
+        }
+        //sim_print_mutref(ks->name.s, ks, rseq, rseq+1, expt_set.output_fmt);
+        //fprintf(stdout, "Contig Variant End\n");
+
+        gen_cut_pos(rseq, rseq+1, cutpos_vec, cut_vec);
+        gen_cut_frag(ks, &expt_set, frag_rrbs_vec, cutpos_vec, cut_vec);
+        output_rrcut_bed(bed_file, chr_id, frag_rrbs_vec);
+        free(posidx_arr);
+    }
+    kseq_destroy(ks);
+    return 0;
+}

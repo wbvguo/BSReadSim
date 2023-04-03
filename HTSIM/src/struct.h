@@ -7,6 +7,8 @@
 
 
 /*-------------------------variable-------------------------*/
+extern const char PACKAGE_VERSION[];
+
 extern const uint8_t nst_nt4_table[256];
 extern const uint8_t cg_table[5];
 extern const uint8_t cg_context_table[64];
@@ -151,7 +153,7 @@ typedef struct {
     int tech_mode       = TECH_MODE;
     int output_fmt      = OUTPUT_FMT;
     bool is_chr_set     = false;
-    bool is_uniform     = false;
+    bool is_uniform     = true;
     bool is_bias_set    = false;
     bool is_site_set    = false;
     bool is_bed_set     = false;
@@ -173,6 +175,7 @@ typedef struct{
     bool is_asm_set     = false;
     bool is_cgmap_set   = false;
     bool is_methdb_set  = false;
+    bool update_meth    = false;
 } meth_param;
 
 #endif

@@ -2,6 +2,8 @@
 #include <vector>
 #include <map>
 #include <string>
+#include <algorithm>
+#include <random>
 #include <zlib.h>
 #include "kseq.h"
 #include "vcf.h"
@@ -10,6 +12,19 @@
 
 KSEQ_INIT(gzFile, gzread)
 #include "mode.h"
+
+
+// initialize random generator for general usage
+std::random_device rd; //Standard mersenne_twister_engine seeded with rd()
+std::mt19937 gen(rd());
+// initialize random generator for standard normal distribution
+std::random_device rn;  //Will be used to obtain a seed for the random number engine
+std::mt19937 gen_rn(rn());
+std::normal_distribution<float> dis_rn(0.0, 1.0); 
+// initialize random generator for uniform distribution between [0,1]
+std::random_device ru;
+std::mt19937 gen_ru(ru());
+std::uniform_real_distribution<float> dis_ru(0.0,1.0);
 
 
 // for BED
@@ -245,6 +260,114 @@ void cal_chr_count(const char *fn, char *chr_id, char *bed_file, uint64_t N, uin
             it->second.count+= alloc_count; 
             rest_count -= alloc_count;
             ++it;
+        }
+    }
+}
+
+
+// for fragment generation
+void gen_frag_vec(std::uniform_int_distribution<int> *dis_ud, std::discrete_distribution<int> *dis_dd, uint32_t *posidx_arr,
+                    std::vector<frag_rec> &frag_vec, std::vector<frag_rec> &probe_vec, std::vector<float> &eff_vec, expt_param *expt_set)
+{
+    frag_rec tmp_frag;
+    int pos_l, pos_r, insert_dev, insert_len, frag_idx, probe_center, frag_center, i;
+
+    frag_vec.clear();
+    if(expt_set->tech_mode ==2){
+        for(i = 0; i < expt_set->chunk_size; ++i){
+            frag_idx = expt_set->is_uniform ? (*dis_ud)(gen) : (*dis_dd)(gen);
+            frag_rec tmp_probe = probe_vec[frag_idx];
+            probe_center = (tmp_probe.pos_l + tmp_probe.pos_r) >> 1;
+            frag_center= probe_center + (int)(expt_set->sd_center * dis_rn(gen_rn));
+            insert_dev = (int)(expt_set->sd_insert * dis_rn(gen_rn));
+            insert_len = std::max(expt_set->min_insert, std::min(expt_set->mean_insert + insert_dev, expt_set->max_insert));
+            
+            tmp_frag.pos_l = frag_center - (insert_len>>1);
+            tmp_frag.pos_r = frag_center + (insert_len>>1); 
+            tmp_frag.strand= tmp_probe.strand;      // denotes the strand
+            tmp_frag.haplo = drand48()<0.5?0:1;
+            frag_vec.push_back(tmp_frag);
+            tmp_frag = {};
+        }
+    }else if (expt_set->tech_mode == 1){
+        for(i = 0; i < expt_set->chunk_size; ++i){
+            frag_idx = expt_set->is_uniform ? (*dis_ud)(gen) : (*dis_dd)(gen);
+            frag_rec tmp_probe = probe_vec[frag_idx];
+            tmp_frag.pos_l = tmp_probe.pos_l;
+            tmp_frag.pos_r = tmp_frag.pos_r;
+            tmp_frag.strand= drand48()<0.5?0:1;     // denotes the strand
+            tmp_frag.haplo = drand48()<0.5?0:1;     // can include the haplotype information
+            frag_vec.push_back(tmp_frag);
+            tmp_frag = {};
+        }
+    }else{
+        if(expt_set->is_uniform){
+            for(i = 0; i < expt_set->chunk_size; ++i){
+                pos_l = (*dis_ud)(gen);
+                insert_dev = (int)(expt_set->sd_insert * dis_rn(gen_rn));
+                insert_len = std::max(expt_set->min_insert, std::min(expt_set->mean_insert + insert_dev, expt_set->max_insert));
+                //pos_r = std::min(pos_l + insert_len, tot_size -2); //will not pass boundary
+                tmp_frag.pos_l = pos_l;
+                tmp_frag.pos_r = pos_l+insert_len;
+                tmp_frag.strand= drand48()<0.5?0:1; // denotes the strand
+                tmp_frag.haplo = drand48()<0.5?0:1;
+                frag_vec.push_back(tmp_frag);
+                tmp_frag = {};
+            }
+        }else{
+            while ((int)frag_vec.size()< expt_set->chunk_size){
+                pos_l = (*dis_ud)(gen);
+                insert_dev = (int)(expt_set->sd_insert * dis_rn(gen_rn));
+                insert_len = std::max(expt_set->min_insert, std::min(expt_set->mean_insert + insert_dev, expt_set->max_insert));
+                pos_r = pos_l + insert_len;
+                int gc_count =0;
+                for(int kk = pos_l; kk <= pos_r; ++kk){gc_count += (posidx_arr[kk] & 0x2)>>1;}
+                float gc_prob = eff_vec[(int)(gc_count*expt_set->bin_size/insert_len+0.5)];
+                if(dis_ru(gen_ru) > gc_prob){   // when initiate eff_vec, judge the value in case it's too small
+                    tmp_frag.pos_l = pos_l;
+                    tmp_frag.pos_r = pos_r;
+                    tmp_frag.strand= drand48()<0.5?0:1;     // denotes the strand
+                    tmp_frag.haplo = drand48()<0.5?0:1;
+                    frag_vec.push_back(tmp_frag);
+                    tmp_frag= {};
+                }
+            }
+        }
+    }
+    std::sort(frag_vec.begin(), frag_vec.end());
+}
+
+void check_frag_vec(std::vector<frag_rec> &frag_vec, mutseq_t *hap1, mutseq_t *hap2, expt_param *expt_set)
+{
+    // find out the start position for read2, expecially for RRBS
+    if(expt_set->tech_mode == 1){
+        mutseq_t *ret[2];
+        ret[0] = hap1; ret[1] = hap2;
+        for(size_t i =0; i < frag_vec.size(); ++i){
+            int start2 = frag_vec[i].pos_r;
+            int haplo  = frag_vec[i].haplo;
+            for(int k=0; k < expt_set->size_r; k++){
+                int c = ret[haplo]->s[start2], mut_type = c & mutmsk;
+                if(mutmsk == DELETE){
+                    --start2;
+                    --k;
+                }else if(mutmsk == INSERT){
+                    int num_ins = mut_type>>12;
+                    if(k + num_ins > expt_set->size_r){
+                        start2 -= expt_set->size_r - k;
+                    }else{
+                        start2 -= num_ins;
+                        k += num_ins;
+                    }
+                }else{
+                    --start2;
+                }
+            }
+            frag_vec[i].score = start2;
+        }
+    }else{
+        for(size_t i =0; i < frag_vec.size(); ++i){
+            frag_vec[i].score = frag_vec[i].pos_r - expt_set->size_r;
         }
     }
 }
