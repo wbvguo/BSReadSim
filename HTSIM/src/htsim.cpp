@@ -77,6 +77,10 @@ std::vector<frag_rec> probe_vec;
 std::vector<param_rec> param_vec;
 std::map<std::string, chr_rec> chr_count;
 
+std::random_device re;
+std::mt19937 gen_re(re());
+std::uniform_real_distribution<float> dis_ru(0.0,1.0);
+
 
 void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char *methdb_file, char *cgmap_file, char *asm_file, 
                 expt_param *expt_set, mut_param *mut_set, meth_param *meth_set)
@@ -169,13 +173,16 @@ void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char
 
         uint64_t ii = 0;    // record how many reads has been generated
         frag_rec tmp_frag;  // hold the tmp fragment
+        int tmp_chunk, tmp_size;
+        int chunk_size = expt_set->chunk_size > n_pairs? n_pairs : expt_set->chunk_size;
         while(ii < n_pairs){// the core loop
+            tmp_chunk  = std::min(chunk_size, (int)(n_pairs - ii));
+            tmp_size   = std::max(1000, tmp_chunk); // make sure we have enough fragments
             // generate #chunk_size fragments records
-            gen_frag_vec(&dis_ud, &dis_dd, posidx_arr, frag_vec, probe_vec, eff_vec, expt_set);
+            gen_frag_vec(&dis_ud, &dis_dd, posidx_arr, tmp_size, frag_vec, probe_vec, eff_vec, expt_set);
             check_frag_vec(frag_vec, rseq, rseq+1, expt_set); // check if the fragments are valid, fill start2
             
             // generate the read sequences
-            int tmp_chunk = std::min(expt_set->chunk_size, (int)(n_pairs - ii));
             ii += tmp_chunk;
             for(int idx=0; idx < tmp_chunk; ++idx){
                 tmp_frag = frag_vec[idx];
@@ -265,7 +272,7 @@ void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char
                 // print reads to stdout: mode 0 print string (WGS), else print chars&numbers (WGBS)
                 if(expt_set->output_fmt == 0){
                     // flip and get the reverse complementary
-                    int is_flip = drand48() < 0.5? 0 : 1;
+                    int is_flip = dis_ru(gen_re) < 0.5? 0 : 1;
                     int tmp_cigar, tmp_base;
                     for (k = 0; k < size[1]; ++k) { 
                         if (k <= int(size[1]/2)) { 
@@ -286,7 +293,7 @@ void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char
                         // sequence (introduce random sequencing error)
                         for (i = 0; i < size[jj]; ++i) {
                             int c = tmp_seq[jj][i];
-                            if (drand48() < expt_set->err_rate){
+                            if (dis_ru(gen_re) < expt_set->err_rate){
                                 // c = (c + (int)(drand48() * 3.0 + 1)) & 3; // random sequencing errors
                                 c = (c + 1) & 3; // recurrent sequencing errors
                                 ++n_err[jj];
@@ -315,7 +322,7 @@ void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char
                         fprintf(stdout, "@%s:%d:%d:%llx %d %d %d %d ", ks->name.s, start[0]+1, end[1]+1, (long long)ii, j, flag_mut, flag_indel, tmp_frag.strand); 
                         for (i = 0; i < size[j]; ++i) {
                             int pos =  start[j] + i + tmp_offset[j][i];
-                            if(posidx_arr[pos] & 0x2){ // TODO, what if the genetic variants??
+                            if(posidx_arr[pos] & 0x2){
                                 int idx = posidx_arr[pos] >> 2;
                                 tmp_context[j][i] |= meth_vec[idx].context;
                                 fprintf(stdout, "%.4f,", meth_vec[idx].meth[(int)(bool)flag_mut]);
@@ -401,7 +408,7 @@ static int simu_usage()
     fprintf(stderr, "         -W INT        write MethDB to disk: 0 for disable, nonzero for enable [0]\n");
     fprintf(stderr, "         -M STRING     MethDB intermediate file [None]\n");
     fprintf(stderr, "         -S INT        seed for methylation value generation (for cgmap pool or beta distribution) [-1]\n");
-    fprintf(stderr, "         -P STRING     Parameter string for beta distribution [-1]\n");
+    fprintf(stderr, "         -P STRING     Parameter string for beta distribution [0.5_0.5,0.05_0.05,0.05_0.05]\n");
     fprintf(stderr, "         -U INT        update methdb boundary sites for variants: 0 for no, non-zero for yes [0]\n");
     fprintf(stderr, "technology setting:\n");
     fprintf(stderr, "         -T INT        technology: 0 for Whole genome; 1 for Reduced representation; 2 for Targeted [%d]\n", TECH_MODE);
@@ -409,7 +416,7 @@ static int simu_usage()
     fprintf(stderr, "         -B STRING     GC Bias reference for WGS/WGBS, only used when -u set to be 0 [None]\n");
     fprintf(stderr, "         -b STRING     BED file for reduced-representation / targeted sequencing (.bed/.bed.gz) [None]\n");
     fprintf(stderr, "         -D INT        fragment center's deviaiton from the probe center [%d]\n", SD_CENTER);
-    fprintf(stderr, "         -x STRING     enzyme cutting site string for reduced representation sequencing [None]\n");
+    fprintf(stderr, "         -x STRING     enzyme cutting site string for reduced representation sequencing, take the format as C_CGG,_AATT [None]\n");
     fprintf(stderr, "\n");
     return 1;
 }
@@ -419,7 +426,7 @@ int main(int argc, char *argv[])
     // default parameters
     uint64_t N  = 0, chr_N  = 0;
     char none_default[] = "None";
-    char param_default[]= "0.5|0.5,0.05|0.05,0.05|0.05";
+    char param_default[]= "0.5_0.5,0.05_0.05,0.05_0.05";
     char *chr_id    = none_default;
     char *vcf_file  = none_default;
     char *bias_file = none_default;

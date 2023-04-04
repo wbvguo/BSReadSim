@@ -234,7 +234,7 @@ void sim_mut_diref(const kseq_t *ks, mut_param *mut_set, mutseq_t *hap1, mutseq_
 {
     int i, deleting = 0;
     mutseq_t *ret[2];
-    //TODO: drand48() -> sth else
+    //drand48() is 8 times faster than uniform_distribution, use it exclusively for snp generation
 
     ret[0] = hap1; ret[1] = hap2;
     ret[0]->l = ks->seq.l; ret[1]->l = ks->seq.l;

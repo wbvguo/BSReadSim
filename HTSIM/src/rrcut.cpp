@@ -20,22 +20,22 @@ std::vector<frag_rrbs_rec> frag_rrbs_vec;
 
 void parse_cut_site(char *cut_str, std::vector<cut_rec>& cut_vec)
 {
-    // check if cut_str is valid (seprate by ',' and '|' intercjangeably, 
-    // never || without comma in between or ,, without | in between)
+    // check if cut_str is valid (seprate by ',' and '_' intercjangeably, 
+    // never __ without comma in between nor ,, without _ in between)
     bool vline_flag = false;
     bool comma_flag = false;
 
     for(int i =0; cut_str[i] !='\0'; ++i){
         if(cut_str[i] == ' '){continue;}
-        if(cut_str[i] == '|'){
-            if(vline_flag){fprintf (stderr, "[%s] ERROR: Invalid enzyme site format '%s'. Exit... \n", __func__, cut_str); exit (EXIT_FAILURE);}
+        if(cut_str[i] == '_'){
+            if(vline_flag){fprintf (stderr, "[%s] ERROR: Invalid enzyme site format '%s'. Exit...\n", __func__, cut_str); exit (EXIT_FAILURE);}
             vline_flag = true; comma_flag = false;
         }else if(cut_str[i] == ','){
-            if(comma_flag){fprintf (stderr, "[%s] ERROR: Invalid enzyme site format '%s'. Exit... \n", __func__, cut_str); exit (EXIT_FAILURE);}
+            if(comma_flag){fprintf (stderr, "[%s] ERROR: Invalid enzyme site format '%s'. Exit...\n", __func__, cut_str); exit (EXIT_FAILURE);}
             comma_flag = true; vline_flag = false;
         }else{
             if(nst_nt4_table[(int)cut_str[i]]==4 && (cut_str[i] != 'N' || cut_str[i] != 'n')){
-                fprintf (stderr, "[%s] ERROR: Invalid enzyme site format '%s'. Exit... \n", __func__, cut_str); exit (EXIT_FAILURE);
+                fprintf (stderr, "[%s] ERROR: Invalid enzyme site format '%s'. Exit...\n", __func__, cut_str); exit (EXIT_FAILURE);
             }
         }
     }
@@ -47,14 +47,14 @@ void parse_cut_site(char *cut_str, std::vector<cut_rec>& cut_vec)
     
     for(int i =0; cut_str[i] !='\0'; ++i){
         if(cut_str[i] == ' '){continue;}
-        if (cut_str[i] == '|'){tmp_site.idx = idx; continue;}
+        if (cut_str[i] == '_'){tmp_site.idx = idx; continue;}
         if (cut_str[i] == ','){
             if (tmp_site.idx >=0) {
                 tmp_site.len = idx;
                 cut_vec.push_back(tmp_site);
                 tmp_site = {}; idx = 0; continue; // empty the struct, restart
             } else {
-                fprintf (stderr, "[%s] ERROR: Invalid enzyme site format (%s). Exit... \n", __func__, cut_str); exit (EXIT_FAILURE);
+                fprintf (stderr, "[%s] ERROR: Invalid enzyme site format (%s). Exit...\n", __func__, cut_str); exit (EXIT_FAILURE);
             }
         }
         ++idx;
@@ -100,7 +100,7 @@ void gen_cut_pos(mutseq_t *hap1, mutseq_t *hap2, std::vector<cutpos_rec>& cutpos
         }
     }
 
-    if(cutpos_map.empty()){fprintf (stderr, "[%s] ERROR: No cut site found in hap1 and hap2. Exit... \n", __func__); exit (EXIT_FAILURE);}
+    if(cutpos_map.empty()){fprintf (stderr, "[%s] ERROR: No cut site found in hap1 and hap2. Exit...\n", __func__); exit (EXIT_FAILURE);}
 
     // put into the vector
     for (auto it = cutpos_map.begin(); it != cutpos_map.end(); ++it) {
@@ -221,10 +221,10 @@ void gen_cut_frag(const kseq_t *ks, expt_param *expt_set, std::vector<frag_rrbs_
     }
 }
 
-void output_rrcut_bed(const char *fname, const char *chr_id, std::vector<frag_rrbs_rec> &frag_vec)
+void output_rrcut_bed(const char *fname, const char *chr_id, std::vector<frag_rrbs_rec> &frag_vec, bool to_stdout)
 {
-    FILE* fp = fopen(fname, "a");
-    if(fp==NULL){fprintf(stderr, "[%s] ERROR: open rrbs bed file: %s failed. Exit... \n", __func__, fname); exit (EXIT_FAILURE);}
+    FILE *fp = to_stdout ? stdout : fopen(fname, "a");
+    if(fp==NULL){fprintf(stderr, "[%s] ERROR: open rrbs bed file: %s failed. Exit...\n", __func__, fname); exit (EXIT_FAILURE);}
 
     frag_rrbs_rec tmp_frag;
     int map_size = frag_vec[0].n_cuts.size();
@@ -233,9 +233,9 @@ void output_rrcut_bed(const char *fname, const char *chr_id, std::vector<frag_rr
         fprintf(fp, "%s\t%d\t%d\t.\t1\t%d\t%d\t%d", chr_id, tmp_frag.pos_l, tmp_frag.pos_r, tmp_frag.haplo, tmp_frag.cut_l, tmp_frag.cut_r);
         for(int j=0; j < map_size; ++j){fprintf(fp, "\t%d", tmp_frag.n_cuts[j]);}
         fprintf(fp, "\n");
-        if (ferror(fp)) {fprintf(stderr, "[%s] ERROR: failed to write to file %s. Exit... \n", __func__, fname);exit(EXIT_FAILURE);}
+        //if (ferror(fp)) {fprintf(stderr, "[%s] ERROR: failed to write to file %s. Exit... \n", __func__, fname);exit(EXIT_FAILURE);}
     }
-    fclose(fp);
+    if(!to_stdout){fclose(fp);}
 }
 
 static int simu_usage()
@@ -305,15 +305,15 @@ int main(int argc, char *argv[])
     mut_set.is_vcf_set    = strcmp(vcf_file,"None") && strlen(vcf_file);
 
 
-    // check input parameters
-    if(!expt_set.is_bed_set){fprintf(stderr, "ERROR: please specify the output BED file!\n"); exit(EXIT_FAILURE);}
-    // if the bed if designated, delete it
-    FILE *bed;
-    if (bed = fopen(bed_file, "r")) { fclose(bed); remove(bed_file);}
-    FILE *vcf;
+    // if the bed if designated, delete it, if not, output to stdout
+    bool to_stdout = false;
+    if(!expt_set.is_bed_set){fprintf(stderr, "No BED file specified, will output to stdout...\n"); to_stdout = true;
+    }else{FILE *bed= fopen(bed_file, "r"); if (bed){fclose(bed);remove(bed_file);}}
+    
     if (mut_set.is_vcf_set) {
-        if((vcf=fopen(vcf_file,"r"))){fprintf(stderr, "[%s] VCF file exists, use it to simulate reads\n", __func__); fclose(vcf);
-        }else{}
+        FILE *vcf;
+        if((vcf=fopen(vcf_file,"r"))){fprintf(stderr, "VCF file: %s, use it to simulate reads\n", vcf_file); fclose(vcf);
+        }else{fprintf(stderr, "ERROR: The specified VCF file does not exist, please check!\n"); exit(EXIT_FAILURE);}
     } else {
         fprintf(stderr, "[%s] No VCF input, will generate SNP randomly if mutation rate is nonzero\n", __func__);
     }
@@ -352,7 +352,7 @@ int main(int argc, char *argv[])
 
         gen_cut_pos(rseq, rseq+1, cutpos_vec, cut_vec);
         gen_cut_frag(ks, &expt_set, frag_rrbs_vec, cutpos_vec, cut_vec);
-        output_rrcut_bed(bed_file, chr_id, frag_rrbs_vec);
+        output_rrcut_bed(bed_file, ks->name.s, frag_rrbs_vec, to_stdout);
         free(posidx_arr);
     }
     kseq_destroy(ks);

@@ -13,12 +13,12 @@ knitr::opts_chunk$set(echo = TRUE)
 # library
 ```{r}
 # Helper packages
-library(dplyr)     # for data wrangling
-library(ggplot2)   # for awesome plotting
+library(dplyr)
+library(ggplot2)
 
 # Modeling packages
-library(earth)     # for fitting MARS models
-library(caret)     # for automating the tuning process
+library(earth)
+library(caret)
 
 # Model interpretability packages
 library(vip)       # for variable importance
@@ -34,8 +34,8 @@ dat= df[c("length", "gc_ratio", "CCGG", "relative_depth")]
 
 
 ```{r}
-mars1 <- earth(relative_depth ~ ., data = dat, 
-               glm=list(family=binomial), degree=3, nprun = 10)
+mars1 = earth(relative_depth ~ ., data = dat, 
+              glm=list(family=binomial), degree=3, nprun = 10)
 ```
 
 ```{r}
@@ -100,6 +100,7 @@ cv  <- crossv_kfold(data = dat, k =  10)
 
 ```{r}
 library(ggpointdensity)
+library(viridis)
 
 df2 = data.frame(fitted = mars1$fitted.values %>% unlist() %>% unname(), 
                  real = dat$relative_depth %>% unlist())

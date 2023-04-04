@@ -1,0 +1,109 @@
+---
+title: "GC bias"
+author: "Wenbin Guo"
+date: "2023-03-31"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+```
+
+
+```{r}
+working_path = "~/iproject/BSReadSim/"
+
+gc_bias_file = paste0(working_path, "/data/proc_data/ratio_depth_100/ratio_depth.csv")
+gc_bias_rds  = paste0(working_path, "/data/proc_data/ratio_depth_100/ratio_depth.rds")
+
+bool_rerun = FALSE
+if(bool_rerun){
+  gc_bias_df = read.table(gc_bias_file, sep = "\t", header = TRUE)
+  gc_bias_df = gc_bias_df %>% 
+    dplyr::mutate(bin=cut(ratio, breaks = seq(0,1,0.01), include.lowest = TRUE))
+  saveRDS(gc_bias_df, gc_bias_rds)
+}else{
+  gc_bias_df = readRDS(gc_bias_rds)
+}
+```
+
+
+# boxplot remove outliers
+```{r}
+filter_data <- function(data, keep_chr = "chr21", col_name = "wgs_depth") {
+  data %>% filter(if(!!keep_chr != "all") chr_id == keep_chr else TRUE) %>% 
+    rename(tmp_value=col_name) %>% 
+    group_by(bin) %>%
+    mutate(outlier = ifelse(tmp_value < quantile(tmp_value, 0.25) - 1.5 * IQR(tmp_value) | 
+                            tmp_value > quantile(tmp_value, 0.75) + 1.5 * IQR(tmp_value), TRUE, FALSE)) %>%
+    filter(outlier == FALSE) %>%
+    select(-outlier) %>%
+    ungroup() %>% 
+    rename(!!col_name := tmp_value)
+}
+```
+
+```{r}
+gc_bias_df_wgs_cleaned = filter_data(gc_bias_df, col_name = "wgs_depth", keep_chr = "chr21")
+gc_bias_df_wgbs_cleaned= filter_data(gc_bias_df, col_name = "wgbs_depth",keep_chr = "chr21")
+```
+
+## lowess regression
+```{r}
+ggplot(gc_bias_df_wgbs_cleaned, aes(x=ratio, y=wgbs_depth)) + 
+  geom_point() + 
+  geom_smooth(method = "loess")
+```
+
+
+
+
+#test normality for each bin
+```{r}
+bin_rec_list = gc_bias_df_wgbs_cleaned
+norm_test_df = data.frame(bin = bin_rec_list, wgbs_pval = NA, wgs_pval = NA) %>% 
+  column_to_rownames("bin")
+  
+for(bin_rec in bin_rec_list){
+  test_wgs_res = gc_bias_df_wgs_cleaned %>% 
+    dplyr::filter(bin == bin_rec) %>% pull(wgs_depth) %>% 
+    shapiro.test()
+  test_wgbs_res= gc_bias_df_wgbs_cleaned %>% 
+    dplyr::filter(bin == bin_rec) %>% pull(wgbs_depth) %>% 
+    shapiro.test()
+  
+  norm_test_df[bin_rec, c("wgs_pval", "wgbs_pval")] = c(test_wgs_res$p.value, test_wgbs_res$p.value)
+} 
+```
+
+
+```{r}
+ggplot(gc_bias_df_wgbs_cleaned, aes(x=ratio, y=wgbs_depth) ) +
+    geom_boxplot(fill="#69b3a2")
+```
+
+
+# depth ~ ratio (wgs)
+```{r}
+ggplot(gc_bias_df) +
+  geom_point(aes(x=ratio, y=wgs_depth)) +
+  stat_density2d(aes(fill = ..density..^0.25), geom = "tile", contour = FALSE, n = 200) +   
+  scale_fill_continuous(low = "white", high = "dodgerblue4") +
+  theme_bw()
+```
+
+
+# depth ~ ratio (wgbs)
+```{r}
+
+```
+
+
+
+# wgs & wgbs depth compare
+```{r}
+
+```
+

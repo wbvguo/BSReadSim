@@ -1,6 +1,5 @@
 #include <stdint.h>
 #include "struct.h"
-const char PACKAGE_VERSION[] ="1.0.3";
 
 static uint8_t CG = 0x01; //5to3
 static uint8_t CHG= 0x03;
@@ -47,6 +46,8 @@ const mut_t mutmsk = (mut_t)0xf000;
 
 
 //  global variables.
+const char PACKAGE_VERSION[] ="1.0.3";
+
 const float ERR_RATE    = 0.005;
 const float MUT_RATE    = 0.01;
 const float INDEL_FRAC  = 0.15;
@@ -65,3 +66,4 @@ const int BIN_SIZE      = 100;
 const int TECH_MODE     = 0; 
 const int OUTPUT_FMT    = 0;
 const int CHUNK_SIZE    = 1000000;
+
