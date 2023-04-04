@@ -13,7 +13,7 @@
 // create/stream MethDB
 void create_methdb(const kseq_t *ks, uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec);
 
-void update_methdb(uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec, mutseq_t *hap1, mutseq_t *hap2, bool bool_asm_set, bool bool_update_boundary);
+void update_methdb(uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec, mutseq_t *hap1, mutseq_t *hap2, bool is_asm_set, bool is_meth_update);
 
 void save_methdb(std::vector<meth_rec>& meth_vec, const char *fname);
 

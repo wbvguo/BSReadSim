@@ -29,7 +29,7 @@ void cal_chr_count(const char *fn, char *chr_id, char *bed_file, uint64_t N, uin
 
 
 // for fragment generation
-void gen_frag_vec(std::uniform_int_distribution<int> *dis_ud, std::discrete_distribution<int> *dis_dd, uint32_t *posidx_arr,
+void gen_frag_vec(std::uniform_int_distribution<int> *dis_ud, std::discrete_distribution<int> *dis_dd, uint32_t *posidx_arr, int chunk_size,
                     std::vector<frag_rec> &frag_vec, std::vector<frag_rec> &probe_vec, std::vector<float> &eff_vec, expt_param *expt_set);
 
 void check_frag_vec(std::vector<frag_rec> &frag_vec, mutseq_t *hap1, mutseq_t *hap2, expt_param *expt_set);

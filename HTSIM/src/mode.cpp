@@ -140,7 +140,7 @@ void parse_bias_file(char *fname, std::vector<float>& eff_vec)
     FILE* fp = fopen(fname, "r");
     float eff_prob;
 
-    if(fp==NULL){fprintf(stderr, "[%s] ERROR: open capture efficiency file: %s failed. Exit...", __func__, fname); exit (EXIT_FAILURE);}
+    if(fp==NULL){fprintf(stderr, "[%s] ERROR: open capture efficiency file: %s failed. Exit...\n", __func__, fname); exit (EXIT_FAILURE);}
     while(fscanf(fp, "%f", &eff_prob) == 1) { // this will skip the empty lines
         // printf("%f\n", eff_prob);
         eff_vec.push_back(eff_prob);
@@ -152,11 +152,11 @@ void parse_bias_file(char *fname, std::vector<float>& eff_vec)
 // for length calculation
 void collect_len_score_chr(const kseq_t *ks, chr_rec *tmp_len, char *bed_file, int tech_mode, std::vector<frag_rec>& probe_vec)
 {
-    uint32_t eff_len=0;
-    float sum_score=0;
-    bool bool_bed_set = strcmp(bed_file,"None") && strlen(bed_file);
+    uint32_t eff_len= 0;
+    float sum_score = 0;
+    bool is_bed_set = strcmp(bed_file,"None") && strlen(bed_file);
 
-    if(bool_bed_set){                       // targeted sequencing or
+    if(is_bed_set){                       // targeted sequencing or
         parse_bed_chr(bed_file, ks->name.s, probe_vec, tech_mode);
         int len, pos_l, pos_r, pos_l_prev, pos_r_prev;
         float score = 0;
@@ -194,7 +194,7 @@ void cal_chr_count(const char *fn, char *chr_id, char *bed_file, uint64_t N, uin
     fp_fa = gzopen(fn, "r");
     ks = kseq_init(fp_fa);
 
-    if (!fp_fa) { fprintf (stderr, "ERROR: gzopen of '%s' failed: %s. Exit... \n", fn, strerror (errno)); exit (EXIT_FAILURE);}
+    if (!fp_fa) { fprintf (stderr, "ERROR: gzopen of '%s' failed: %s. Exit...\n", fn, strerror (errno)); exit (EXIT_FAILURE);}
     fprintf(stderr, "[%s] Calculating the length and count of the reference sequences...\n", __func__);
     
     chr_rec tmp_len;
@@ -203,7 +203,6 @@ void cal_chr_count(const char *fn, char *chr_id, char *bed_file, uint64_t N, uin
 
     int l;
     while ((l = kseq_read(ks)) >= 0) {
-        if (expt_set->is_chr_set) {if (strcmp(chr_id, ks->name.s)!=0){continue;}}
         if (l < expt_set->mean_insert+3*expt_set->sd_insert){
             fprintf(stderr, "[%s] skip contig '%s' as it is shorter than %d!\n", __func__, ks->name.s, expt_set->mean_insert+3*expt_set->sd_insert); 
             continue;
@@ -221,7 +220,7 @@ void cal_chr_count(const char *fn, char *chr_id, char *bed_file, uint64_t N, uin
 
 
     // check if fasta is empty
-    if (chr_count.empty()) {fprintf (stderr, "ERROR: Input fasta is empty: %s. Exit... \n", fn); exit (EXIT_FAILURE);}
+    if (chr_count.empty()) {fprintf (stderr, "ERROR: Input fasta is empty: %s. Exit...\n", fn); exit (EXIT_FAILURE);}
 
 
     // check input chr_id, calculate the count for contig(s)
@@ -232,7 +231,8 @@ void cal_chr_count(const char *fn, char *chr_id, char *bed_file, uint64_t N, uin
 
         uint32_t contig_eff_len = chr_count[chr_id_str].eff_len;
         uint32_t contig_len = chr_count[chr_id_str].chr_len;
-        chr_N = chr_N == 0? (contig_eff_len * expt_set->depth)/(expt_set->size_l + expt_set->size_r) : chr_N;
+        N = N == 0? (tot_eff_len * expt_set->depth)/(expt_set->size_l + expt_set->size_r) : N;
+        chr_N = chr_N == 0? contig_eff_len*N/tot_eff_len : chr_N;
         fprintf(stderr, "[%s] Contig %s specified, total length: %u, effective length: %u, #reads: %lu\n", __func__, chr_id, contig_len, contig_eff_len, chr_N);
         chr_count[chr_id_str].count = chr_N;
     } else {
@@ -252,7 +252,7 @@ void cal_chr_count(const char *fn, char *chr_id, char *bed_file, uint64_t N, uin
         }
 
         int rest_count = N - cum_count;
-        if(rest_count < 0){fprintf(stderr, "[%s] Read count calculation went wrong \n", __func__); exit(EXIT_FAILURE);} // should never happen
+        if(rest_count < 0){fprintf(stderr, "[%s] Read count calculation went wrong\n", __func__); exit(EXIT_FAILURE);} // should never happen
         int step_size  = rest_count > num_contigs ? (int)(rest_count/num_contigs): 1; //hopefully rest_count is small, evenly distributed to contigs
         auto it = chr_count.begin();
         while (rest_count > 0){ 
@@ -266,7 +266,7 @@ void cal_chr_count(const char *fn, char *chr_id, char *bed_file, uint64_t N, uin
 
 
 // for fragment generation
-void gen_frag_vec(std::uniform_int_distribution<int> *dis_ud, std::discrete_distribution<int> *dis_dd, uint32_t *posidx_arr,
+void gen_frag_vec(std::uniform_int_distribution<int> *dis_ud, std::discrete_distribution<int> *dis_dd, uint32_t *posidx_arr, int chunk_size,
                     std::vector<frag_rec> &frag_vec, std::vector<frag_rec> &probe_vec, std::vector<float> &eff_vec, expt_param *expt_set)
 {
     frag_rec tmp_frag;
@@ -274,7 +274,7 @@ void gen_frag_vec(std::uniform_int_distribution<int> *dis_ud, std::discrete_dist
 
     frag_vec.clear();
     if(expt_set->tech_mode ==2){
-        for(i = 0; i < expt_set->chunk_size; ++i){
+        for(i = 0; i < chunk_size; ++i){
             frag_idx = expt_set->is_uniform ? (*dis_ud)(gen) : (*dis_dd)(gen);
             frag_rec tmp_probe = probe_vec[frag_idx];
             probe_center = (tmp_probe.pos_l + tmp_probe.pos_r) >> 1;
@@ -285,37 +285,37 @@ void gen_frag_vec(std::uniform_int_distribution<int> *dis_ud, std::discrete_dist
             tmp_frag.pos_l = frag_center - (insert_len>>1);
             tmp_frag.pos_r = frag_center + (insert_len>>1); 
             tmp_frag.strand= tmp_probe.strand;      // denotes the strand
-            tmp_frag.haplo = drand48()<0.5?0:1;
+            tmp_frag.haplo = dis_ru(gen_ru)<0.5?0:1;
             frag_vec.push_back(tmp_frag);
             tmp_frag = {};
         }
     }else if (expt_set->tech_mode == 1){
-        for(i = 0; i < expt_set->chunk_size; ++i){
+        for(i = 0; i < chunk_size; ++i){
             frag_idx = expt_set->is_uniform ? (*dis_ud)(gen) : (*dis_dd)(gen);
             frag_rec tmp_probe = probe_vec[frag_idx];
             tmp_frag.pos_l = tmp_probe.pos_l;
             tmp_frag.pos_r = tmp_frag.pos_r;
-            tmp_frag.strand= drand48()<0.5?0:1;     // denotes the strand
-            tmp_frag.haplo = drand48()<0.5?0:1;     // can include the haplotype information
+            tmp_frag.strand= dis_ru(gen_ru)<0.5?0:1;     // denotes the strand
+            tmp_frag.haplo = dis_ru(gen_ru)<0.5?0:1;     // can include the haplotype information
             frag_vec.push_back(tmp_frag);
             tmp_frag = {};
         }
     }else{
         if(expt_set->is_uniform){
-            for(i = 0; i < expt_set->chunk_size; ++i){
+            for(i = 0; i < chunk_size; ++i){
                 pos_l = (*dis_ud)(gen);
                 insert_dev = (int)(expt_set->sd_insert * dis_rn(gen_rn));
                 insert_len = std::max(expt_set->min_insert, std::min(expt_set->mean_insert + insert_dev, expt_set->max_insert));
                 //pos_r = std::min(pos_l + insert_len, tot_size -2); //will not pass boundary
                 tmp_frag.pos_l = pos_l;
                 tmp_frag.pos_r = pos_l+insert_len;
-                tmp_frag.strand= drand48()<0.5?0:1; // denotes the strand
-                tmp_frag.haplo = drand48()<0.5?0:1;
+                tmp_frag.strand= dis_ru(gen_ru)<0.5?0:1; // denotes the strand
+                tmp_frag.haplo = dis_ru(gen_ru)<0.5?0:1;
                 frag_vec.push_back(tmp_frag);
                 tmp_frag = {};
             }
         }else{
-            while ((int)frag_vec.size()< expt_set->chunk_size){
+            while ((int)frag_vec.size()< chunk_size){
                 pos_l = (*dis_ud)(gen);
                 insert_dev = (int)(expt_set->sd_insert * dis_rn(gen_rn));
                 insert_len = std::max(expt_set->min_insert, std::min(expt_set->mean_insert + insert_dev, expt_set->max_insert));
@@ -326,8 +326,8 @@ void gen_frag_vec(std::uniform_int_distribution<int> *dis_ud, std::discrete_dist
                 if(dis_ru(gen_ru) > gc_prob){   // when initiate eff_vec, judge the value in case it's too small
                     tmp_frag.pos_l = pos_l;
                     tmp_frag.pos_r = pos_r;
-                    tmp_frag.strand= drand48()<0.5?0:1;     // denotes the strand
-                    tmp_frag.haplo = drand48()<0.5?0:1;
+                    tmp_frag.strand= dis_ru(gen_ru)<0.5?0:1;     // denotes the strand
+                    tmp_frag.haplo = dis_ru(gen_ru)<0.5?0:1;
                     frag_vec.push_back(tmp_frag);
                     tmp_frag= {};
                 }

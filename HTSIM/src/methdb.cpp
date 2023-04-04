@@ -56,7 +56,7 @@ void create_methdb(const kseq_t *ks, uint32_t *posidx_arr, std::vector<meth_rec>
     }
 }
 
-void update_methdb(uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec, mutseq_t *hap1, mutseq_t *hap2, bool bool_asm_set, bool bool_update_boundary)
+void update_methdb(uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec, mutseq_t *hap1, mutseq_t *hap2, bool is_asm_set, bool is_meth_update)
 {
     // mutseq_t *ret[2];
     // ret[0] = hap1; ret[1] = hap2;
@@ -70,11 +70,11 @@ void update_methdb(uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec, mutseq
             if(tmp_cg){                                     // if the record is in meth_vec
                 meth_vec[tmp_pos].meth[0] = -1;
             }
-            if(bool_update_boundary){}                      // TODO: update boundary sites
+            if(is_meth_update){}                          // TODO: update boundary sites
         }
     }
 
-    if(bool_asm_set){                                       // use the last bit to store asm signal
+    if(is_asm_set){                                       // use the last bit to store asm signal
         for(int i=0; i < k; ++i){
             posidx_arr[i] &= 0xfffffffe;
             tmp_pos = posidx_arr[i] >> 2;
@@ -86,13 +86,13 @@ void update_methdb(uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec, mutseq
 void save_methdb(std::vector<meth_rec>& meth_vec, const char *fname)
 {
     FILE* fp = fopen(fname, "w");
-    if(fp==NULL){fprintf(stderr, "[%s] ERROR: open methdb file: %s failed. Exit...", __func__, fname); exit (EXIT_FAILURE);}
+    if(fp==NULL){fprintf(stderr, "[%s] ERROR: open methdb file: %s failed. Exit...\n", __func__, fname); exit (EXIT_FAILURE);}
 
     meth_rec tmp_meth;
     for (size_t i=1; i < meth_vec.size(); ++i){
         tmp_meth = meth_vec[i];
         fprintf(fp, "%d\t%f\t%f\t%d\t%d\n", tmp_meth.pos, tmp_meth.meth[0], tmp_meth.meth[1], tmp_meth.context, tmp_meth.type);
-        if (ferror(fp)) {fprintf(stderr, "[%s] ERROR: failed to write to file %s. Exit...", __func__, fname);exit(EXIT_FAILURE);}
+        if (ferror(fp)) {fprintf(stderr, "[%s] ERROR: failed to write to file %s. Exit...\n", __func__, fname);exit(EXIT_FAILURE);}
     }
     fclose(fp);
 }
@@ -362,18 +362,19 @@ void fill_asm_chr(char *fname, char *chr_id, uint32_t *posidx_arr, std::vector<m
 // fill with distribution
 void parse_param(char *param_str, std::vector<param_rec>& param_vec)
 {
+    // should detect illegal input
     param_vec.clear();
     param_rec tmp_param;
     std::string tmp_str;
     
     for(int i =0; param_str[i] !='\0'; ++i){
-        if (param_str[i] == '|'){               // alpha found
+        if (param_str[i] == '_'){               // alpha found
             tmp_param.alpha = stof(tmp_str);
             tmp_str.clear();
         } else if (param_str[i] == ',') {       // beta found
             tmp_param.beta  = stof(tmp_str);
             if (tmp_param.alpha < 0 || tmp_param.beta < 0){
-                fprintf (stderr, "[%s] ERROR: parameter cannot be negative (%s). Exit... \n", __func__, param_str); exit (EXIT_FAILURE);
+                fprintf (stderr, "[%s] ERROR: parameter cannot be negative (%s). Exit...\n", __func__, param_str); exit (EXIT_FAILURE);
             }
             param_vec.push_back(tmp_param);
             tmp_str.clear();
@@ -388,7 +389,7 @@ void parse_param(char *param_str, std::vector<param_rec>& param_vec)
     if (!tmp_str.empty()){
         tmp_param.beta  = stof(tmp_str);
         if (tmp_param.alpha < 0 || tmp_param.beta < 0){
-            fprintf (stderr, "[%s] ERROR: parameter cannot be negative (%s). Exit... \n", __func__, param_str); exit (EXIT_FAILURE);
+            fprintf (stderr, "[%s] ERROR: parameter cannot be negative (%s). Exit...\n", __func__, param_str); exit (EXIT_FAILURE);
         }
         param_vec.push_back(tmp_param);
     }
