@@ -21,6 +21,43 @@ typedef struct {
 std::vector<probe_rec> probe_vec;
 
 
+int parse_bed_line(char *line, char *chr_id, frag_rec *tmp_probe)
+{
+	char *p, *q, *contig, *name = 0;
+    int i, start, end, strand;
+	float score;
+
+
+	for (i = 0, p = q = line;; ++q) {
+		if (*q == '\t' || *q == '\0') {
+			int c = *q;
+			*q = 0;
+            switch (i) {
+            case 0: contig = p; break;
+            case 1: start  = atoi(p); break;
+            case 2: end    = atoi(p); break;
+            case 3: name   = strdup(p); break;
+            case 4: score  = atof(p); break;        // will give 0 when not a number
+            case 5: strand = ((int)(strcmp(p,"+")!=0)<<1) | (int)(strcmp(p,"-")!=0); break; //1,2,3
+            default: break;}
+            if(i==0 && strcmp(contig, chr_id)){return 1;} // termenate early if not equal
+			++i, p = q + 1;
+			if (i > 6 || c == '\0') break;
+		}
+	}
+
+    if(i < 4){fprintf(stderr, "[%s] Skip invalid probe: chr %s, name %s...\n", __func__, chr_id, name); return 0;}
+    if(end <= start){fprintf(stderr, "[%s] Skip invalid probe (coordinate conflict): chr %s, name %s...\n", __func__, chr_id, name); return 0;}
+
+	tmp_probe->pos_l = start;
+	tmp_probe->pos_r = end;
+    tmp_probe->score = score;
+    tmp_probe->strand= (int8_t) strand;
+
+    return 0;
+}
+
+
 //parse_bed: https://github.com/dhspence/tagbam/blob/main/tagbam.c
 //additional https://github.com/lh3/cgranges/blob/6da7237627f37ebec6a4e0524a5cf29c28e251be/test/bedcov-itree.cpp
 char *parse_bed(char *s, probe_rec *tmp_probe, probe_meta *tmp_probe_meta)
