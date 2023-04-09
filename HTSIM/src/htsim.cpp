@@ -76,6 +76,7 @@ std::vector<frag_rec> frag_vec;
 std::vector<frag_rec> probe_vec;
 std::vector<param_rec> param_vec;
 std::map<std::string, chr_rec> chr_count;
+std::map<int, snpmeth_rec> snpmeth_map;
 
 std::random_device re;
 std::mt19937 gen_re(re());
@@ -126,7 +127,6 @@ void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char
         uint32_t* posidx_arr = (uint32_t*) calloc(ks->seq.l, sizeof(uint32_t));
         if (posidx_arr == NULL) { fprintf(stderr, "ERROR: could not allocate memory\n");exit(EXIT_FAILURE);}
 
-
         // introduce mutations and print them to stdout
         fprintf(stdout, "Contig Variant Start\n");
         if(mut_set->is_vcf_set){
@@ -140,16 +140,34 @@ void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char
         fprintf(stdout, "Contig Variant End\n");
 
 
+        uint32_t* kmeridx_arr = NULL;
+        if(expt_set->is_kmer_set){
+            uint32_t* kmeridx_arr = (uint32_t*) calloc(ks->seq.l, sizeof(uint32_t));
+            if (kmeridx_arr == NULL) { fprintf(stderr, "ERROR: could not allocate memory for kmer index\n");exit(EXIT_FAILURE);}
+            for (int i = 3; i < ks->seq.l-3; ++i){
+                if(posidx_arr[i]&0x2){continue;}//skip non-snp
+                int tmp_kmeridx =0;
+                for (int j = -3; j < 4; j++){
+                    int ref_base = nst_nt4_table[(uint8_t)ks->seq.s[i]];
+                    ref_base = ref_base < 4 ? ref_base : (rand()&0x3);          // will not interfere with the drand48()
+                    tmp_kmeridx = (tmp_kmeridx << 2) | ref_base;
+                }
+                kmeridx_arr[i] = tmp_kmeridx <<16 | tmp_kmeridx;
+            }
+        }
+
+
         // load or create the methdb
         if(meth_set->is_methdb_set){
             // can check methdb_file's filename is the same as ks.name
-            load_methdb(posidx_arr, meth_vec, methdb_file); 
+            load_methdb(posidx_arr, meth_vec, methdb_file);
         }else{
             create_methdb(ks, posidx_arr, meth_vec);
             if(meth_set->is_cgmap_set){fill_cgmap_chr(cgmap_file, ks->name.s, posidx_arr, meth_vec, meth_set);}
             if(meth_set->is_asm_set){fill_asm_chr(asm_file, ks->name.s, posidx_arr, meth_vec);}
             fill_beta(meth_vec, param_vec, meth_set->seed_meth);
-            update_methdb(posidx_arr, meth_vec, rseq, rseq+1, meth_set->is_asm_set, meth_set->update_meth);  //update methdb with genetic variants
+            //update methdb with genetic variants
+            update_variant(ks, rseq, rseq+1, posidx_arr, meth_vec, kmeridx_arr, meth_set, param_vec, snpmeth_map);
             if(meth_set->methdb_save){save_methdb(meth_vec, methdb_file);}
         }
 
@@ -167,34 +185,33 @@ void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char
             }
         }
         std::uniform_int_distribution<int> dis_ud(unif_begin, unif_end);
-        std::discrete_distribution<int> dis_dd(weights.begin(), weights.end()); //TODO: undefined behavior if weights empty
+        std::discrete_distribution<int> dis_dd(weights.begin(), weights.end());     //TODO: undefined behavior if weights empty
         // std::vector<float>().swap(weights); //  wights should remain valid for the lifetime of dis_dd
 
 
         uint64_t ii = 0;    // record how many reads has been generated
         frag_rec tmp_frag;  // hold the tmp fragment
-        int tmp_chunk, tmp_size;
+        int tmp_chunk;
         int chunk_size = expt_set->chunk_size > n_pairs? n_pairs : expt_set->chunk_size;
         while(ii < n_pairs){// the core loop
             tmp_chunk  = std::min(chunk_size, (int)(n_pairs - ii));
-            tmp_size   = std::max(1000, tmp_chunk); // make sure we have enough fragments
-            // generate #chunk_size fragments records
-            gen_frag_vec(&dis_ud, &dis_dd, posidx_arr, tmp_size, frag_vec, probe_vec, eff_vec, expt_set);
-            check_frag_vec(frag_vec, rseq, rseq+1, expt_set); // check if the fragments are valid, fill start2
+            // generate #chunk_size fragments records (at least 1000)
+            gen_frag_vec(&dis_ud, &dis_dd, posidx_arr, (int) ks->seq.l, std::max(1000, tmp_chunk), frag_vec, probe_vec, eff_vec, expt_set);
+            //check_frag_vec(frag_vec, rseq, rseq+1, expt_set); // check if the fragments are valid, fill start2
             
             // generate the read sequences
             ii += tmp_chunk;
             for(int idx=0; idx < tmp_chunk; ++idx){
-                tmp_frag = frag_vec[idx];
-                if(tmp_frag.haplo == -1){--ii; continue;} // skip for invalid fragments, should not happen
-                target =  rseq[tmp_frag.haplo].s; //target = rseq[drand48()<0.5?0:1].s; // haplotype from which the reads are generated
+                tmp_frag= frag_vec[idx];
+                //if(tmp_frag.haplo == -1){--ii; continue;} // skip for invalid fragments, should not happen
+                target  =  rseq[tmp_frag.haplo].s; //target = rseq[drand48()<0.5?0:1].s; // haplotype from which the reads are generated
                 //cover_pos hold if the read covers a snp *position* (the read don't necessary contain the ALT allele)
                 //j hold read1/read2, k hold the length of read, ix hold the cursor that transverses the read
-                int n_sub[2]={0,0}, n_indel[2]={0,0}, n_err[2]={0,0}, cover_pos[2]={0,0}; 
+                int n_sub[2] = {0,0}, n_indel[2] = {0,0}, n_err[2] = {0,0}, cover_pos[2] = {0,0};
                 int ext_coor[2], i, j, k, ix;
-                int start[2] = {tmp_frag.pos_l, (int)tmp_frag.score};
-                int end[2] = {start[0], start[1]};
-                int offset[2] = {0, 0};
+                int start[2] = {tmp_frag.pos_l, tmp_frag.pos_l};
+                int end[2]   = {tmp_frag.pos_r, tmp_frag.pos_r};
+                int offset[2]= {0, 0};
 
                 // x: select read1 or read2; ext_coor: extend corrdinates;
                 #define __gen_read(x, start_pos, iter) do {                     \
@@ -245,9 +262,64 @@ void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char
                     if (k != size[x]) {ext_coor[x] = -10;}                      \
                 } while (0)
 
-                __gen_read(0, start[0], ++i);
-                __gen_read(1, start[1], ++i);
+                #define __gen_read2(x, start_pos, iter) do {                    \
+                    /* generate reads assign mutation flag; */                  \
+                    for (i = (start_pos), k = size[x], ext_coor[x] = -10; i >= 0 && i < ks->seq.l && k >= 0; iter) { \
+                        int c = target[i], mut_type = c & mutmsk;               \
+                        if (ext_coor[x] < 0) {                                  \
+                            /* avoid indel as the first base */                 \
+                            if (mut_type != NOCHANGE && mut_type != SUBSTITUTE) continue; \
+                            start[x] = i;                                       \
+                            end[x] = i;                                         \
+                            ext_coor[x] = i;                                    \
+                        }                                                       \
+                        if (mut_type == DELETE){                                \
+                            --offset[x];                                        \
+                            --start[x];                                         \
+                            ++n_indel[x];                                       \
+                        }                                                       \
+                        else if (mut_type == NOCHANGE || mut_type == SUBSTITUTE) { \
+                            /* context: 0x00 Match, 0x10 SNP, 0x30 INSERT       \
+                                        0x01 CG, 0x03 CHG, 0x07 CHH (>>)        \
+                                        0x09 GC, 0x0b GDC, 0x0f GDD (<<) */     \
+                            tmp_seq[x][k] = c & 0xf;                            \
+                            tmp_offset[x][k] = offset[x];                       \
+                            if (mut_type == SUBSTITUTE) {                       \
+                                tmp_context[x][k] = SNV;                        \
+                                ++n_sub[x];                                     \
+                            }                                                   \
+                            --start[x];                                         \
+                            --k;                                                \
+                        } else {                                                \
+                            tmp_seq[x][k] = c & 0xf; /*The base is ref*/        \
+                            tmp_offset[x][k] = offset[x];                       \
+                            ++n_indel[x];                                       \
+                            --start[x];                                         \
+                            --k;                                                \
+                            int num_ins, ins;                                   \
+                            for (num_ins = mut_type>>12, ins = c>>4; num_ins > 0 && k >=0; --num_ins, ins >>= 2){ \
+                                ++offset[x];                                    \
+                                tmp_seq[x][k] = ins & 0x3;                      \
+                                tmp_offset[x][k] = offset[x];                   \
+                                tmp_context[x][k] = INSR;                       \
+                                --k;                                            \
+                            }                                                   \
+                        }                                                       \
+                        if(meth_set->is_asm_set){cover_pos[x] |= posidx_arr[i] & 0x1;}  \
+                    }                                                           \
+                    if (k != size[x]) {ext_coor[x] = -10;}                      \
+                    int shift_pos=end[x]-start[x]-size[x]+1;                    \
+                    if(shift_pos!=0){                                           \
+                        for(k=0; k < size[x]; ++k){                             \
+                            tmp_offset[x][k] = tmp_offset[x][k] + shift_pos;    \
+                        }                                                       \
+                    }                                                           \
+                } while (0)
 
+                __gen_read(0, start[0], ++i);
+                __gen_read2(1,  end[1], --i);
+                //__gen_read(1, end[1]-expt_set->size_r, ++i);
+                
                 if (ext_coor[0] < 0 || ext_coor[1] < 0) { --ii; continue;}  // failed to generate the read(s)
 
                 for(j = 0; j < 2; ++j){         //check the number of Ns
@@ -263,11 +335,13 @@ void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char
                 }
                 if (j < 2) { --ii; continue; }  // too many ambiguous bases on one of the reads
                 
-                int flag_mut=0;
-                for(i=tmp_frag.pos_l; i < tmp_frag.pos_r; ++i){
+                int flag_mut=0, flag_indel=0;
+                for(i=start[0]; i <= end[1]; ++i){
                     flag_mut |= target[i] & mutmsk;                         //whether frag has mutation
                 }
-                int flag_indel= n_indel[0] | n_indel[1];                    //whether read1/2 has indel
+                flag_mut  = (int)(flag_mut != 0);
+                flag_indel= (int)((n_indel[0]+n_indel[1])!=0);              //whether read1/2 has indel
+                
 
                 // print reads to stdout: mode 0 print string (WGS), else print chars&numbers (WGBS)
                 if(expt_set->output_fmt == 0){
@@ -319,14 +393,24 @@ void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char
                 } else {
                     for (j = 0; j < 2; ++j) {
                         // header: ID is 1-based coordinates
-                        fprintf(stdout, "@%s:%d:%d:%llx %d %d %d %d ", ks->name.s, start[0]+1, end[1]+1, (long long)ii, j, flag_mut, flag_indel, tmp_frag.strand); 
+                        fprintf(stdout, "@%s:%d:%d:%llx %d %d %d %d ", ks->name.s, start[0]+1, end[1]+1, (long long)ii, j, flag_mut, flag_indel, tmp_frag.strand);
+                        int k=0, pos_prev=0;
+                        float kmer_meth;
                         for (i = 0; i < size[j]; ++i) {
                             int pos =  start[j] + i + tmp_offset[j][i];
-                            if(posidx_arr[pos] & 0x2){
+                            if(!posidx_arr[pos]&0x3){continue;}
+                            if(posidx_arr[pos]&0x1){            // if it's a mutation
+                                k = pos == pos_prev? k+1 : 0;   // if it's the same position (insertion), then k++
+                                kmer_meth= snpmeth_map[pos].kmeridx[k] + snpmeth_map[pos].meth[k];
+                                tmp_context[j][i] |= snpmeth_map[pos].context[k];
+                            }else {                             // if it's a non-mutation C/G
+                                kmer_meth= flag_mut? kmeridx_arr[pos] >> 16 : (posidx_arr[pos] & 0xffff);
                                 int idx = posidx_arr[pos] >> 2;
-                                tmp_context[j][i] |= meth_vec[idx].context;
-                                fprintf(stdout, "%.4f,", meth_vec[idx].meth[(int)(bool)flag_mut]);
+                                kmer_meth += meth_vec[idx].meth[flag_mut];
+                                tmp_context[j][i] |= meth_vec[idx].context[flag_mut];
                             }
+                            fprintf(stdout, "%.4f,", kmer_meth);
+                            pos_prev = pos;
                         }
                         fprintf(stdout, "\n");
                         // sequence (no sequencing error, represented by 0-4)
@@ -394,6 +478,7 @@ static int simu_usage()
     fprintf(stderr, "         -E FLOAT      base error rate (set to be 0 for bisulfite sequencing) [%.3f]\n", ERR_RATE);
     fprintf(stderr, "         -A FLOAT      disgard if the fraction of ambiguous bases higher than FLOAT [%.2f]\n", MAX_N_RATIO);
     fprintf(stderr, "         -O INT        output format: 0 for letters; nonzero for ascii numbers (for python module) [%d]\n", OUTPUT_FMT);
+    fprintf(stderr, "         -k INT        whether to output kmer index: 0 for no; nonzero for yes [0]\n");
     fprintf(stderr, "mutation setting:\n");
     fprintf(stderr, "         -v STRING     path to the genetic variant file (.vcf/vcf.gz) [None]\n");
     fprintf(stderr, "         -R FLOAT      rate of mutations [%.4f]\n", MUT_RATE);
@@ -458,6 +543,7 @@ int main(int argc, char *argv[])
             case 'D': expt_set.sd_center  = atoi(optarg); break;
             case 'T': expt_set.tech_mode  = atoi(optarg); break;
             case 'u': expt_set.is_uniform = atoi(optarg)!=0; break;
+            case 'k': expt_set.is_kmer_set= atoi(optarg)!=0; break;
             case 'O': expt_set.output_fmt = atoi(optarg); break;
 
             case 'R': mut_set.mut_rate    = atof(optarg); break;

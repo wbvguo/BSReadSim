@@ -46,7 +46,8 @@ void create_methdb(const kseq_t *ks, uint32_t *posidx_arr, std::vector<meth_rec>
                 }
             }
             uint8_t context_idx = c << 4 | c_d1 <<2 | c_d2;
-            tmp_meth.context = cg_context_table[context_idx];
+            tmp_meth.context[0] = cg_context_table[context_idx];
+            tmp_meth.context[1] = cg_context_table[context_idx];
             tmp_meth.pos = i;
             meth_vec.push_back(tmp_meth);
             posidx_arr[i] |= ix << 2;
@@ -56,28 +57,162 @@ void create_methdb(const kseq_t *ks, uint32_t *posidx_arr, std::vector<meth_rec>
     }
 }
 
-void update_methdb(uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec, mutseq_t *hap1, mutseq_t *hap2, bool is_asm_set, bool is_meth_update)
+void update_variant(const kseq_t *ks, mutseq_t *hap1, mutseq_t *hap2, uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec, 
+                    uint32_t *kmeridx_arr, meth_param *meth_set, std::vector<param_rec>& param_vec, std::map<int, snpmeth_rec>& snpmeth_map)
 {
-    // mutseq_t *ret[2];
-    // ret[0] = hap1; ret[1] = hap2;
+    const gsl_rng_type * T = gsl_rng_default;
+    gsl_rng *rng = gsl_rng_alloc(T);
+    gsl_rng_env_setup();
+    gsl_rng_set(rng, meth_set->seed_meth);
 
-    int tmp_pos, tmp_cg;
-    int k = hap1->l;
-    for(int i=0; i < k; ++i){
+    mutseq_t *rseq;
+    snpmeth_rec tmp_snpmeth;
+    std::vector<int> tmp_sites;
+    std::vector<uint8_t> sites_u = {0,0,0};
+    std::vector<uint8_t> sites_d = {0,0,0};
+    std::vector<uint8_t>* sites_ptr;
+    
+    int i, j = 0; // j keeps the end of the last deletion
+    int c[3];
+    int pos_k, pos_base, pos_mask, pos_ins_len;
+    int tmp_base, tmp_mask, ins_len, ins_base, updown;
+    int tmp_kmeridx, tmp_context;
+
+    //int tmp_idx, tmp_cg, tmp_kmeridx;
+    for(int i=0; i < ks->seq.l; ++i){
         if((posidx_arr[i] & 0x1) != 0){                     // if there is a variant
-            tmp_pos = posidx_arr[i] >> 2;
-            tmp_cg  = (posidx_arr[i]&0x2)>>1;
-            if(tmp_cg){                                     // if the record is in meth_vec
-                meth_vec[tmp_pos].meth[0] = -1;
+            c[0] = nst_nt4_table[(int)ks->seq.s[i]];
+            if (c[0] >= 4) continue;
+            c[1] = hap1->s[i]; c[2] = hap2->s[i];
+            if(c[0]==c[1]){rseq=hap2;}else{rseq=hap1;}      // can check MNV, and if they are both same with ref
+
+            // handle the non-mutational boundary sites: calculate from [-3,3] from i
+            // TODO: handle the boundary sites
+            // for each of them calulate the context and kmeridx
+            for(int k =-3; k<4 && k!=0; ++k){
+                sites_u.clear();
+                sites_d.clear();
+                pos_k = i+k;
+                pos_base = rseq->s[pos_k];
+                if(pos_base&mutmsk) continue;               // skip mutation
+                if(!cg_table[pos_base]) continue;           // skip nonCG
+
+                // fill in vector
+                #define __fill_vec(sites_ptr, updown)                       \
+                    int count=0, t=1;                                       \
+                    bool collect_flag = true;                               \
+                    while(count < 3){                                       \
+                        tmp_base = rseq->s[pos_k+t*updown];                 \
+                        tmp_mask = (tmp_base&mutmsk);                       \
+                        ins_len  = tmp_mask >> 12;                          \
+                        if(tmp_mask == DELETE){                             \
+                        }else if (ins_len){                                 \
+                            ins_base = tmp_base & 0xf;                      \
+                            (*sites_ptr)[count]= ins_base;                  \
+                            ++count;                                        \
+                            if(count == 3) collect_flag = false;            \
+                            ins_base >>= 4;                                 \
+                            while (collect_flag && ins_len > 0){            \
+                                (*sites_ptr)[count]= ins_base&0x3;          \
+                                ++count;                                    \
+                                ins_base >>= 2;                             \
+                                --ins_len;                                  \
+                                if(count == 3) collect_flag = false;        \
+                            }                                               \
+                            if(!collect_flag) break;                        \
+                        }else{                                              \
+                            (*sites_ptr)[count]= tmp_base;                  \
+                            ++count;                                        \
+                        }                                                   \
+                        ++t;                                                \
+                    }                                                       \
+                
+                sites_ptr = &sites_u; updown = -1;
+                __fill_vec(sites_ptr, updown);
+
+                sites_ptr = &sites_d; updown = 1;
+                __fill_vec(sites_ptr, updown);
+
+
+                //compute and update the context and kmeridx
+                tmp_kmeridx = sites_u[2] << 6 | sites_u[1] << 4 | sites_u[0] << 2 | pos_base;
+                tmp_kmeridx = (tmp_kmeridx<<6)| sites_d[0] << 4 | sites_d[1] << 2 | sites_d[2];
+                //for (int k = 0; k < 3; ++k){tmp_kmeridx = (tmp_kmeridx << 2) | sites_u[3-k-1];}
+                if(tmp_kmeridx != (kmeridx_arr[pos_k] & 0xffff)){
+                    kmeridx_arr[pos_k] = (kmeridx_arr[pos_k] &0x0000ffff) | (tmp_kmeridx << 16);
+                }
+
+                if (pos_base == 1){         // C
+                    tmp_context = cg_context_table[((pos_base<<4) | (sites_d[0]<<2) | sites_d[1])]; 
+                }else if (pos_base == 2){   // G
+                    tmp_context = cg_context_table[((pos_base<<4) | (sites_u[0]<<2) | sites_u[1])];
+                }else{} // should never happen
+
+                int tmp_idx = posidx_arr[pos_k] >> 2;
+                if(meth_vec[tmp_idx].context[0] != tmp_context){
+                    meth_vec[tmp_idx].context[1] = tmp_context;
+                    meth_vec[tmp_idx].meth[1]    = gen_beta(rng, tmp_context, param_vec);
+                }
             }
-            if(is_meth_update){}                          // TODO: update boundary sites
+
+            // handle the snp sites
+            pos_k = i;
+            pos_base = rseq->s[i];
+            pos_mask = (pos_base&mutmsk);
+            if(pos_mask==DELETE) continue;         // DELETE will not appear on the read
+            tmp_snpmeth= {};
+            tmp_sites.clear();
+            sites_u.clear();
+            sites_d.clear();
+
+            sites_ptr = &sites_u; updown = 1;
+            __fill_vec(sites_ptr, updown);
+
+            sites_ptr = &sites_d; updown = -1;
+            __fill_vec(sites_ptr, updown);
+
+
+            pos_ins_len= pos_mask >> 12;
+            tmp_sites.push_back(sites_u[2]);
+            tmp_sites.push_back(sites_u[1]);
+            tmp_sites.push_back(sites_u[0]);
+            tmp_sites.push_back(pos_base&0x3);
+            pos_base >>=4;
+            for (size_t i = 0; i < pos_ins_len; ++i){
+                tmp_sites.push_back(pos_base&0x3);
+                pos_base >> 2;
+            }
+            tmp_sites.push_back(sites_d[0]);
+            tmp_sites.push_back(sites_d[1]);
+            tmp_sites.push_back(sites_d[2]);
+            
+            for(int k =3; k<4+pos_ins_len; ++k){
+                tmp_kmeridx = (tmp_sites[k-3] << 6) | (tmp_sites[k-2] << 4) | (tmp_sites[k-1] << 2) | tmp_sites[k];
+                tmp_kmeridx = (tmp_kmeridx << 6) | (tmp_sites[k+1] << 4) | (tmp_sites[k+2] << 2) | tmp_sites[k+3];
+                
+                tmp_base = tmp_sites[k];
+                if(tmp_base == 1){         // C
+                    tmp_context = cg_context_table[((tmp_base<<4) | (tmp_sites[k+1]<<2) | tmp_sites[k+2])]; 
+                }else if (tmp_base == 2){   // G
+                    tmp_context = cg_context_table[((tmp_base<<4) | (tmp_sites[k-1]<<2) | tmp_sites[k-2])];
+                }else{} // should never happen
+
+                tmp_snpmeth.kmeridx.push_back(tmp_kmeridx);
+                tmp_snpmeth.context.push_back(tmp_context);
+                tmp_snpmeth.meth.push_back(gen_beta(rng, tmp_context, param_vec));
+            }
+            
+            tmp_snpmeth.ref = c[0];
+            tmp_snpmeth.alt = tmp_base;
+            tmp_snpmeth.geno= 1 + (int)(c[1] == c[2]);
+            snpmeth_map[i] = tmp_snpmeth;
         }
     }
 
-    if(is_asm_set){                                       // use the last bit to store asm signal
-        for(int i=0; i < k; ++i){
+    if(meth_set->is_asm_set){                                       // use the last bit to store asm signal
+        for(int i=0; i < ks->seq.l; ++i){
             posidx_arr[i] &= 0xfffffffe;
-            tmp_pos = posidx_arr[i] >> 2;
+            int tmp_pos = posidx_arr[i] >> 2;
             if(tmp_pos){posidx_arr[i] |= (uint32_t)meth_vec[tmp_pos].meth[0] != meth_vec[tmp_pos].meth[1];}
         }
     }
@@ -91,7 +226,7 @@ void save_methdb(std::vector<meth_rec>& meth_vec, const char *fname)
     meth_rec tmp_meth;
     for (size_t i=1; i < meth_vec.size(); ++i){
         tmp_meth = meth_vec[i];
-        fprintf(fp, "%d\t%f\t%f\t%d\t%d\n", tmp_meth.pos, tmp_meth.meth[0], tmp_meth.meth[1], tmp_meth.context, tmp_meth.type);
+        fprintf(fp, "%d\t%f\t%f\t%d\t%d\t%d\n", tmp_meth.pos, tmp_meth.meth[0], tmp_meth.meth[1], tmp_meth.context[0], tmp_meth.context[1], tmp_meth.type);
         if (ferror(fp)) {fprintf(stderr, "[%s] ERROR: failed to write to file %s. Exit...\n", __func__, fname);exit(EXIT_FAILURE);}
     }
     fclose(fp);
@@ -103,7 +238,7 @@ void parse_methdb_line(char *line, meth_rec *tmp_meth)
 	char *p, *q= 0;
     int i, pos=-1;
 	float ref_meth=-1, alt_meth=-1;
-    int context=0, type=0;
+    int context1=0, context2=0, type=0;
 
 	for (i = 0, p = q = line;; ++q) {
 		if (*q == '\t' || *q == '\0') {
@@ -113,8 +248,9 @@ void parse_methdb_line(char *line, meth_rec *tmp_meth)
             case 0: pos     = atoi(p); break;
             case 1: ref_meth= atof(p); break;
             case 2: alt_meth= atof(p); break;
-            case 3: context = atoi(p); break;
-            case 4: type    = atoi(p); break;
+            case 3: context1= atoi(p); break;
+            case 4: context2= atoi(p); break;
+            case 5: type    = atoi(p); break;
             default: break;}
 			++i, p = q + 1;
 			if (i > 5 || c == '\0') break;
@@ -123,11 +259,12 @@ void parse_methdb_line(char *line, meth_rec *tmp_meth)
 
     if(i < 4){fprintf(stderr, "[%s] Skip invalid site: position %d...\n", __func__, pos);}
 
-    tmp_meth->pos     = pos;
-    tmp_meth->meth[0] = ref_meth;
-    tmp_meth->meth[1] = alt_meth;
-    tmp_meth->context = context;
-    tmp_meth->type    = type;
+    tmp_meth->pos       = pos;
+    tmp_meth->meth[0]   = ref_meth;
+    tmp_meth->meth[1]   = alt_meth;
+    tmp_meth->context[0]= context1;
+    tmp_meth->context[1]= context2;
+    tmp_meth->type      = type;
 }
 
 void load_methdb(uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec, char *fname)
@@ -150,7 +287,7 @@ void load_methdb(uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec, char *fn
         int tmp_idx_rec = posidx_arr[tmp_meth.pos];
         int tmp_idx = tmp_idx_rec >> 2;
 
-        if(meth_vec[tmp_idx].pos!=tmp_meth.pos && meth_vec[tmp_idx].context!=tmp_meth.context){ ++num_404_site; continue;}
+        if(meth_vec[tmp_idx].pos!=tmp_meth.pos && meth_vec[tmp_idx].context[0]!=tmp_meth.context[0]){ ++num_404_site; continue;}
         meth_vec[tmp_idx].meth[0]= tmp_meth.meth[0];
         meth_vec[tmp_idx].meth[1]= tmp_meth.meth[1];
         meth_vec[tmp_idx].type   = tmp_meth.type;
@@ -196,7 +333,8 @@ int parse_cgmap_line(char *line, char *chr_id, meth_rec *tmp_meth)
 
     tmp_meth->meth[0]  = meth;
     tmp_meth->pos      = pos - 1; // convert to 0-based
-    tmp_meth->context  = base_map[base] << 3 | context_map[std::string(context)];
+    tmp_meth->context[0]  = base_map[base] << 3 | context_map[std::string(context)];
+    tmp_meth->context[1]  = tmp_meth->context[0];
     free(base); free(context);
     return 0;
 }
@@ -209,7 +347,7 @@ void pool_cgmap(std::vector<meth_rec>& meth_vec, int seed)
     
     for (size_t i=0; i < meth_vec.size(); ++i){
         if (meth_vec[i].type){
-            int tmp_context = meth_vec[i].context &0x7;
+            int tmp_context = meth_vec[i].context[0] &0x7;
             if(tmp_context == 1){cg_vec.push_back(meth_vec[i].meth[0]);}
             else if (tmp_context == 3){chg_vec.push_back(meth_vec[i].meth[0]);}
             else{chh_vec.push_back(meth_vec[i].meth[0]);}
@@ -229,7 +367,7 @@ void pool_cgmap(std::vector<meth_rec>& meth_vec, int seed)
     if (chh_filled){dist_chh = std::uniform_int_distribution<>(0, chh_vec.size() - 1);}
 
     for (size_t i = 1; i < meth_vec.size(); ++i) {
-        int tmp_context = meth_vec[i].context & 0x7;
+        int tmp_context = meth_vec[i].context[0] & 0x7;
         if (tmp_context == 1 && cg_filled) {
             meth_vec[i].meth[0] = cg_vec[dist_cg(eng)];
         } else if (tmp_context == 3 && chg_filled) {
@@ -266,9 +404,10 @@ void fill_cgmap_chr(char *fname, char *chr_id, uint32_t *posidx_arr, std::vector
         ++num_tot_site;
         int tmp_idx_rec = posidx_arr[tmp_meth.pos];
         int tmp_idx = tmp_idx_rec >> 2;
-        if(meth_vec[tmp_idx].pos!=tmp_meth.pos && meth_vec[tmp_idx].context!=tmp_meth.context){ ++num_404_site; continue;}
+        if(meth_vec[tmp_idx].pos!=tmp_meth.pos && meth_vec[tmp_idx].context[0]!=tmp_meth.context[0]){ ++num_404_site; continue;}
         meth_vec[tmp_idx].meth[0]= tmp_meth.meth[0];
-        meth_vec[tmp_idx].context= tmp_meth.context;
+        meth_vec[tmp_idx].context[0] = tmp_meth.context[0];
+        meth_vec[tmp_idx].context[1] = tmp_meth.context[1];
         meth_vec[tmp_idx].type   = 2;
         tmp_meth    = {};
     }
@@ -415,7 +554,7 @@ void fill_beta(std::vector<meth_rec>& meth_vec, std::vector<param_rec>& param_ve
             if(meth_vec[i].meth[1] < 0){meth_vec[i].meth[1]  = meth_vec[i].meth[0];}
         }else{
             //if it's not filled
-            meth_vec[i].meth[0] = gen_beta(rng, meth_vec[i].context, param_vec);
+            meth_vec[i].meth[0] = gen_beta(rng, meth_vec[i].context[0], param_vec);
             meth_vec[i].meth[1] = meth_vec[i].meth[0];
             meth_vec[i].type    = 8;
         }
