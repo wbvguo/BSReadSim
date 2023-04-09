@@ -10,9 +10,7 @@
 
 
 // for BED
-int parse_bed_line(char *line, char *chr_id, frag_rec *tmp_probe);
-
-int parse_bed_line_rrbs(char *line, char *chr_id, frag_rec *tmp_probe);
+int parse_bed_line(char *line, char *chr_id, frag_rec *tmp_probe, int ncol_coll, int ncol_skip);
 
 void parse_bed_chr(char *fname, char *chr_id, std::vector<frag_rec>& probe_vec, int tech_mode);
 
@@ -29,10 +27,10 @@ void cal_chr_count(const char *fn, char *chr_id, char *bed_file, uint64_t N, uin
 
 
 // for fragment generation
-void gen_frag_vec(std::uniform_int_distribution<int> *dis_ud, std::discrete_distribution<int> *dis_dd, uint32_t *posidx_arr, int chunk_size,
-                    std::vector<frag_rec> &frag_vec, std::vector<frag_rec> &probe_vec, std::vector<float> &eff_vec, expt_param *expt_set);
+void gen_frag_vec(std::uniform_int_distribution<int> *dis_ud, std::discrete_distribution<int> *dis_dd, uint32_t *posidx_arr, int chr_len, int chunk_size,
+                  std::vector<frag_rec> &frag_vec, std::vector<frag_rec> &probe_vec, std::vector<float> &eff_vec, expt_param *expt_set);
 
-void check_frag_vec(std::vector<frag_rec> &frag_vec, mutseq_t *hap1, mutseq_t *hap2, expt_param *expt_set);
+//void check_frag_vec(std::vector<frag_rec> &frag_vec, mutseq_t *hap1, mutseq_t *hap2, expt_param *expt_set);
 
 
 #endif

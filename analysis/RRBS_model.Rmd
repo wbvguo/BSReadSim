@@ -1,0 +1,190 @@
+---
+title: "Spline for RRBS"
+author: "Wenbin Guo"
+date: "2023-02-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+# Helper packages
+library(dplyr)
+library(ggplot2)
+
+# Modeling packages
+library(earth)
+library(caret)
+
+# Model interpretability packages
+library(vip)       # for variable importance
+library(pdp)       # for variable relationships
+
+bool_rerun = FALSE
+```
+
+
+# read-in
+```{r}
+frag_cut_file  = "~/iproject/BSReadSim/test/data/RRBS/frag_cut_df2.csv"
+mars_ident_rds = "~/iproject/BSReadSim/test/data/RRBS/spline_ident.rds"
+mars_logit_rds = "~/iproject/BSReadSim/test/data/RRBS/spline_logit.rds"
+mars_cv_ident_rds = "~/iproject/BSReadSim/test/data/RRBS/spline_cv_ident.rds"
+mars_cv_logit_rds = "~/iproject/BSReadSim/test/data/RRBS/spline_cv_logit.rds"
+
+
+
+frag_cut_df = read.table(frag_cut_file, sep = ",", header = TRUE) %>% 
+  dplyr::mutate(logit_prob = log(relative_depth/(1-relative_depth)))
+
+data_ident = frag_cut_df[c("length", "gc_ratio", "CCGG", "relative_depth")]
+data_logit = frag_cut_df[c("length", "gc_ratio", "CCGG", "logit_prob")]
+```
+
+```{r}
+head(frag_cut_df)
+```
+
+
+
+# liner regression
+```{r}
+lm_ident = lm(relative_depth ~., data = data_ident)
+lm_logit = lm(logit_prob ~., data = data_logit)
+```
+
+```{r}
+summary(lm_ident)
+cat(paste0(paste(rep('-', 75), collapse = ""), "\n"))
+summary(lm_logit)
+```
+
+
+
+# spline fit
+on original relative_depth or logit transformed
+```{r}
+if(bool_rerun){
+  mars_ident = earth(relative_depth ~ ., data = data_ident, degree=3) #glm=list(family=binomial)
+  saveRDS(mars_ident, file = mars_ident_rds)
+  
+  mars_logit = earth(logit_prob ~ ., data = data_logit, degree=3)
+  saveRDS(mars_logit, file = mars_logit_rds)
+}else{
+  mars_ident = readRDS(mars_ident_rds)
+  mars_logit = readRDS(mars_logit_rds)
+}
+```
+
+
+```{r}
+summary(mars_ident)
+cat(paste0(paste(rep('-', 75), collapse = ""), "\n"))
+summary(mars_logit)
+```
+
+
+```{r}
+plot(mars_ident, which = 1)
+plot(mars_logit, which = 1)
+```
+
+
+# spline cross-validation
+cross validation to select the best model
+```{r}
+hyper_grid <- expand.grid(
+  degree = 1:5, 
+  nprune = seq(2, 100, length.out = 10) %>% floor()
+)
+
+if(bool_rerun){
+  library(doParallel)
+  cl <- makePSOCKcluster(20)
+  registerDoParallel(cl)
+  
+  set.seed(123)  # for reproducibility
+  mars_cv_ident <- train(
+    x = subset(data_ident, select = -relative_depth),
+    y = data_ident$relative_depth,
+    method = "earth",
+    metric = "RMSE",
+    trControl = trainControl(method = "cv", number = 10),
+    tuneGrid = hyper_grid,
+  )
+  
+  stopCluster(cl)
+  
+  saveRDS(mars_cv_ident, file = mars_cv_ident_rds)
+  
+  cl <- makePSOCKcluster(20)
+  registerDoParallel(cl)
+  
+  set.seed(123)  # for reproducibility
+  mars_cv_logit <- train(
+    x = subset(data_logit, select = -logit_prob),
+    y = data_logit$logit_prob,
+    method = "earth",
+    metric = "RMSE",
+    trControl = trainControl(method = "cv", number = 10),
+    tuneGrid = hyper_grid,
+  )
+  
+  stopCluster(cl)
+  
+  saveRDS(mars_cv_logit, file = mars_cv_logit_rds)
+}else{
+  mars_cv_ident = readRDS(mars_cv_ident_rds)
+  mars_cv_logit = readRDS(mars_cv_logit_rds)
+}
+
+head(hyper_grid)
+```
+
+
+```{r}
+summary(mars_cv_ident)
+cat(paste0(paste(rep('-', 75), collapse = ""), "\n"))
+summary(mars_cv_logit)
+```
+
+
+# GAM
+```{r}
+library(mgcv)
+library(splines)
+
+model <- mgcv::bam(logit_prob ~ ns(length, df=3) + ns(CCGG, df=3) + ns(gc_ratio, df=3), method = "fREML", data = data_logit)
+```
+
+
+
+
+# visualize the prediction results
+```{r}
+library(ggpointdensity)
+library(viridis)
+
+pred_df_ident = data.frame(real = mars_cv_ident$finalModel$y %>% as.vector(),
+                           fitted = mars_cv_ident$finalModel$fitted.values %>% as.vector())
+pred_df_logit = data.frame(real = mars_cv_logit$finalModel$y %>% as.vector(),
+                           fitted = mars_cv_logit$finalModel$fitted.values %>% as.vector())
+
+ggplot(pred_df_ident, mapping = aes(x = fitted, y = real)) +
+  #stat_density2d(aes(alpha = ..density..), geom = "tile", contour = FALSE) +
+  geom_pointdensity() +
+  scale_color_viridis()
+
+ggplot(pred_df_logit, mapping = aes(x = fitted, y = real)) +
+  #stat_density2d(aes(alpha = ..density..), geom = "tile", contour = FALSE) +
+  geom_pointdensity() +
+  scale_color_viridis()
+```
+
+
+
+```{r}
+smoothScatter(pred_df_ident$real, pred_df_ident$fitted)
+```
+
