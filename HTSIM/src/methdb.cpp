@@ -77,6 +77,8 @@ void update_variant(const kseq_t *ks, mutseq_t *hap1, mutseq_t *hap2, uint32_t *
     int pos_k, pos_base, pos_mask, pos_ins_len;
     int tmp_base, tmp_mask, ins_len, ins_base, updown;
     int tmp_kmeridx, tmp_context;
+    int count, t;
+    bool collect_flag;
 
     //int tmp_idx, tmp_cg, tmp_kmeridx;
     for(int i=0; i < ks->seq.l; ++i){
@@ -99,8 +101,8 @@ void update_variant(const kseq_t *ks, mutseq_t *hap1, mutseq_t *hap2, uint32_t *
 
                 // fill in vector
                 #define __fill_vec(sites_ptr, updown)                       \
-                    int count=0, t=1;                                       \
-                    bool collect_flag = true;                               \
+                    count=0, t=1;                                           \
+                    collect_flag = true;                                    \
                     while(count < 3){                                       \
                         tmp_base = rseq->s[pos_k+t*updown];                 \
                         tmp_mask = (tmp_base&mutmsk);                       \

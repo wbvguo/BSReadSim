@@ -256,7 +256,7 @@ static int simu_usage()
     fprintf(stderr, "         -F FLOAT      fraction of indels [%.2f]\n", INDEL_FRAC);
     fprintf(stderr, "         -X FLOAT      probability an indel is extended [%.2f]\n", INDEL_EXTN);
     fprintf(stderr, "         -H INT        haplotype mode: 0 for disable, nonzero for enable (all variants are homozygotes) [0]\n");
-    fprintf(stderr, "         -s INT        seed for random generator [-1]\n");
+    fprintf(stderr, "         -s INT        seed for random generator (must set to be positive value if no VCF is specified) [-1]\n");
     fprintf(stderr, "technology setting:\n");
     fprintf(stderr, "         -b STRING     output BED file, output to stdout if not specified [None]\n");
     fprintf(stderr, "         -x STRING     enzyme cutting site string for reduced representation sequencing [None]\n");
@@ -296,8 +296,7 @@ int main(int argc, char *argv[])
         }
     }
     if (argc - optind < 1) return simu_usage();
-    if (mut_set.seed_snp <= 0) mut_set.seed_snp    = time(0)&0x7fffffff;
-    
+
     expt_set.min_insert = std::max(std::max(expt_set.size_l, expt_set.size_r), expt_set.min_insert); // ensure MIN_INSERT >= SIZE_L or SIZE_R
     expt_set.is_chr_set   = strcmp(chr_id, "None") && strlen(chr_id);
     expt_set.is_bed_set   = strcmp(bed_file,"None") && strlen(bed_file);
@@ -315,10 +314,16 @@ int main(int argc, char *argv[])
         if((vcf=fopen(vcf_file,"r"))){fprintf(stderr, "VCF file: %s, use it to simulate reads\n", vcf_file); fclose(vcf);
         }else{fprintf(stderr, "ERROR: The specified VCF file does not exist, please check!\n"); exit(EXIT_FAILURE);}
     } else {
-        fprintf(stderr, "[%s] No VCF input, will generate SNP randomly if mutation rate is nonzero\n", __func__);
+        fprintf(stderr, "[%s] No VCF input, ", __func__);
+        if(mut_set.mut_rate > 0 && mut_set.seed_snp <= 0){
+            fprintf(stderr, "ERROR: Seed for random mutation is not set, this behavor is not allowed...\n"); exit(EXIT_FAILURE);
+        }else if (mut_set.mut_rate > 0){
+            fprintf(stderr, "generate random mutations with rate: %f, seed: %d...\n", mut_set.mut_rate, mut_set.seed_snp);
+        }else{
+            fprintf(stderr, "mutations rate is 0, no snp is simulated\n");
+        }
     }
-
-
+    
     // parse the cut site, hold
     parse_cut_site(cut_str, cut_vec);
     

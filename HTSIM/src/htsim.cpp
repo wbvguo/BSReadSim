@@ -78,10 +78,6 @@ std::vector<param_rec> param_vec;
 std::map<std::string, chr_rec> chr_count;
 std::map<int, snpmeth_rec> snpmeth_map;
 
-std::random_device re;
-std::mt19937 gen_re(re());
-std::uniform_real_distribution<float> dis_ru(0.0,1.0);
-
 
 void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char *methdb_file, char *cgmap_file, char *asm_file, 
                 expt_param *expt_set, mut_param *mut_set, meth_param *meth_set)
@@ -346,7 +342,7 @@ void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char
                 // print reads to stdout: mode 0 print string (WGS), else print chars&numbers (WGBS)
                 if(expt_set->output_fmt == 0){
                     // flip and get the reverse complementary
-                    int is_flip = dis_ru(gen_re) < 0.5? 0 : 1;
+                    int is_flip = static_cast<float>(std::rand())/RAND_MAX < 0.5? 0 : 1;
                     int tmp_cigar, tmp_base;
                     for (k = 0; k < size[1]; ++k) { 
                         if (k <= int(size[1]/2)) { 
@@ -367,7 +363,7 @@ void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char
                         // sequence (introduce random sequencing error)
                         for (i = 0; i < size[jj]; ++i) {
                             int c = tmp_seq[jj][i];
-                            if (dis_ru(gen_re) < expt_set->err_rate){
+                            if (static_cast<float>(std::rand())/RAND_MAX < expt_set->err_rate){
                                 // c = (c + (int)(drand48() * 3.0 + 1)) & 3; // random sequencing errors
                                 c = (c + 1) & 3; // recurrent sequencing errors
                                 ++n_err[jj];
@@ -626,6 +622,7 @@ int main(int argc, char *argv[])
 
     fprintf(stderr, "[htsim] snp seed = %d, meth seed = %d\n", mut_set.seed_snp, meth_set.seed_meth);
     srand48(mut_set.seed_snp);
+    srand(time(0)&0x7fffffff);
 
     sim_core(argv[optind], vcf_file, bed_file, chr_id, methdb_file, cgmap_file, asm_file, &expt_set, &mut_set, &meth_set);
 
