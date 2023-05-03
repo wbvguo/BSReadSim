@@ -7,6 +7,8 @@
 
 
 /*-------------------------variable-------------------------*/
+extern const char PACKAGE_VERSION[];
+
 extern const uint8_t nst_nt4_table[256];
 extern const uint8_t cg_table[5];
 extern const uint8_t cg_context_table[64];
@@ -41,6 +43,15 @@ extern const mut_t mutmsk;
 typedef struct {
     int pos, ref, alt, geno;
 } snp_rec;
+
+
+typedef struct {
+    uint16_t ref, alt; //alt have insert length
+    std::vector<uint16_t> kmeridx;
+    std::vector<uint8_t> context;
+    std::vector<float> meth;
+    uint8_t geno;
+} snpmeth_rec;
 
 
 // parse BED
@@ -114,7 +125,7 @@ typedef struct {
 typedef struct {
     int pos = -1;
     float meth[2]  = {-1,-1};
-    uint8_t context= 0;         /*1,3,7;9,11,15 for the context*/
+    uint8_t context[2] = {0,0}; /*1,3,7;9,11,15 for the context*/
     uint8_t type   = 0;         /*0,2,4,8,10 for uninitial, cgmap, asm, beta, pool*/
     // int16_t asm_ofs= 0;      /*0,1 for asm*/
 } meth_rec;                     /*each struct take 15 bytes*/
@@ -151,10 +162,11 @@ typedef struct {
     int tech_mode       = TECH_MODE;
     int output_fmt      = OUTPUT_FMT;
     bool is_chr_set     = false;
-    bool is_uniform     = false;
+    bool is_uniform     = true;
     bool is_bias_set    = false;
     bool is_site_set    = false;
     bool is_bed_set     = false;
+    bool is_kmer_set    = false;
 } expt_param;
 
 typedef struct {
@@ -173,6 +185,7 @@ typedef struct{
     bool is_asm_set     = false;
     bool is_cgmap_set   = false;
     bool is_methdb_set  = false;
+    bool update_meth    = false;
 } meth_param;
 
 #endif

@@ -13,7 +13,8 @@
 // create/stream MethDB
 void create_methdb(const kseq_t *ks, uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec);
 
-void update_methdb(uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec, mutseq_t *hap1, mutseq_t *hap2, bool bool_asm_set, bool bool_update_boundary);
+void update_variant(const kseq_t *ks, mutseq_t *hap1, mutseq_t *hap2, uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec, 
+                    uint32_t *kmeridx_arr, meth_param *meth_set, std::vector<param_rec>& param_vec, std::map<int, snpmeth_rec>& snpmeth_map);
 
 void save_methdb(std::vector<meth_rec>& meth_vec, const char *fname);
 
@@ -41,5 +42,6 @@ void parse_param(char *param_str, std::vector<param_rec>& param_vec);
 float gen_beta(gsl_rng *rng, uint8_t context, std::vector<param_rec>& param_vec);
 
 void fill_beta(std::vector<meth_rec>& meth_vec, std::vector<param_rec>& param_vec, int seed);
+
 
 #endif

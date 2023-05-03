@@ -29,6 +29,7 @@
 BASE_PATH = $(shell pwd | xargs dirname)
 
 EXE=		htsim
+EXE2=		rrcut
 LIBS=		-Bstatic -lz 
 HTSLIB=		-I$(BASE_PATH)/HTSLIB/htslib/ -L$(BASE_PATH)/HTSLIB/ -lhts -Wl,-rpath $(BASE_PATH)/HTSLIB -lgsl -lgslcblas #-Wall
 CXX=c++
@@ -37,10 +38,11 @@ CXXFLAGS=	-g -O3 -fpermissive $(ARCH_FLAGS) #-Wall ##-xSSE2
 
 htsim:
 	$(CXX) $(CXXFLAGS) src/htsim.cpp src/haplo.cpp src/methdb.cpp src/mode.cpp src/struct.cpp -o $(EXE) $(LIBS) $(HTSLIB) 
-
+	$(CXX) $(CXXFLAGS) src/rrcut.cpp src/haplo.cpp src/struct.cpp -o $(EXE2) $(LIBS) $(HTSLIB) 
 
 clean:
 	rm htsim
+	rm rrcut
 
 depend:
 	(LC_ALL=C; export LC_ALL; makedepend -Y -- $(CXXFLAGS) $(CPPFLAGS) -I. -- src/*.cpp)
