@@ -75,13 +75,13 @@ void update_variant(const kseq_t *ks, mutseq_t *hap1, mutseq_t *hap2, uint32_t *
     int i, j = 0; // j keeps the end of the last deletion
     int c[3];
     int pos_k, pos_base, pos_mask, pos_ins_len;
-    int tmp_base, tmp_mask, ins_len, ins_base, updown;
+    int tmp_pos, tmp_base, tmp_mask, ins_len, ins_base, updown;
     int tmp_kmeridx, tmp_context;
     int count, t;
     bool collect_flag;
 
     //int tmp_idx, tmp_cg, tmp_kmeridx;
-    for(int i=0; i < ks->seq.l; ++i){
+    for(int i=0; i < ks->seq.l; ++i){                       // skip contig boundary
         if((posidx_arr[i] & 0x1) != 0){                     // if there is a variant
             c[0] = nst_nt4_table[(int)ks->seq.s[i]];
             if (c[0] >= 4) continue;
@@ -89,8 +89,7 @@ void update_variant(const kseq_t *ks, mutseq_t *hap1, mutseq_t *hap2, uint32_t *
             if(c[0]==c[1]){rseq=hap2;}else{rseq=hap1;}      // can check MNV, and if they are both same with ref
 
             // handle the non-mutational boundary sites: calculate from [-3,3] from i
-            // TODO: handle the boundary sites
-            // for each of them calulate the context and kmeridx
+            // for each of them calulate the context and kmeridx(if needed)
             for(int k =-3; k<4 && k!=0; ++k){
                 sites_u.clear();
                 sites_d.clear();
@@ -104,7 +103,9 @@ void update_variant(const kseq_t *ks, mutseq_t *hap1, mutseq_t *hap2, uint32_t *
                     count=0, t=1;                                           \
                     collect_flag = true;                                    \
                     while(count < 3){                                       \
-                        tmp_base = rseq->s[pos_k+t*updown];                 \
+                        tmp_pos  = pos_k+t*updown;                          \
+                        if(tmp_pos < 0 || tmp_pos >= ks->seq.l) break;      \
+                        tmp_base = rseq->s[tmp_pos];                        \
                         tmp_mask = (tmp_base&mutmsk);                       \
                         ins_len  = tmp_mask >> 12;                          \
                         if(tmp_mask == DELETE){                             \
@@ -135,15 +136,17 @@ void update_variant(const kseq_t *ks, mutseq_t *hap1, mutseq_t *hap2, uint32_t *
                 sites_ptr = &sites_d; updown = 1;
                 __fill_vec(sites_ptr, updown);
 
-
-                //compute and update the context and kmeridx
-                tmp_kmeridx = sites_u[2] << 6 | sites_u[1] << 4 | sites_u[0] << 2 | pos_base;
-                tmp_kmeridx = (tmp_kmeridx<<6)| sites_d[0] << 4 | sites_d[1] << 2 | sites_d[2];
-                //for (int k = 0; k < 3; ++k){tmp_kmeridx = (tmp_kmeridx << 2) | sites_u[3-k-1];}
-                if(tmp_kmeridx != (kmeridx_arr[pos_k] & 0xffff)){
-                    kmeridx_arr[pos_k] = (kmeridx_arr[pos_k] &0x0000ffff) | (tmp_kmeridx << 16);
+                if(kmeridx_arr != NULL){
+                    //compute and update kmeridx
+                    tmp_kmeridx = sites_u[2] << 6 | sites_u[1] << 4 | sites_u[0] << 2 | pos_base;
+                    tmp_kmeridx = (tmp_kmeridx<<6)| sites_d[0] << 4 | sites_d[1] << 2 | sites_d[2];
+                    //for (int k = 0; k < 3; ++k){tmp_kmeridx = (tmp_kmeridx << 2) | sites_u[3-k-1];}
+                    if(tmp_kmeridx != (kmeridx_arr[pos_k] & 0xffff)){
+                        kmeridx_arr[pos_k] = (kmeridx_arr[pos_k] &0x0000ffff) | (tmp_kmeridx << 16);
+                    }
                 }
 
+                // compute and update context
                 if (pos_base == 1){         // C
                     tmp_context = cg_context_table[((pos_base<<4) | (sites_d[0]<<2) | sites_d[1])]; 
                 }else if (pos_base == 2){   // G
@@ -155,6 +158,7 @@ void update_variant(const kseq_t *ks, mutseq_t *hap1, mutseq_t *hap2, uint32_t *
                     meth_vec[tmp_idx].context[1] = tmp_context;
                     meth_vec[tmp_idx].meth[1]    = gen_beta(rng, tmp_context, param_vec);
                 }
+                fprintf(stderr, "ok\n");
             }
 
             // handle the snp sites
