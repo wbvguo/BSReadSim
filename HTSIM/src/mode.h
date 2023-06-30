@@ -22,7 +22,7 @@ void parse_bias_file(char *fname, std::vector<float>& eff_vec);
 // for length and count calculation
 void collect_len_score_chr(const kseq_t *ks, chr_rec *tmp_len, char *bed_file, int tech_mode, std::vector<frag_rec>& probe_vec);
 
-void cal_chr_count(const char *fn, char *chr_id, char *bed_file, uint64_t N, uint64_t chr_N, 
+void cal_chr_count(const char *fn, char *chr_id, char *bed_file, uint64_t N, uint32_t chr_N, 
                     expt_param *expt_set, std::vector<frag_rec>& probe_vec, std::map<std::string, chr_rec> &chr_count);
 
 

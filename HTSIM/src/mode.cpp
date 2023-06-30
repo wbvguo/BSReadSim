@@ -151,7 +151,7 @@ void collect_len_score_chr(const kseq_t *ks, chr_rec *tmp_len, char *bed_file, i
 
 
 // for count calculation
-void cal_chr_count(const char *fn, char *chr_id, char *bed_file, uint64_t N, uint64_t chr_N, 
+void cal_chr_count(const char *fn, char *chr_id, char *bed_file, uint64_t N, uint32_t chr_N, 
                     expt_param *expt_set, std::vector<frag_rec>& probe_vec, std::map<std::string, chr_rec> &chr_count)
 {
     kseq_t *ks;
@@ -198,7 +198,7 @@ void cal_chr_count(const char *fn, char *chr_id, char *bed_file, uint64_t N, uin
         uint32_t contig_len = chr_count[chr_id_str].chr_len;
         N = N == 0? (tot_eff_len * expt_set->depth)/(expt_set->size_l + expt_set->size_r) : N;
         chr_N = chr_N == 0? contig_eff_len*N/tot_eff_len : chr_N;
-        fprintf(stderr, "[%s] Contig %s specified, total length: %u, effective length: %u, #reads: %lu\n", __func__, chr_id, contig_len, contig_eff_len, chr_N);
+        fprintf(stderr, "[%s] Contig %s specified, total length: %u, effective length: %u, #reads: %u\n", __func__, chr_id, contig_len, contig_eff_len, chr_N);
         chr_count[chr_id_str].count = chr_N;
     } else {
         // calculate the count for all contigs
@@ -317,7 +317,7 @@ void gen_frag_vec(std::uniform_int_distribution<int> *dis_ud, std::discrete_dist
         for(size_t i =0; i < frag_vec.size(); ++i){
             int start2 = frag_vec[i].pos_r;
             int haplo  = frag_vec[i].haplo;
-            for(int k=0; k < expt_set->size_r; k++){
+            for(int k=0; k < expt_set->size_r; ++k){
                 int c = ret[haplo]->s[start2], mut_type = c & mutmsk;
                 if(mutmsk == DELETE){
                     --start2;
