@@ -108,7 +108,7 @@ void output_read(int* tmp_seq[2], int* tmp_context[2], int err_thre, int flag_mu
         int jj = j ^ is_flip;
 
         // Header: 1-based coordinates in the readID
-        buffer_pos += snprintf(output_buffer + buffer_pos, BUFFER_SIZE - buffer_pos, "@%s:%d:%d:%llx:%d:%d/%d\n",
+        buffer_pos += snprintf(output_buffer + buffer_pos, BUFFER_SIZE - buffer_pos, "@%s:%d:%d:%llx:%d/%d\n",
                                chr_id, start[0]+1, end[1]+1, (long long)ii, flag_mut, j+1);
         //fprintf(stdout, "@%s:%d:%d:%llx:%d:%d/%d\n", chr_id, start[0]+1, end[1]+1, (long long)ii, flag_mut, j+1);
 
