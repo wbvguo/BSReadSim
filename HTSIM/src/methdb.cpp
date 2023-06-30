@@ -51,7 +51,7 @@ void create_methdb(const kseq_t *ks, uint32_t *posidx_arr, std::vector<meth_rec>
             tmp_meth.pos = i;
             meth_vec.push_back(tmp_meth);
             posidx_arr[i] |= ix << 2;
-            ix++;
+            ++ix;
             tmp_meth = {};
         }
     }
@@ -70,71 +70,58 @@ void update_variant(const kseq_t *ks, mutseq_t *hap1, mutseq_t *hap2, uint32_t *
     std::vector<int> tmp_sites;
     std::vector<uint8_t> sites_u = {0,0,0};
     std::vector<uint8_t> sites_d = {0,0,0};
-    std::vector<uint8_t>* sites_ptr;
-    
-    int i, j = 0; // j keeps the end of the last deletion
+
     int c[3];
+    int max_ik = ks->seq.l-1;
     int pos_k, pos_base, pos_mask, pos_ins_len;
-    int tmp_pos, tmp_base, tmp_mask, ins_len, ins_base, updown;
+    int tmp_pos, tmp_base, tmp_mask, tmp_ins_len;
     int tmp_kmeridx, tmp_context;
     int count, t;
-    bool collect_flag;
 
     //int tmp_idx, tmp_cg, tmp_kmeridx;
-    for(int i=0; i < ks->seq.l; ++i){                       // skip contig boundary
+    for(int i = 0; i < ks->seq.l; ++i){
         if((posidx_arr[i] & 0x1) != 0){                     // if there is a variant
             c[0] = nst_nt4_table[(int)ks->seq.s[i]];
-            if (c[0] >= 4) continue;
+            if (c[0] >= 4) continue;                        // skip N
             c[1] = hap1->s[i]; c[2] = hap2->s[i];
             if(c[0]==c[1]){rseq=hap2;}else{rseq=hap1;}      // can check MNV, and if they are both same with ref
 
-            // handle the non-mutational boundary sites: calculate from [-3,3] from i
+            // handle the non-mutational neighborhood sites: calculate sites within 3 bases from i
             // for each of them calulate the context and kmeridx(if needed)
-            for(int k =-3; k<4 && k!=0; ++k){
-                sites_u.clear();
-                sites_d.clear();
-                pos_k = i+k;
+            for(int k =-3; k<4; ++k){                       // TODO: need to check the boundary
+                pos_k = std::min(std::max(0, i+k), max_ik); // ensure not passing the boundary
                 pos_base = rseq->s[pos_k];
-                if(pos_base&mutmsk) continue;               // skip mutation
+                if(pos_base&mutmsk) continue;               // skip mutation, will skip k=0
                 if(!cg_table[pos_base]) continue;           // skip nonCG
 
                 // fill in vector
                 #define __fill_vec(sites_ptr, updown)                       \
-                    count=0, t=1;                                           \
-                    collect_flag = true;                                    \
+                    count=0, t=0;                                           \
                     while(count < 3){                                       \
+                        ++t;                                                \
                         tmp_pos  = pos_k+t*updown;                          \
                         if(tmp_pos < 0 || tmp_pos >= ks->seq.l) break;      \
                         tmp_base = rseq->s[tmp_pos];                        \
                         tmp_mask = (tmp_base&mutmsk);                       \
-                        ins_len  = tmp_mask >> 12;                          \
-                        if(tmp_mask == DELETE){                             \
-                        }else if (ins_len){                                 \
-                            ins_base = tmp_base & 0xf;                      \
-                            (*sites_ptr)[count]= ins_base;                  \
-                            ++count;                                        \
-                            if(count == 3) collect_flag = false;            \
-                            ins_base >>= 4;                                 \
-                            while (collect_flag && ins_len > 0){            \
-                                (*sites_ptr)[count]= ins_base&0x3;          \
+                        if(tmp_mask == DELETE) continue;                    \
+                        (*sites_ptr)[count]= tmp_base & 0xf;                \
+                        ++count;                                            \
+                        if(tmp_mask!=SUBSTITUTE && tmp_mask!=NOCHANGE){     \
+                            tmp_base >>= 4;                                 \
+                            tmp_ins_len  = tmp_mask >> 12;                  \
+                            while (count < 3 && tmp_ins_len > 0){           \
+                                (*sites_ptr)[count]= tmp_base&0x3;          \
                                 ++count;                                    \
-                                ins_base >>= 2;                             \
-                                --ins_len;                                  \
-                                if(count == 3) collect_flag = false;        \
+                                tmp_base >>= 2;                             \
+                                --tmp_ins_len;                              \
                             }                                               \
-                            if(!collect_flag) break;                        \
-                        }else{                                              \
-                            (*sites_ptr)[count]= tmp_base;                  \
-                            ++count;                                        \
                         }                                                   \
-                        ++t;                                                \
                     }                                                       \
-                
-                sites_ptr = &sites_u; updown = -1;
-                __fill_vec(sites_ptr, updown);
 
-                sites_ptr = &sites_d; updown = 1;
-                __fill_vec(sites_ptr, updown);
+                std::fill(sites_u.begin(), sites_u.end(), 0);
+                std::fill(sites_d.begin(), sites_d.end(), 0);
+                __fill_vec(&sites_u,-1);
+                __fill_vec(&sites_d, 1);
 
                 if(kmeridx_arr != NULL){
                     //compute and update kmeridx
@@ -158,50 +145,48 @@ void update_variant(const kseq_t *ks, mutseq_t *hap1, mutseq_t *hap2, uint32_t *
                     meth_vec[tmp_idx].context[1] = tmp_context;
                     meth_vec[tmp_idx].meth[1]    = gen_beta(rng, tmp_context, param_vec);
                 }
-                fprintf(stderr, "ok\n");
             }
 
             // handle the snp sites
             pos_k = i;
             pos_base = rseq->s[i];
             pos_mask = (pos_base&mutmsk);
-            if(pos_mask==DELETE) continue;         // DELETE will not appear on the read
+            if(pos_mask==DELETE) continue;                          // DELETE will not appear on the read
+            pos_ins_len = pos_mask==SUBSTITUTE ? 0: pos_mask >> 12; // 0 for SUBSTITUTE & NOCHANGE
+
+            std::fill(sites_u.begin(), sites_u.end(), 0);
+            std::fill(sites_d.begin(), sites_d.end(), 0);
+            __fill_vec(&sites_u,-1);
+            __fill_vec(&sites_d, 1);
+
             tmp_snpmeth= {};
             tmp_sites.clear();
-            sites_u.clear();
-            sites_d.clear();
-
-            sites_ptr = &sites_u; updown = 1;
-            __fill_vec(sites_ptr, updown);
-
-            sites_ptr = &sites_d; updown = -1;
-            __fill_vec(sites_ptr, updown);
-
-
-            pos_ins_len= pos_mask >> 12;
-            tmp_sites.push_back(sites_u[2]);
-            tmp_sites.push_back(sites_u[1]);
-            tmp_sites.push_back(sites_u[0]);
-            tmp_sites.push_back(pos_base&0x3);
-            pos_base >>=4;
-            for (size_t i = 0; i < pos_ins_len; ++i){
-                tmp_sites.push_back(pos_base&0x3);
-                pos_base >> 2;
+            for(int k = 2; k >= 0; --k){tmp_sites.push_back(sites_u[k]);}
+            if(pos_ins_len == 0){ tmp_sites.push_back(pos_base&0xf);}else{
+                pos_base >>= 4;
+                for(int k = 0; k < pos_ins_len; ++k){
+                    tmp_sites.push_back(pos_base&0x3); 
+                    pos_base>>=2;
+                }
             }
-            tmp_sites.push_back(sites_d[0]);
-            tmp_sites.push_back(sites_d[1]);
-            tmp_sites.push_back(sites_d[2]);
-            
-            for(int k =3; k<4+pos_ins_len; ++k){
-                tmp_kmeridx = (tmp_sites[k-3] << 6) | (tmp_sites[k-2] << 4) | (tmp_sites[k-1] << 2) | tmp_sites[k];
-                tmp_kmeridx = (tmp_kmeridx << 6) | (tmp_sites[k+1] << 4) | (tmp_sites[k+2] << 2) | tmp_sites[k+3];
-                
+            for(int k = 0; k <= 2; ++k){tmp_sites.push_back(sites_d[k]);}
+
+            for(int k = 3; k<4+pos_ins_len; ++k){
+                if(kmeridx_arr != NULL){
+                    tmp_kmeridx = (tmp_sites[k-3] << 6) | (tmp_sites[k-2] << 4) | (tmp_sites[k-1] << 2) | tmp_sites[k];
+                    tmp_kmeridx = (tmp_kmeridx << 6) | (tmp_sites[k+1] << 4) | (tmp_sites[k+2] << 2) | tmp_sites[k+3];
+                }else{
+                    tmp_kmeridx = 0;
+                }
+
                 tmp_base = tmp_sites[k];
                 if(tmp_base == 1){         // C
-                    tmp_context = cg_context_table[((tmp_base<<4) | (tmp_sites[k+1]<<2) | tmp_sites[k+2])]; 
+                    tmp_context = cg_context_table[((tmp_base<<4) | (tmp_sites[k+1]<<2) | tmp_sites[k+2])];
                 }else if (tmp_base == 2){   // G
                     tmp_context = cg_context_table[((tmp_base<<4) | (tmp_sites[k-1]<<2) | tmp_sites[k-2])];
-                }else{} // should never happen
+                }else{                      // else
+                    tmp_context = 0;
+                }
 
                 tmp_snpmeth.kmeridx.push_back(tmp_kmeridx);
                 tmp_snpmeth.context.push_back(tmp_context);
@@ -210,6 +195,7 @@ void update_variant(const kseq_t *ks, mutseq_t *hap1, mutseq_t *hap2, uint32_t *
             
             tmp_snpmeth.ref = c[0];
             tmp_snpmeth.alt = tmp_base;
+            tmp_snpmeth.type= pos_ins_len;
             tmp_snpmeth.geno= 1 + (int)(c[1] == c[2]);
             snpmeth_map[i] = tmp_snpmeth;
         }
@@ -222,6 +208,7 @@ void update_variant(const kseq_t *ks, mutseq_t *hap1, mutseq_t *hap2, uint32_t *
             if(tmp_pos){posidx_arr[i] |= (uint32_t)meth_vec[tmp_pos].meth[0] != meth_vec[tmp_pos].meth[1];}
         }
     }
+    gsl_rng_free(rng);
 }
 
 void save_methdb(std::vector<meth_rec>& meth_vec, const char *fname)
@@ -542,7 +529,7 @@ void parse_param(char *param_str, std::vector<param_rec>& param_vec)
 
 float gen_beta(gsl_rng *rng, uint8_t context, std::vector<param_rec>& param_vec)
 {
-    return (float) gsl_ran_beta(rng, param_vec[params_map[context]].alpha, param_vec[params_map[context]].beta);
+    return context == 0? 1 : (float) gsl_ran_beta(rng, param_vec[params_map[context]].alpha, param_vec[params_map[context]].beta);
 }
 
 void fill_beta(std::vector<meth_rec>& meth_vec, std::vector<param_rec>& param_vec, int seed)

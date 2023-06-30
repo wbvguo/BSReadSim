@@ -54,7 +54,7 @@ const float INDEL_FRAC  = 0.15;
 const float INDEL_EXTN  = 0.3;
 const float MAX_N_RATIO = 0.05;
 
-const int DEPTH         = 100;
+const int DEPTH         = 20;
 const int MEAN_INSERT   = 500;
 const int SD_INSERT     = 50;
 const int MIN_INSERT    = 100;
@@ -66,4 +66,4 @@ const int BIN_SIZE      = 100;
 const int TECH_MODE     = 0; 
 const int OUTPUT_FMT    = 0;
 const int CHUNK_SIZE    = 1000000;
-
+const int BUFFER_SIZE   = 4096;

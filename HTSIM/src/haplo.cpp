@@ -163,7 +163,7 @@ void sim_mut_vcf(const kseq_t *ks, char * vcf_file, mutseq_t *hap1, mutseq_t *ha
             if(deletion_count > 0){
                 if (deleting & 1){ ret[0]->s[i] |= DELETE;}
                 if (deleting & 2){ ret[1]->s[i] |= DELETE;}
-                deletion_count--;
+                --deletion_count;
                 posidx_arr[i] |= 1;
                 continue;
             } else {deleting = 0;}
@@ -202,13 +202,13 @@ void sim_mut_vcf(const kseq_t *ks, char * vcf_file, mutseq_t *hap1, mutseq_t *ha
                 deletion_count = abs(base_offset) - 1; //minus one because here already delete one base
 
                 if (snp_hap1 == 1 && snp_hap2 == 1){
-                    ret[0]->s[i] = ret[1]->s[i] =  DELETE;
+                    ret[0]->s[i] = ret[1]->s[i] =  DELETE | c;
                     deleting = 3;
                 } else if (snp_hap1 == 1 && snp_hap2 == 0){
-                    ret[0]->s[i] =  DELETE;
+                    ret[0]->s[i] =  DELETE | c;
                     deleting = 1;
                 } else if (snp_hap1 == 0 && snp_hap2 == 1){
-                    ret[1]->s[i] =  DELETE;
+                    ret[1]->s[i] =  DELETE | c;
                     deleting = 2;
                 } else{continue;}
             } else if (base_offset > 0){ // inserstion
@@ -265,16 +265,16 @@ void sim_mut_diref(const kseq_t *ks, mut_param *mut_set, mutseq_t *hap1, mutseq_
             } else { // indel
                 if (drand48() < 0.5) { // deletion
                     if (mut_set->is_hap || drand48() < 0.333333) { // hom-del
-                        ret[0]->s[i] = ret[1]->s[i] = DELETE;
+                        ret[0]->s[i] = ret[1]->s[i] = DELETE | c;
                         deleting = 3;
                     } else { // het-del
                         deleting = drand48()<0.5?1:2;
-                        ret[deleting-1]->s[i] = DELETE;
+                        ret[deleting-1]->s[i] = DELETE | c;
                     }
                 } else { // insertion
                     int num_ins = 0, ins = 0;
                     do {
-                        num_ins++;
+                        ++num_ins;
                         ins = (ins << 2) | (int)(drand48() * 4.0);
                     } while (num_ins < 4 && drand48() < mut_set->indel_extn);
 
@@ -316,7 +316,7 @@ void sim_print_mutref(const char *name, const kseq_t *ks, mutseq_t *hap1, mutseq
                     while (n > 0) {
                         putchar("ACGTN"[ins & 0x3]);
                         ins >>= 2;
-                        n--;
+                        --n;
                     }
                     printf("\t-\n");
                 } // else: deleted base in a long deletion
@@ -343,7 +343,7 @@ void sim_print_mutref(const char *name, const kseq_t *ks, mutseq_t *hap1, mutseq
                     while (n > 0) {
                         putchar("ACGTN"[ins & 0x3]);
                         ins >>= 2;
-                        n--;
+                        --n;
                     }
                     printf("\t+\n");
                 } else if (((c[2] & mutmsk) >> 12) <= 4 || ((c[2] & mutmsk) >> 12) > 0) { // ins2
@@ -352,7 +352,7 @@ void sim_print_mutref(const char *name, const kseq_t *ks, mutseq_t *hap1, mutseq
                     while (n > 0) {
                         putchar("ACGTN"[ins & 0x3]);
                         ins >>= 2;
-                        n--;
+                        --n;
                     }
                     printf("\t+\n");
                 } // else: deleted base in a long deletion
