@@ -77,6 +77,7 @@ std::map<std::string, chr_rec> chr_count;
 std::map<int, snpmeth_rec> snpmeth_map;
 
 
+
 void output_read(int* tmp_seq[2], int* tmp_context[2], int err_thre, int flag_mut, uint32_t ii, char* chr_id, int half_size, int Q,
                  int(&size)[2], int(&start)[2], int(&end)[2], int(&n_sub)[2], int(&n_indel)[2], int(&n_err)[2], int(&cover_pos)[2])
 {
@@ -99,18 +100,12 @@ void output_read(int* tmp_seq[2], int* tmp_context[2], int err_thre, int flag_mu
         tmp_seq[1][k] = tmp_seq[1][k] < 4 ? 3 - tmp_seq[1][k] : 4;
     }
 
-    // Buffer for storing the output
-    char output_buffer[BUFFER_SIZE];
-    int buffer_pos = 0;
-
     // Output
     for (j = 0; j < 2; ++j) {
         int jj = j ^ is_flip;
 
         // Header: 1-based coordinates in the readID
-        buffer_pos += snprintf(output_buffer + buffer_pos, BUFFER_SIZE - buffer_pos, "@%s:%d:%d:%llx:%d/%d\n",
-                               chr_id, start[0]+1, end[1]+1, (long long)ii, flag_mut, j+1);
-        //fprintf(stdout, "@%s:%d:%d:%llx:%d:%d/%d\n", chr_id, start[0]+1, end[1]+1, (long long)ii, flag_mut, j+1);
+        fprintf(stdout, "@%s:%d:%d:%llx:%d/%d\n", chr_id, start[0]+1, end[1]+1, (long long)ii, flag_mut, j+1);
 
         // Sequence (introduce random sequencing error)
         for (k = 0; k < size[jj]; ++k) {
@@ -121,62 +116,42 @@ void output_read(int* tmp_seq[2], int* tmp_context[2], int err_thre, int flag_mu
                 tmp_context[jj][k] |= SEQERR;
                 tmp_seq[jj][k] = c;
             }
-            //fputc("ACGTN"[c], stdout);
-            output_buffer[buffer_pos++] = "ACGTN"[c];
-            if (buffer_pos >= BUFFER_SIZE - 1) {
-                fwrite(output_buffer, 1, buffer_pos, stdout);
-                buffer_pos = 0;
-            }
+            fputc("ACGTN"[c], stdout);
         }
-        output_buffer[buffer_pos++] = '\n';
-        //fprintf(stdout, "\n");
+        fprintf(stdout, "\n");
 
         // Comment
-        buffer_pos += snprintf(output_buffer + buffer_pos, BUFFER_SIZE - buffer_pos, "+:%d:%d:%d:%d:%d:%d:%d:%d:",
-                               start[jj]+1+jj, end[jj]+jj, cover_pos[jj], n_sub[jj], n_indel[jj], n_err[jj], end[1]-start[0]+1, start[1]-end[0]+1);
-        //fprintf(stdout, "+:%d:%d:%d:%d:%d:%d:%d:%d:", start[jj]+1+jj, end[jj]+jj, cover_pos[jj], n_sub[jj], n_indel[jj], n_err[jj], end[1]-start[0]+1, start[1]-end[0]+1);
+        fprintf(stdout, "+:%d:%d:%d:%d:%d:%d:%d:%d:", 
+                        start[jj]+1+jj, end[jj]+jj, cover_pos[jj], n_sub[jj], n_indel[jj], n_err[jj], end[1]-start[0]+1, start[1]-end[0]+1);
         
         for (k = 0; k < size[jj]; ++k) {
             int c = (tmp_context[jj][k] & 0xf0) >> 4;
-            output_buffer[buffer_pos++] = "MXIE"[mut_table[c]];
-            //fputc("MXIE"[mut_table[c]], stdout);
+            fputc("MXIE"[mut_table[c]], stdout);
         }
-        output_buffer[buffer_pos++] = '\n';
-        //fprintf(stdout, "\n");
+        fprintf(stdout, "\n");
 
         // Quality
         for (k = 0; k < size[j]-1; ++k) {
-            output_buffer[buffer_pos++] = Q + 33; // TODO: check if we need to convert to char
-            //fputc(Q+33, stdout);
-            if (buffer_pos >= BUFFER_SIZE - 1) {
-                fwrite(output_buffer, 1, buffer_pos, stdout);
-                buffer_pos = 0;
-            }
+            fputc(Q+33, stdout);
         }
-        output_buffer[buffer_pos++] = Q + 32;
-        output_buffer[buffer_pos++] = '\n';
-        //fputc(Q+32, stdout);
-        //fprintf(stdout, "\n");
-    }
-
-    // Write any remaining data in the buffer
-    if (buffer_pos > 0) {
-        fwrite(output_buffer, 1, buffer_pos, stdout);
+        fputc(Q+32, stdout);
+        fprintf(stdout, "\n");
     }
 }
 
 
 void output_read(int *tmp_seq[2], int *tmp_context[2], int *tmp_pos[2], int flag_mut, uint32_t ii, char *chr_id, int strand,
                  uint32_t *posidx_arr, uint32_t *kmeridx_arr,
-                 int (&size)[2], int (&start)[2], int (&end)[2], int (&n_sub)[2], int (&n_indel)[2], int (&n_err)[2], int (&cover_pos)[2]){
+                 int (&size)[2], int (&start)[2], int (&end)[2], int (&n_sub)[2], int (&n_indel)[2], int (&n_err)[2], int (&cover_pos)[2])
+{
     int j, k, idx;
     int pos, pos_prev;
     float kmer_meth;
     snpmeth_rec tmp_snpmeth;
 
     for (j = 0; j < 2; ++j) {
-        // header: ID is 1-based coordinates
-        fprintf(stderr, "@%s:%d:%d:%llx %d %d %d ", chr_id, start[0]+1, end[1]+1, (long long)ii, j, flag_mut, strand);
+        // header: ID is 1-based coordinate
+        fprintf(stdout, "@%s:%d:%d:%llx %d %d %d ", chr_id, start[0]+1, end[1]+1, (long long)ii, j, flag_mut, strand);
         
         // print meth+kmer
         for (k = 0; k < size[j]; ++k) {
@@ -193,6 +168,7 @@ void output_read(int *tmp_seq[2], int *tmp_context[2], int *tmp_pos[2], int flag
                 tmp_context[j][k] |= meth_vec[idx].context[flag_mut];
             }
             fprintf(stdout, "%.4f,", kmer_meth);
+            pos_prev = pos;
         }
         fprintf(stdout, "\n");
         // sequence (no sequencing error, represented by 0-4)
@@ -318,25 +294,25 @@ void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char
             if(meth_set->methdb_save){save_methdb(meth_vec, methdb_file);}
         }
 
-        // TODELETE: print methdb to stderr
-        for (const auto& pair : snpmeth_map) {
-            fprintf(stderr, "%d:", pair.first);
-            for (const auto& element : pair.second.meth) {
-                fprintf(stderr, "%f,", element);
-            }
-            fprintf(stderr, ":");
-            for (const auto& element : pair.second.context) {
-                fprintf(stderr, "%d,", element);
-            }
-            fprintf(stderr, ":");
-            for (const auto& element : pair.second.kmeridx) {
-                fprintf(stderr, "%d,", element);
-            }
-            fprintf(stderr, "\n");
-        }
+        // // 4DEBUG: print methdb to stderr
+        // for (const auto& pair : snpmeth_map) {
+        //     fprintf(stderr, "%d:", pair.first);
+        //     for (const auto& element : pair.second.meth) {
+        //         fprintf(stderr, "%f,", element);
+        //     }
+        //     fprintf(stderr, ":");
+        //     for (const auto& element : pair.second.context) {
+        //         fprintf(stderr, "%d,", element);
+        //     }
+        //     fprintf(stderr, ":");
+        //     for (const auto& element : pair.second.kmeridx) {
+        //         fprintf(stderr, "%d,", element);
+        //     }
+        //     fprintf(stderr, "\n");
+        // }
 
         // initialize distributions to generate read positions
-        uint32_t unif_begin = 2, unif_end = ks->seq.l-expt_set->max_insert-2;       // ensure read doesn't pass boundary with 2 base offset, TOCHECK: if needed
+        uint32_t unif_begin = 2, unif_end = ks->seq.l-expt_set->max_insert-2;       // ensure NOT to pass boundary with offset 2, TODO: check if needed
         std::vector<float> weights;
 
         if(expt_set->tech_mode){
@@ -366,14 +342,15 @@ void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char
             for(int idx=0; idx < chunk_size && ii < n_pairs; ++idx){
                 ++ii;
                 tmp_frag= frag_vec[idx];
-                target  =  rseq[tmp_frag.haplo].s; // haplotype from which the reads are generated
+                target  =  rseq[tmp_frag.haplo].s;  // haplotype from which the reads are generated
 
                 //cover_pos hold if the read covers a snp *position* (the read don't necessary contain the ALT allele)
                 //i holds cursor on genome, j holds read1/read2, k holds the length of read, ix holds the cursor that transverses the read
                 int i, j, k, ix, num_ins, ins, shift_pos;
                 int start[2] = {tmp_frag.pos_l, tmp_frag.pos_l};
                 int end[2]   = {tmp_frag.pos_r, tmp_frag.pos_r};
-                int offset[2]= {0, 0}, ext_coor[2] = {-10, -10}; // the coordinate of the first base of the read
+                // int offset[2]= {0, 0};
+                int ext_coor[2] = {-10, -10};       // the coordinate of the first base of the read
                 int n_sub[2] = {0,0}, n_indel[2] = {0,0}, n_err[2] = {0,0}, cover_pos[2] = {0,0};
 
                 // reset
@@ -399,7 +376,7 @@ void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char
                             ext_coor[x] = i;                                    \
                         }                                                       \
                         if (mut_type == DELETE){                                \
-                            ++offset[x];                                        \
+                            /*++offset[x];*/                                    \
                             ++end[x];                                           \
                             ++n_indel[x];                                       \
                         }                                                       \
@@ -424,7 +401,7 @@ void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char
                             ++end[x];                                           \
                             ++k;                                                \
                             for (num_ins = mut_type>>12, ins = c>>4; num_ins > 0 && k < size[x]; --num_ins, ins >>= 2){ \
-                                --offset[x];                                    \
+                                /*--offset[x];*/                                \
                                 tmp_seq[x][k] = ins & 0x3;                      \
                                 tmp_pos[x][k] = i;                              \
                                 /*tmp_offset[x][k] = offset[x];*/               \
@@ -449,7 +426,7 @@ void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char
                             ext_coor[x] = i;                                    \
                         }                                                       \
                         if (mut_type == DELETE){                                \
-                            --offset[x];                                        \
+                            /*--offset[x];*/                                    \
                             --start[x];                                         \
                             ++n_indel[x];                                       \
                         }                                                       \
@@ -474,7 +451,7 @@ void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char
                             --start[x];                                         \
                             --k;                                                \
                             for (num_ins = mut_type>>12, ins = c>>4; num_ins > 0 && k >=0; --num_ins, ins >>= 2){ \
-                                ++offset[x];                                    \
+                                /*++offset[x];*/                                \
                                 tmp_seq[x][k] = ins & 0x3;                      \
                                 tmp_pos[x][k] = i;                              \
                                 /*tmp_offset[x][k] = offset[x];*/               \
@@ -516,11 +493,13 @@ void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char
 
                 // print reads to stdout: mode 0 print string (WGS), else print chars&numbers (WGBS)
                 if(expt_set->output_fmt == 0){
-
+                    output_read(tmp_seq, tmp_context, err_thre, flag_mut, ii, ks->name.s, half_size, Q,
+                                size, start, end, n_sub, n_indel, n_err, cover_pos);
                 } else {
                     // if(!flag_indel){continue;} // for bug testing
+                    output_read(tmp_seq, tmp_context, tmp_pos, flag_mut, ii, ks->name.s, tmp_frag.strand, posidx_arr, kmeridx_arr,
+                                size, start, end, n_sub, n_indel, n_err, cover_pos);
                 }
-
                 tot_sub   += (int)(n_sub[0]  + n_sub[1] > 0);
                 tot_indel += (int)(n_indel[0]+ n_indel[1] > 0);
                 tot_err   += (int)(n_err[0]  + n_err[1] > 0);
