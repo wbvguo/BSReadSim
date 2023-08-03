@@ -20,8 +20,8 @@ std::vector<frag_rrbs_rec> frag_rrbs_vec;
 
 void parse_cut_site(char *cut_str, std::vector<cut_rec>& cut_vec)
 {
-    // check if cut_str is valid (seprate by ',' and '_' intercjangeably, 
-    // never __ without comma in between nor ,, without _ in between)
+    // check if cut_str is valid (seprate by ',' and '_' intercjangeably, no consercutive ',' or '_')
+    // space will be skipped
     bool vline_flag = false;
     bool comma_flag = false;
 
@@ -241,7 +241,7 @@ void output_rrcut_bed(const char *fname, const char *chr_id, std::vector<frag_rr
 static int simu_usage()
 {
     fprintf(stderr, "\n");
-    fprintf(stderr, "rrcut (a module in htsim) for Reduced Representative fragment generation)\n");
+    fprintf(stderr, "rrcut (a module in htsim) for Reduced Representative fragment generation\n");
     fprintf(stderr, "Version: %s\n", PACKAGE_VERSION);
     fprintf(stderr, "Contact: Wenbin Guo <wbguo@ucla.edu>; \n\n");
     fprintf(stderr, "Usage:   rrcut [options] <ref.fa> \n\n");

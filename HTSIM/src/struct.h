@@ -31,6 +31,7 @@ extern const int BIN_SIZE;
 extern const int TECH_MODE;
 extern const int OUTPUT_FMT;
 extern const int CHUNK_SIZE;
+extern const int BUFFER_SIZE;
 
 // if the leftmost 4 bit is non-zero, then it must be snp or indel
 enum muttype_t {NOCHANGE = 0, INSERT = 0x1000, SUBSTITUTE = 0xe000, DELETE = 0xf000};
@@ -47,10 +48,11 @@ typedef struct {
 
 typedef struct {
     uint16_t ref, alt; //alt have insert length
+    uint16_t pos;
+    uint8_t geno, type;//nonzero for insertion
+    std::vector<float> meth;
     std::vector<uint16_t> kmeridx;
     std::vector<uint8_t> context;
-    std::vector<float> meth;
-    uint8_t geno;
 } snpmeth_rec;
 
 
