@@ -48,6 +48,7 @@ typedef struct {
 
 typedef struct {
     uint16_t ref, alt; //alt have insert length
+    uint16_t pos;
     uint8_t geno, type;//nonzero for insertion
     std::vector<float> meth;
     std::vector<uint16_t> kmeridx;
