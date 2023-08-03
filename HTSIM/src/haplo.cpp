@@ -28,8 +28,8 @@ void parse_vcf_chr(char *fname, char *chr_id, std::vector<snp_rec>& snp_vec)
     bool collect_previous= false;
 
     //check the vcf file
-    int nsmpl = bcf_hdr_nsamples(hdr); // number of sample
-    if (nsmpl != 1) {
+    int n_samp = bcf_hdr_nsamples(hdr); // number of sample
+    if (n_samp != 1) {
         fprintf(stderr, "[%s] ERROR: Currently only support single-sample simulation, please check the vcf file! Exiting...\n", __func__);
         exit(EXIT_FAILURE);
     }
@@ -52,20 +52,19 @@ void parse_vcf_chr(char *fname, char *chr_id, std::vector<snp_rec>& snp_vec)
             continue;
         } else {
             collect_present = true;
-            std::string ref = rec->d.allele[0];
-            std::string alt = rec->d.allele[1];
+            std::string ref_str = rec->d.allele[0];
+            std::string alt_str = rec->d.allele[1];
             int snp_pos = rec->pos; //it's 0-based coordinates
-            int base_change_pos = snp_pos;
-
-            int ref_len = ref.length();
-            int alt_len = alt.length();
+            int ref_len = ref_str.length();
+            int alt_len = alt_str.length();
             int base_offset = alt_len - ref_len;
+            int base_change_pos = snp_pos;
 
             // check genotype
             ngt = bcf_get_genotypes(hdr,rec,&gt,&ngt_arr); //The total number of array elements in &gt
             int snp_hap1 = bcf_gt_allele(gt[0]);
             int snp_hap2 = bcf_gt_allele(gt[1]);
-            int is_phased = bcf_gt_is_phased(gt[1]); //phased:1, unphased:0
+            int is_phased= bcf_gt_is_phased(gt[1]); //phased:1, unphased:0
 
             //skip the following records: 
             // 1. insert/delete offset greater than 4
@@ -77,7 +76,7 @@ void parse_vcf_chr(char *fname, char *chr_id, std::vector<snp_rec>& snp_vec)
             // 1. contains Ns;
             // 2. missing snps?
             if (abs(base_offset) > 4 || ngt > 2 || prev_pos==snp_pos) {
-                fprintf(stderr, "[%s] Skip unusual SNP/INDEL [length/ploidy/pos]: CHROM:%s; POS:%d; REF:%s; ALT:%s\n", __func__, chr_id, snp_pos, ref.c_str(), alt.c_str());
+                fprintf(stderr, "[%s] Skip unusual SNP/INDEL [length/ploidy/pos]: CHROM:%s; POS:%d; REF:%s; ALT:%s\n", __func__, chr_id, snp_pos, ref_str.c_str(), alt_str.c_str());
                 continue;
             }
             if (snp_hap1 < 0 || snp_hap2 < 0 || snp_hap1 > 1 || snp_hap2 > 1) {
@@ -88,31 +87,31 @@ void parse_vcf_chr(char *fname, char *chr_id, std::vector<snp_rec>& snp_vec)
 
             //pack info: encode SNP info into int
             int ref_int, alt_int, c = 0;
-            if (alt_len == 1 && ref_len == 1){ //substitution
-                ref_int = (mut_t)nst_nt4_table[(int)ref[0]];
-                alt_int = (mut_t)nst_nt4_table[(int)alt[0]];
+            if (alt_len == 1 && ref_len == 1){          //substitution
+                ref_int = (mut_t)nst_nt4_table[(int)ref_str[0]];
+                alt_int = (mut_t)nst_nt4_table[(int)alt_str[0]];
             } else {
-                if ( ref[0] != alt[0] ) { //check if the first base are the same if it's indel, if not skip
-                    fprintf(stderr, "[%s] Skip unusual SNP/INDEL [indel & ref]: CHROM:%s; POS:%d; REF:%s; ALT %s\n", __func__, chr_id, snp_pos, ref.c_str(), alt.c_str());
+                if (ref_str[0] != alt_str[0]) {         //check if the first base are the same if it's indel, if not skip
+                    fprintf(stderr, "[%s] Skip unusual SNP/INDEL [indel & ref]: CHROM:%s; POS:%d; REF:%s; ALT %s\n", __func__, chr_id, snp_pos, ref_str.c_str(), alt_str.c_str());
                     continue;
                 }
 
-                if (alt_len > 1 && ref_len == 1) { //insertion
-                    ref_int = (mut_t)nst_nt4_table[(int)ref[0]];
-                    base_change_pos = snp_pos + 1; // position +1, because the base change occurs after the first base
-                    for (int i = 0; i < alt_len; ++i ){ 
-                        c = (mut_t)nst_nt4_table[(int)alt[i]];
+                if (alt_len > 1 && ref_len == 1) {      //insertion
+                    ref_int = (mut_t)nst_nt4_table[(int)ref_str[0]];
+                    base_change_pos = snp_pos + 1;                  // position +1, because the base change occurs after the first base
+                    for (int i = alt_len-1; i >0; --i){             // index 0 has the same base as ref, the lower bit, the closer to ref
+                        c = (mut_t)nst_nt4_table[(int)alt_str[i]];
                         alt_int = (alt_int << 2) | c;
                     }
                 } else if (ref_len > 1 && alt_len == 1){ //deletion
-                    alt_int = (mut_t)nst_nt4_table[(int)alt[0]];
-                    base_change_pos = snp_pos + 1; // position +1, because the base change occurs after the first base
-                    for (int i = 0; i < ref_len; ++i ){ 
-                        c = (mut_t)nst_nt4_table[(int)ref[i]];
+                    alt_int = (mut_t)nst_nt4_table[(int)alt_str[0]];
+                    base_change_pos = snp_pos + 1;                  // position +1, because the base change occurs after the first base
+                    for (int i = ref_len-1; i >0; --i ){            // no use later
+                        c = (mut_t)nst_nt4_table[(int)ref_str[i]];
                         ref_int = (ref_int << 2) | c;
                     }
                 } else { // might be MNP, or sth else
-                    fprintf(stderr, "[%s] Skip unusual SNP/INDEL [MNP]: CHROM:%s; POS:%d; REF:%s; ALT %s\n", __func__, chr_id, snp_pos, ref.c_str(), alt.c_str());
+                    fprintf(stderr, "[%s] Skip unusual SNP/INDEL [MNP]: CHROM:%s; POS:%d; REF:%s; ALT %s\n", __func__, chr_id, snp_pos, ref_str.c_str(), alt_str.c_str());
                     continue;
                 }
             }
@@ -150,9 +149,8 @@ void sim_mut_vcf(const kseq_t *ks, char * vcf_file, mutseq_t *hap1, mutseq_t *ha
     parse_vcf_chr(vcf_file, ks->name.s, snp_vec);
 
     int vec_ptr = 0;
-    int i, deleting = 0;
-    int deletion_count = 0;
-    int c;
+    int i, c, tmp_hap;
+    int deleting = 0, deletion_count = 0;
 
     for (i = 0; i != (int) ks->seq.l; ++i){
         c = ret[0]->s[i] = ret[1]->s[i] = (mut_t)nst_nt4_table[(int)ks->seq.s[i]];
@@ -171,59 +169,33 @@ void sim_mut_vcf(const kseq_t *ks, char * vcf_file, mutseq_t *hap1, mutseq_t *ha
 
         if(vec_ptr < (int) snp_vec.size() && i == snp_vec[vec_ptr].pos && c < 4){
             int geno_int = snp_vec[vec_ptr].geno;
-            int is_phased= geno_int & 0x000f;
+            int alt_int  = snp_vec[vec_ptr].alt;
+            int is_phased= (geno_int & 0x000f);
             int snp_hap1 = (geno_int & 0x003f) >> 4;
             int snp_hap2 = (geno_int & 0x00ff) >> 6;
             int ref_len  = (geno_int & 0x0fff) >> 8;
-            int base_offset = geno_int >> 12;
+            int base_offset= geno_int >> 12;
             posidx_arr[i] |= 1;
             //fprintf(stderr, "%d,%d,%d,%d,%d,%d\n", i, is_pahsed,snp_hap1, snp_hap2, ref_len, base_offset);
 
             if (!is_phased){ // for unphased genotype, randomly swap the haplotype
-                if(drand48() < 0.5){
-                    int tmp_hap = snp_hap1;
-                    snp_hap1 = snp_hap2;
-                    snp_hap2 = tmp_hap;
-                }
+                if(drand48() < 0.5){int tmp_hap = snp_hap1; snp_hap1 = snp_hap2; snp_hap2 = tmp_hap;}
             }
 
             if(base_offset == 0 && ref_len == 1){ // SNP substitution
-                c = snp_vec[vec_ptr].alt;
-
-                if (snp_hap1 == 1 && snp_hap2 == 1){
-                    ret[0]->s[i] = ret[1]->s[i] = SUBSTITUTE|c;
-                } else if (snp_hap1 == 1 && snp_hap2 == 0){
-                    ret[0]->s[i] = SUBSTITUTE|c;
-                } else if (snp_hap1 == 0 && snp_hap2 == 1){
-                    ret[1]->s[i] = SUBSTITUTE|c;
-                } else{continue;}
+                if (snp_hap1 == 1){ret[0]->s[i] = SUBSTITUTE|alt_int;}
+                if (snp_hap2 == 1){ret[1]->s[i] = SUBSTITUTE|alt_int;}
             } else if (base_offset < 0 ) { // deletion
-                c = snp_vec[vec_ptr].ref;
                 deletion_count = abs(base_offset) - 1; //minus one because here already delete one base
-
-                if (snp_hap1 == 1 && snp_hap2 == 1){
-                    ret[0]->s[i] = ret[1]->s[i] =  DELETE | c;
-                    deleting = 3;
-                } else if (snp_hap1 == 1 && snp_hap2 == 0){
-                    ret[0]->s[i] =  DELETE | c;
-                    deleting = 1;
-                } else if (snp_hap1 == 0 && snp_hap2 == 1){
-                    ret[1]->s[i] =  DELETE | c;
-                    deleting = 2;
-                } else{continue;}
+                if (snp_hap1 == 1){ret[0]->s[i] |= DELETE; deleting+=1;}
+                if (snp_hap2 == 1){ret[1]->s[i] |= DELETE; deleting+=2;}
             } else if (base_offset > 0){ // inserstion
                 int num_ins = base_offset;
                 int ins_msk = (1 << (num_ins*2)) - 1;
                 int ins = snp_vec[vec_ptr].alt & ins_msk;
                 //fprintf(stderr, "%d,%d,%d,%d\n", num_ins, ins_msk, alt_vec[vec_ptr], ins);
-
-                if (snp_hap1 == 1 && snp_hap2 == 1){
-                    ret[0]->s[i] = ret[1]->s[i] = (num_ins << 12) | (ins << 4) | c;
-                } else if (snp_hap1 == 1 && snp_hap2 == 0){
-                    ret[0]->s[i] = (num_ins << 12) | (ins << 4) | c;
-                } else if (snp_hap1 == 0 && snp_hap2 == 1){
-                    ret[1]->s[i] = (num_ins << 12) | (ins << 4) | c;
-                } else{continue;}
+                if (snp_hap1 == 1){ret[0]->s[i] |= (num_ins << 12) | (ins << 4);}
+                if (snp_hap2 == 1){ret[1]->s[i] |= (num_ins << 12) | (ins << 4);}
             }
             ++vec_ptr;
         }
@@ -232,7 +204,7 @@ void sim_mut_vcf(const kseq_t *ks, char * vcf_file, mutseq_t *hap1, mutseq_t *ha
 
 void sim_mut_diref(const kseq_t *ks, mut_param *mut_set, mutseq_t *hap1, mutseq_t *hap2, uint32_t *posidx_arr)
 {
-    int i, deleting = 0;
+    int i, c, deleting = 0;
     mutseq_t *ret[2];
     //drand48() is 8 times faster than uniform_distribution, use it exclusively for snp generation
 
@@ -242,7 +214,6 @@ void sim_mut_diref(const kseq_t *ks, mut_param *mut_set, mutseq_t *hap1, mutseq_
     ret[0]->s = (mut_t *)calloc(ks->seq.m, sizeof(mut_t));
     ret[1]->s = (mut_t *)calloc(ks->seq.m, sizeof(mut_t));
     for (i = 0; i != (int)ks->seq.l; ++i) {
-        int c;
         c = ret[0]->s[i] = ret[1]->s[i] = (mut_t)nst_nt4_table[(int)ks->seq.s[i]];
         if (cg_table[c]) {posidx_arr[i]= 2;}
         if (deleting) {
@@ -260,16 +231,16 @@ void sim_mut_diref(const kseq_t *ks, mut_param *mut_set, mutseq_t *hap1, mutseq_
                 if (mut_set->is_hap || drand48() < 0.333333) { // hom
                     ret[0]->s[i] = ret[1]->s[i] = SUBSTITUTE|c;
                 } else { // het
-                    ret[drand48()<0.5?0:1]->s[i] = SUBSTITUTE|c;
+                    ret[drand48()<0.5?0:1]->s[i]= SUBSTITUTE|c;
                 }
             } else { // indel
                 if (drand48() < 0.5) { // deletion
                     if (mut_set->is_hap || drand48() < 0.333333) { // hom-del
-                        ret[0]->s[i] = ret[1]->s[i] = DELETE | c;
+                        ret[0]->s[i] = ret[1]->s[i] |= DELETE;
                         deleting = 3;
                     } else { // het-del
                         deleting = drand48()<0.5?1:2;
-                        ret[deleting-1]->s[i] = DELETE | c;
+                        ret[deleting-1]->s[i] |= DELETE;
                     }
                 } else { // insertion
                     int num_ins = 0, ins = 0;
@@ -279,9 +250,9 @@ void sim_mut_diref(const kseq_t *ks, mut_param *mut_set, mutseq_t *hap1, mutseq_
                     } while (num_ins < 4 && drand48() < mut_set->indel_extn);
 
                     if (mut_set->is_hap || drand48() < 0.333333) { // hom-ins
-                        ret[0]->s[i] = ret[1]->s[i] = (num_ins << 12) | (ins << 4) | c;
+                        ret[0]->s[i] = ret[1]->s[i] |= (num_ins << 12) | (ins << 4);
                     } else { // het-ins
-                        ret[drand48()<0.5?0:1]->s[i] = (num_ins << 12) | (ins << 4) | c;
+                        ret[drand48()<0.5?0:1]->s[i]|= (num_ins << 12) | (ins << 4);
                     }
                 }
             }

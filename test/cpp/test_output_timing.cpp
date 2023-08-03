@@ -13,15 +13,9 @@
 #include <map>
 #include <algorithm>
 #include <gsl/gsl_randist.h>
-#include "kseq.h"
-#include "vcf.h"
+#include <chrono>
 
-KSEQ_INIT(gzFile, gzread)
-#include "struct.h"
-#include "methdb.h"
-#include "mode.h"
-#include "haplo.h"
-#include "rrcut.h"
+#include "/home/wbguo/iproject/BSReadSim/HTSIM/src/struct.h"
 
 static uint8_t MATCH    = 0x00;
 static uint8_t SNV      = 0x10;
@@ -35,10 +29,7 @@ const  uint8_t mut_table[16] = {
     3, 3, 3, 3
 }; // MXIE
 
-
-float err_rate = 0.005;
-
-
+const int BUFFER_SIZE = 8192;
 
 void output_read(int* tmp_seq[2], int* tmp_context[2], int err_thre, int flag_mut, uint32_t ii, char* chr_id, int half_size, int Q,
                  int(&size)[2], int(&start)[2], int(&end)[2], int(&n_sub)[2], int(&n_indel)[2], int(&n_err)[2], int(&cover_pos)[2])
@@ -71,7 +62,7 @@ void output_read(int* tmp_seq[2], int* tmp_context[2], int err_thre, int flag_mu
         int jj = j ^ is_flip;
 
         // Header: 1-based coordinates in the readID
-        buffer_pos += snprintf(output_buffer + buffer_pos, BUFFER_SIZE - buffer_pos, "@%s:%d:%d:%llx:%d:%d/%d\n",
+        buffer_pos += snprintf(output_buffer + buffer_pos, BUFFER_SIZE - buffer_pos, "@%s:%d:%d:%llx:%d/%d\n",
                                chr_id, start[0]+1, end[1]+1, (long long)ii, flag_mut, j+1);
         //fprintf(stdout, "@%s:%d:%d:%llx:%d:%d/%d\n", chr_id, start[0]+1, end[1]+1, (long long)ii, flag_mut, j+1);
 
@@ -156,7 +147,7 @@ void output_read2(int* tmp_seq[2], int* tmp_context[2], int err_thre, int flag_m
         int jj = j ^ is_flip;
 
         // Header: 1-based coordinates in the readID
-        fprintf(stdout, "@%s:%d:%d:%llx:%d:%d/%d\n", chr_id, start[0]+1, end[1]+1, (long long)ii, flag_mut, j+1);
+        fprintf(stdout, "@%s:%d:%d:%llx:%d/%d\n", chr_id, start[0]+1, end[1]+1, (long long)ii, flag_mut, j+1);
 
         // Sequence (introduce random sequencing error)
         for (k = 0; k < size[jj]; ++k) {
@@ -191,6 +182,61 @@ void output_read2(int* tmp_seq[2], int* tmp_context[2], int err_thre, int flag_m
 }
 
 int main(){
+    // strange error with int8_t or uint8_t, offset messed up
+    int *tmp_seq[2];    	// sequence
+    int *tmp_pos[2];    	// position 
+    // int *tmp_offset[2]; 	// offset per base 4DEBUG
+    int *tmp_context[2];	// cytosine context (CG/CHG/CHH) & mutation (upper half mutation, lower half sequence)
+    int size[2], max_length, tmparr_size, err_thre;
 
+    max_length = 100;
+    tmparr_size= max_length*4;
+    tmp_seq[0] = (int*)calloc(max_length, 4);           // sizeof(uint8_t)=1, sizeof(int)=4
+    tmp_seq[1] = (int*)calloc(max_length, 4);
+    tmp_pos[0] = (int*)calloc(max_length, 4);         
+    tmp_pos[1] = (int*)calloc(max_length, 4);
+    // tmp_offset[0]= (int*)calloc(max_length, 4);         // 4DEBUG
+    // tmp_offset[1]= (int*)calloc(max_length, 4);
+    tmp_context[0] = (int*)calloc(max_length, 4);
+    tmp_context[1] = (int*)calloc(max_length, 4);
+    size[0] = 100; size[1] = 100;
+    err_thre  = (int) RAND_MAX * 0.001;
+
+    for(int j=0; j < 2; ++j){
+        for(int i=0; i < size[j]; ++i){
+            tmp_seq[j][i] = rand() & 3;
+            tmp_pos[j][i] = i;
+            tmp_context[j][i] = 0;
+        }
+    }
+    int flag_mut = 1;
+    uint32_t ii = 0;
+    char* chr_id = "chr1";
+    int half_size = 10;
+    int Q = 20;
+    int start[2] = {0, 5};
+    int end[2] = {9, 19};
+    int n_sub[2] = {2, 3};
+    int n_indel[2] = {1, 2};
+    int n_err[2] = {3, 4};
+    int cover_pos[2] = {8, 18};
+
+    auto start_time = std::chrono::high_resolution_clock::now();
+    for(int i=0; i < 1000000; ++i){
+        output_read(tmp_seq, tmp_context, err_thre, flag_mut, ii, chr_id, half_size, Q, size, start, end, n_sub, n_indel, n_err, cover_pos);
+    }
+    auto end_time = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+    fprintf(stderr, "output_read: %ld us\n", duration.count());
+
+    start_time = std::chrono::high_resolution_clock::now();
+    for(int i=0; i < 1000000; ++i){
+        output_read2(tmp_seq, tmp_context, err_thre, flag_mut, ii, chr_id, half_size, Q, size, start, end, n_sub, n_indel, n_err, cover_pos);
+    }
+    end_time = std::chrono::high_resolution_clock::now();
+    duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+    fprintf(stderr, "output_read2: %ld us\n", duration.count());
+
+    return 0;
 }
 

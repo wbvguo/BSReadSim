@@ -35,7 +35,6 @@ mars_cv_ident_rds = "~/iproject/BSReadSim/test/data/RRBS/spline_cv_ident.rds"
 mars_cv_logit_rds = "~/iproject/BSReadSim/test/data/RRBS/spline_cv_logit.rds"
 
 
-
 frag_cut_df = read.table(frag_cut_file, sep = ",", header = TRUE) %>% 
   dplyr::mutate(logit_prob = log(relative_depth/(1-relative_depth)))
 
@@ -59,6 +58,15 @@ lm_logit = lm(logit_prob ~., data = data_logit)
 summary(lm_ident)
 cat(paste0(paste(rep('-', 75), collapse = ""), "\n"))
 summary(lm_logit)
+```
+
+
+# beta regression
+```{r}
+library(betareg)
+br = betareg(relative_depth ~., data_ident)
+# cannot summary, #Error: cannot allocate vector of size 590.3 Gb
+cor(br$fitted.values, br$model$relative_depth)^2
 ```
 
 
@@ -161,8 +169,7 @@ model <- mgcv::bam(logit_prob ~ ns(length, df=3) + ns(CCGG, df=3) + ns(gc_ratio,
 model <- mgcv::bam(relative_depth ~ ns(length, df=10) + ns(CCGG, df=10) + ns(gc_ratio, df=10), 
                    method = "fREML", data = data_ident, family = binomial(link = "probit"))
 model <- mgcv::bam(relative_depth ~ ns(length, df=20) + ns(CCGG, df=20) + ns(gc_ratio, df=20), 
-                   method = "fREML", data = data_ident, family = betar(link = "probit"))
-
+                   method = "fREML", data = data_ident, family = betar)
 ```
 
 
@@ -192,6 +199,15 @@ ggplot(pred_df_logit, mapping = aes(x = fitted, y = real)) +
 
 
 ```{r}
-smoothScatter(pred_df_ident$real, pred_df_ident$fitted)
+smoothScatter(lm_ident$model$relative_depth, lm_ident$fitted.values, main = "linear regression",
+              xlab = "relative depth", ylab = "predicted depth", xlim = c(0,1), ylim = c(0,1))
+smoothScatter(sigmoid(lm_logit$model$logit_prob), sigmoid(lm_logit$fitted.values), main = "linear regression (logit transformation)",
+              xlab = "relative depth", ylab = "predicted depth", xlim = c(0,1), ylim = c(0,1))
+smoothScatter(br$model$relative_depth, br$fitted.values, main = "beta regression",
+              xlab = "relative depth", ylab = "predicted depth", xlim = c(0,1), ylim = c(0,1))
+smoothScatter(model$model$relative_depth, model$fitted.values, main = "GAM",
+              xlab = "relative depth", ylab = "predicted depth", xlim = c(0,1), ylim = c(0,1))
+smoothScatter(sigmoid(mars_cv_logit$trainingData$.outcome), sigmoid(mars_cv_logit$finalModel$fitted.values), main = "Multivariate spline",
+              xlab = "relative depth", ylab = "predicted depth", xlim = c(0,1), ylim = c(0,1))
 ```
 
