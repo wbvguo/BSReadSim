@@ -9,7 +9,6 @@
 #include "vcf.h"
 #include "struct.h"
 
-
 KSEQ_INIT(gzFile, gzread)
 #include "mode.h"
 
@@ -28,7 +27,7 @@ std::uniform_real_distribution<float> dis_ru(0.0,1.0);
 
 
 // for BED
-int parse_bed_line(char *line, char *chr_id, frag_rec *tmp_probe, int ncol_coll, int ncol_skip)
+int parse_bed_line(char *line, char *chr_id, int ncol_coll, int ncol_skip, frag_rec *tmp_probe)
 {
 	char *p, *q, *contig, *name = 0;
     int i, start, end, strand, cut_l, cut_r;
@@ -48,14 +47,14 @@ int parse_bed_line(char *line, char *chr_id, frag_rec *tmp_probe, int ncol_coll,
             case 6: cut_l  = atoi(p); break;
             case 7: cut_r  = atoi(p); break;
             default: break;}
-            if(i==0 && strcmp(contig, chr_id)){return 1;} // termenate early if not equal
+            if(i==0 && strcmp(contig, chr_id)){return -1;} // termenate early if not equal
 			++i, p = q + 1;
 			if (i > ncol_coll || c == '\0') break;
 		}
 	}
 
-    if(i < ncol_skip){fprintf(stderr, "[%s] Skip invalid probe: chr %s, name %s...\n", __func__, chr_id, name); return 0;}
-    if(end <= start){fprintf(stderr, "[%s] Skip invalid probe (coordinate conflict): chr %s, name %s...\n", __func__, chr_id, name); return 0;}
+    if(i < ncol_skip){fprintf(stderr, "[%s] Skip invalid probe: chr %s, name %s...\n", __func__, chr_id, name); free(name); return 0;}
+    if(end <= start){fprintf(stderr, "[%s] Skip invalid probe (coordinate conflict): chr %s, name %s...\n", __func__, chr_id, name); free(name); return 0;}
 
 	tmp_probe->pos_l = start;
 	tmp_probe->pos_r = end;
@@ -64,38 +63,37 @@ int parse_bed_line(char *line, char *chr_id, frag_rec *tmp_probe, int ncol_coll,
     tmp_probe->cut_l = (int8_t) cut_l;
     tmp_probe->cut_r = (int8_t) cut_r;
 
+    free(name);
     return 0;
 }
 
-void parse_bed_chr(char *fname, char *chr_id, std::vector<frag_rec>& probe_vec, int tech_mode)
+void parse_bed_chr(char *fname, char *chr_id, int tech_mode, std::vector<frag_rec>& probe_vec)
 {
     probe_vec.clear();  // clean the container
 
     htsFile *fp = hts_open(fname,"rb");
-    if(fp == 0 ){ fprintf(stderr,"[%s] ERROR: open bed file: %s failed: %s. Exit...\n", __func__, fname, strerror (errno)); exit (EXIT_FAILURE);}
+    if(fp == 0){fprintf(stderr, "[%s] ERROR: open bed file: %s failed: %s. Exit...\n", __func__, fname, strerror(errno)); exit(EXIT_FAILURE);}
 
     kstring_t line = {0,0,0};
     frag_rec tmp_probe;
 
-    int ret;
-    char *chr_current;
+    int ret, ncol_coll, ncol_skip;
     bool collect_present = false;
     bool collect_previous= false;
-    int ncol_coll, ncol_skip;
     if(tech_mode==1){ncol_coll=8; ncol_skip=8;}else{ncol_coll=6; ncol_skip=4;}
 
     while ((ret = hts_getline(fp, KS_SEP_LINE, &line)) >= 0) {
-        if (collect_present == false && collect_previous == true) { break; } // finished collecting
+        if (!collect_present && collect_previous) { break; } // finished collecting
         // a new round, save last status
-        collect_previous= collect_present;
-        int skip_status = parse_bed_line(line.s, chr_id, &tmp_probe, ncol_coll, ncol_skip); 
-        if(skip_status){collect_present = false; continue;}
+        collect_previous = collect_present;
+        int skip_status  = parse_bed_line(line.s, chr_id, ncol_coll, ncol_skip, &tmp_probe); 
+        if(skip_status<0){collect_present = false; continue;}
         probe_vec.push_back(tmp_probe);
-        tmp_probe      = {};
+        tmp_probe = {};
     }
-    free(line.s);
 
-    if (ret=hts_close(fp)){fprintf(stderr,"[%s] ERROR: hts_close(%s): non-zero status %d\n", __func__, fname, ret); exit(ret);}
+    free(line.s);
+    if (ret=hts_close(fp)){fprintf(stderr, "[%s] ERROR: hts_close(%s): non-zero status %d\n", __func__, fname, ret); exit(ret);}
 }
 
 
@@ -105,7 +103,7 @@ void parse_bias_file(char *fname, std::vector<float>& eff_vec)
     FILE* fp = fopen(fname, "r");
     float eff_prob;
 
-    if(fp==NULL){fprintf(stderr, "[%s] ERROR: open capture efficiency file: %s failed. Exit...\n", __func__, fname); exit (EXIT_FAILURE);}
+    if(fp==NULL){fprintf(stderr, "[%s] ERROR: open capture efficiency file: %s failed. Exit...\n", __func__, fname); exit(EXIT_FAILURE);}
     while(fscanf(fp, "%f", &eff_prob) == 1) { // this will skip the empty lines
         // printf("%f\n", eff_prob);
         eff_vec.push_back(eff_prob);
@@ -115,14 +113,14 @@ void parse_bias_file(char *fname, std::vector<float>& eff_vec)
 
 
 // for length calculation
-void collect_len_score_chr(const kseq_t *ks, chr_rec *tmp_len, char *bed_file, int tech_mode, std::vector<frag_rec>& probe_vec)
+void collect_len_score_chr(const kseq_t *ks, char *bed_file, int tech_mode, chr_rec *tmp_chr, std::vector<frag_rec>& probe_vec)
 {
     uint32_t eff_len= 0;
     float sum_score = 0;
     bool is_bed_set = strcmp(bed_file,"None") && strlen(bed_file);
 
     if(is_bed_set){                       // targeted sequencing or
-        parse_bed_chr(bed_file, ks->name.s, probe_vec, tech_mode);
+        parse_bed_chr(bed_file, ks->name.s, tech_mode, probe_vec);
         int len, pos_l, pos_r, pos_l_prev, pos_r_prev;
         float score = 0;
         for (size_t i = 0; i < probe_vec.size(); ++i){
@@ -144,55 +142,58 @@ void collect_len_score_chr(const kseq_t *ks, chr_rec *tmp_len, char *bed_file, i
         eff_len = ks->seq.l;
         sum_score = eff_len;
     }
-    tmp_len->chr_len = ks->seq.l;
-    tmp_len->eff_len = eff_len;
-    tmp_len->score   = sum_score;
+    tmp_chr->chr_len = ks->seq.l;
+    tmp_chr->eff_len = eff_len;
+    tmp_chr->score   = sum_score;
 }
 
 
 // for count calculation
-void cal_chr_count(const char *fn, char *chr_id, char *bed_file, uint64_t N, uint32_t chr_N, 
-                    expt_param *expt_set, std::vector<frag_rec>& probe_vec, std::map<std::string, chr_rec> &chr_count)
+void cal_chr_count(const char *fname, char *chr_id, char *bed_file, uint64_t N, uint32_t chr_N, expt_param *expt_set, 
+                   std::vector<frag_rec>& probe_vec, std::map<std::string, chr_rec> &chr_count)
 {
     kseq_t *ks;
     gzFile fp_fa;
-    fp_fa = gzopen(fn, "r");
+    fp_fa = gzopen(fname, "r");
     ks = kseq_init(fp_fa);
 
-    if (!fp_fa) { fprintf (stderr, "ERROR: gzopen of '%s' failed: %s. Exit...\n", fn, strerror (errno)); exit (EXIT_FAILURE);}
+    if (!fp_fa){fprintf(stderr, "ERROR: gzopen of '%s' failed: %s. Exit...\n", fname, strerror(errno)); exit(EXIT_FAILURE);}
     fprintf(stderr, "[%s] Calculating the length and count of the reference sequences...\n", __func__);
     
-    chr_rec tmp_len;
+    chr_rec tmp_chr;
     uint64_t tot_chr_len = 0, tot_eff_len = 0;
     float tot_score   = 0;
 
-    int l;
+    int l, min_chr_len;
+    min_chr_len = expt_set->mean_insert+3*expt_set->sd_insert;
     while ((l = kseq_read(ks)) >= 0) {
-        if (l < expt_set->mean_insert+3*expt_set->sd_insert){
-            fprintf(stderr, "[%s] skip contig '%s' as it is shorter than %d!\n", __func__, ks->name.s, expt_set->mean_insert+3*expt_set->sd_insert); 
+        if (l < min_chr_len){
+            fprintf(stderr, "[%s] skip contig '%s' as it is shorter than %d!\n", __func__, ks->name.s, min_chr_len); 
             continue;
         }
         
-        tmp_len = {};
-        collect_len_score_chr(ks, &tmp_len, bed_file, expt_set->tech_mode, probe_vec);
-        chr_count[std::string(ks->name.s)] = tmp_len;
-        tot_chr_len += tmp_len.chr_len;
-        tot_eff_len += tmp_len.eff_len;
-        tot_score   += tmp_len.score;
+        tmp_chr = {};
+        collect_len_score_chr(ks, bed_file, expt_set->tech_mode, &tmp_chr, probe_vec);
+        chr_count[std::string(ks->name.s)] = tmp_chr;
+        tot_chr_len += tmp_chr.chr_len;
+        tot_eff_len += tmp_chr.eff_len;
+        tot_score   += tmp_chr.score;
     }
     kseq_destroy(ks);
     gzclose(fp_fa);
 
 
     // check if fasta is empty
-    if (chr_count.empty()) {fprintf (stderr, "ERROR: Input fasta is empty: %s. Exit...\n", fn); exit (EXIT_FAILURE);}
+    if (chr_count.empty()){fprintf(stderr, "ERROR: Input fasta is empty: %s. Exit...\n", fname); exit(EXIT_FAILURE);}
 
 
     // check input chr_id, calculate the count for contig(s)
     if (expt_set->is_chr_set){
         // calculate the count for selected contig
         std::string chr_id_str = std::string(chr_id);
-        if (!chr_count.count(chr_id_str)){fprintf(stderr, "ERROR: Contig id '%s' is not found in the fasta file, please check!\n", chr_id); exit(EXIT_FAILURE);}
+        if (!chr_count.count(chr_id_str)){
+            fprintf(stderr, "ERROR: Contig id '%s' is not found in the fasta file, please check!\n", chr_id); exit(EXIT_FAILURE);
+        }
 
         uint32_t contig_eff_len = chr_count[chr_id_str].eff_len;
         uint32_t contig_len = chr_count[chr_id_str].chr_len;
@@ -202,7 +203,7 @@ void cal_chr_count(const char *fn, char *chr_id, char *bed_file, uint64_t N, uin
         chr_count[chr_id_str].count = chr_N;
     } else {
         // calculate the count for all contigs
-        if (chr_N > 0) {fprintf(stderr, "ERROR: -n is specified but not -c. Exit... (please note the difference of -n and -N)\n"); exit(EXIT_FAILURE);}
+        if (chr_N > 0){fprintf(stderr, "ERROR: -n is specified but not -c. Exit... (please note the difference of -n and -N)\n"); exit(EXIT_FAILURE);}
         
         int num_contigs = (int)chr_count.size();
         N = N == 0? (tot_eff_len * expt_set->depth)/(expt_set->size_l + expt_set->size_r) : N;
@@ -210,8 +211,8 @@ void cal_chr_count(const char *fn, char *chr_id, char *bed_file, uint64_t N, uin
         fprintf(stderr, "[%s] No contig id specified, will generate %lu reads from all contigs\n", __func__, N);
         
         uint64_t cum_count = 0, tmp_count =0;
-        for (auto it = chr_count.begin(); it != chr_count.end(); ++it) {
-            tmp_count = expt_set->tech_mode ==2 ? (uint64_t)(it->second.score * N / tot_score) : (uint64_t)(it->second.eff_len * N / tot_eff_len);
+        for (std::map<std::string, chr_rec>::iterator it = chr_count.begin(); it != chr_count.end(); ++it) {
+            tmp_count = expt_set->tech_mode==2 ? (uint64_t)(it->second.score * N / tot_score) : (uint64_t)(it->second.eff_len * N / tot_eff_len);
             it->second.count = tmp_count;
             cum_count += tmp_count;
         }
@@ -219,7 +220,8 @@ void cal_chr_count(const char *fn, char *chr_id, char *bed_file, uint64_t N, uin
         int rest_count = N - cum_count;
         if(rest_count < 0){fprintf(stderr, "[%s] Read count calculation went wrong\n", __func__); exit(EXIT_FAILURE);} // should never happen
         int step_size  = rest_count > num_contigs ? (int)(rest_count/num_contigs): 1; //hopefully rest_count is small, evenly distributed to contigs
-        auto it = chr_count.begin();
+        
+        std::map<std::string, chr_rec>::iterator it = chr_count.begin();
         while (rest_count > 0){ 
             int alloc_count  = std::min(step_size, rest_count);
             it->second.count+= alloc_count; 
@@ -231,8 +233,9 @@ void cal_chr_count(const char *fn, char *chr_id, char *bed_file, uint64_t N, uin
 
 
 // for fragment generation
-void gen_frag_vec(std::uniform_int_distribution<int> *dis_ud, std::discrete_distribution<int> *dis_dd, uint32_t *posidx_arr, int chr_len, int chunk_size,
-                    std::vector<frag_rec> &frag_vec, std::vector<frag_rec> &probe_vec, std::vector<float> &eff_vec, expt_param *expt_set)
+void gen_frag_vec(uint32_t *posidx_arr, int chr_len, int chunk_size, expt_param *expt_set,
+                  std::uniform_int_distribution<int> *dis_ud, std::discrete_distribution<int> *dis_dd, 
+                  std::vector<frag_rec> &frag_vec, std::vector<frag_rec> &probe_vec, std::vector<float> &eff_vec)
 {
     frag_rec tmp_frag;
     int pos_l, pos_r, insert_dev, insert_len, frag_idx, probe_center, frag_center, i;

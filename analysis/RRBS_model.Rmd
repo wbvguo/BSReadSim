@@ -7,39 +7,80 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+```
 
 
+# load
+## package
+```{r}
 # Helper packages
 library(dplyr)
 library(ggplot2)
+library(corrplot)
 
 # Modeling packages
 library(earth)
 library(caret)
+library(e1071)
 
 # Model interpretability packages
 library(vip)          # for variable importance
 library(pdp)          # for variable relationships
 library(ModelMetrics) # for access MSE, MAE
-
-bool_rerun = FALSE
 ```
 
 
-# read-in
+## path
 ```{r}
-frag_cut_file  = "~/iproject/BSReadSim/test/data/RRBS/frag_cut_df2.csv"
-mars_ident_rds = "~/iproject/BSReadSim/test/data/RRBS/spline_ident.rds"
-mars_logit_rds = "~/iproject/BSReadSim/test/data/RRBS/spline_logit.rds"
-mars_cv_ident_rds = "~/iproject/BSReadSim/test/data/RRBS/spline_cv_ident.rds"
-mars_cv_logit_rds = "~/iproject/BSReadSim/test/data/RRBS/spline_cv_logit.rds"
+working_path = "~/iproject/BSReadSim/"
+RRBS_path = paste0(working_path, "data/RRBS/")
+plot_path = paste0(working_path, "docs/plot/")
+
+frag_cut_file  = paste0(RRBS_path, "/frag_cut_df2.csv")
+
+# linear regression
+lm_ident_rds = paste0(RRBS_path, "/lm_ident.rds")
+lm_logit_rds = paste0(RRBS_path, "/lm_logit.rds")
+
+# beta regression
+beta_reg_rds = paste0(RRBS_path, "/beta_reg.rds")
+
+# spline
+mars_ident_rds = paste0(RRBS_path, "/spline_ident.rds")
+mars_logit_rds = paste0(RRBS_path, "/spline_logit.rds")
+mars_cv_ident_rds = paste0(RRBS_path, "/spline_cv_ident.rds")
+mars_cv_logit_rds = paste0(RRBS_path, "/spline_cv_logit.rds")
+
+# GAM
+gam3_rds  = paste0(RRBS_path, "/gam3.rds")
+gam10_rds = paste0(RRBS_path, "/gam10.rds")
+gam20_rds = paste0(RRBS_path, "/gam20.rds")
+
+# sampling 
+frag_cut_prob_bed = paste0(RRBS_path, "/frag_cut_prob.bed")
+
+source(paste0(working_path, "/analysis/function.R"))
+```
 
 
+```{r}
+scale_val = function(x, x_vec, scale){
+  x = ifelse(x < min(x_vec), min(x_vec), ifelse(x > max(x_vec), max(x_vec), x))
+  return((x-min(x_vec))/(max(x_vec)-min(x_vec))*scale)
+}
+```
+
+
+## read-in
+```{r}
 frag_cut_df = read.table(frag_cut_file, sep = ",", header = TRUE) %>% 
   dplyr::mutate(logit_prob = log(relative_depth/(1-relative_depth)))
 
 data_ident = frag_cut_df[c("length", "gc_ratio", "CCGG", "relative_depth")]
 data_logit = frag_cut_df[c("length", "gc_ratio", "CCGG", "logit_prob")]
+
+bool_rerun = FALSE
+bool_rerun_plot = TRUE
 ```
 
 ```{r}
@@ -47,11 +88,35 @@ head(frag_cut_df)
 ```
 
 
-
-# liner regression
+# correlaiton
 ```{r}
-lm_ident = lm(relative_depth ~., data = data_ident)
-lm_logit = lm(logit_prob ~., data = data_logit)
+scor_dat = data_ident
+colnames(scor_dat) = c("Length", "GC ratio", "#CCGG", "Depth")
+scor_mat = cor(scor_dat, method = "spearman")
+scor_sig = cor.mtest(scor_dat, method = "spearman")
+```
+
+```{r, fig.height=4, fig.width=6}
+par(mar = c(2, 2, 4, 2))
+corrplot(scor_mat, p.mat = scor_sig$p, 
+         method = 'circle', type = 'lower', insig='blank', sig.level = 0.05, tl.cex = 0.8,
+         addCoef.col ='black', number.cex = 0.8, diag=FALSE, tl.srt = 0, tl.offset = 1, tl.col = "black")
+```
+
+
+
+# modeling
+## liner regression
+```{r}
+if(bool_rerun){
+  lm_ident = lm(relative_depth ~., data = data_ident)
+  lm_logit = lm(logit_prob ~., data = data_logit)
+  saveRDS(lm_ident, lm_ident_rds)
+  saveRDS(lm_logit, lm_logit_rds)
+}else{
+  lm_ident = readRDS(lm_ident_rds)
+  lm_logit = readRDS(lm_logit_rds)
+}
 ```
 
 ```{r}
@@ -61,17 +126,24 @@ summary(lm_logit)
 ```
 
 
-# beta regression
+## beta regression
 ```{r}
-library(betareg)
-br = betareg(relative_depth ~., data_ident)
+if(bool_rerun){
+  library(betareg)
+  beta_reg = betareg(relative_depth ~., data_ident)
+  saveRDS(beta_reg, beta_reg_rds)
+}else{
+  beta_reg = readRDS(beta_reg_rds)
+}
+```
+
+```{r}
 # cannot summary, #Error: cannot allocate vector of size 590.3 Gb
-cor(br$fitted.values, br$model$relative_depth)^2
+cor(beta_reg$fitted.values, beta_reg$model$relative_depth)^2
 ```
 
 
-
-# spline fit
+## spline fit
 on original relative_depth or logit transformed
 ```{r}
 if(bool_rerun){
@@ -100,7 +172,7 @@ plot(mars_logit, which = 1)
 ```
 
 
-# spline cross-validation
+## spline cross-validation
 cross validation to select the best model
 ```{r}
 hyper_grid <- expand.grid(
@@ -159,23 +231,32 @@ summary(mars_cv_logit)
 ```
 
 
-# GAM
+## GAM
 ```{r}
 library(mgcv)
 library(splines)
 
-model <- mgcv::bam(logit_prob ~ ns(length, df=3) + ns(CCGG, df=3) + ns(gc_ratio, df=3), 
-                   method = "fREML", data = data_logit)
-model <- mgcv::bam(relative_depth ~ ns(length, df=10) + ns(CCGG, df=10) + ns(gc_ratio, df=10), 
-                   method = "fREML", data = data_ident, family = binomial(link = "probit"))
-model <- mgcv::bam(relative_depth ~ ns(length, df=20) + ns(CCGG, df=20) + ns(gc_ratio, df=20), 
-                   method = "fREML", data = data_ident, family = betar)
+if(bool_rerun){
+  gam3  = mgcv::bam(logit_prob ~ ns(length, df=3) + ns(CCGG, df=1) + ns(gc_ratio, df=3), 
+                    method = "fREML", data = data_logit)
+  gam10 = mgcv::bam(relative_depth ~ ns(length, df=10) + ns(CCGG, df=1) + ns(gc_ratio, df=10), 
+                    method = "fREML", data = data_ident, family = binomial(link = "probit"))
+  gam20 = mgcv::bam(relative_depth ~ ns(length, df=20) + ns(CCGG, df=1) + ns(gc_ratio, df=20), 
+                    method = "fREML", data = data_ident, family = betar)
+  saveRDS(gam3, gam3_rds)
+  saveRDS(gam10, gam10_rds)
+  saveRDS(gam20, gam20_rds)
+}else{
+  gam3  = readRDS(gam3_rds)
+  gam10 = readRDS(gam10_rds)
+  gam20 = readRDS(gam20_rds)
+}
 ```
 
 
 
 
-# visualize the prediction results
+# compare prediction results
 ```{r}
 library(ggpointdensity)
 library(viridis)
@@ -186,28 +267,151 @@ pred_df_logit = data.frame(real = mars_cv_logit$finalModel$y %>% as.vector(),
                            fitted = mars_cv_logit$finalModel$fitted.values %>% as.vector())
 
 ggplot(pred_df_ident, mapping = aes(x = fitted, y = real)) +
-  #stat_density2d(aes(alpha = ..density..), geom = "tile", contour = FALSE) +
-  geom_pointdensity() +
+  stat_density2d(aes(color = after_stat(density)), geom = "tile", contour = FALSE) +
   scale_color_viridis()
 
 ggplot(pred_df_logit, mapping = aes(x = fitted, y = real)) +
-  #stat_density2d(aes(alpha = ..density..), geom = "tile", contour = FALSE) +
-  geom_pointdensity() +
-  scale_color_viridis()
+  geom_pointdensity() # very slow
 ```
 
 
 
+```{r, fig.width=5, fig.height=5}
+par(pty = "s")
+smoothScatter(x = lm_ident$model$relative_depth, 
+              y = lm_ident$fitted.values, 
+              main = "linear regression",
+              xlab = "Actual depth", ylab = "Predicted depth", xlim = c(0,1), ylim = c(0,1))
+# Add the regression line and R2
+lm_model <- lm(lm_ident$fitted.values ~ lm_ident$model$relative_depth)
+abline(lm_model, col = "red")
+r_squared <- summary(lm_model)$r.squared
+legend("topleft", legend = paste("R² =", round(r_squared, 3)), bty = "n")
+
+
+smoothScatter(x = sigmoid(lm_logit$model$logit_prob), 
+              y = sigmoid(lm_logit$fitted.values), 
+              main = "linear regression (logit transformation)",
+              xlab = "Actual depth", ylab = "Predicted depth", xlim = c(0,1), ylim = c(0,1))
+# Add the regression line and R2
+lm_model <- lm(sigmoid(lm_logit$fitted.values) ~ sigmoid(lm_logit$model$logit_prob))
+abline(lm_model, col = "red")
+r_squared <- summary(lm_model)$r.squared
+legend("topleft", legend = paste("R² =", round(r_squared, 3)), bty = "n")
+
+
+smoothScatter(x = beta_reg$model$relative_depth, 
+              y = beta_reg$fitted.values, 
+              main = "beta regression",
+              xlab = "Actual depth", ylab = "Predicted depth", xlim = c(0,1), ylim = c(0,1))
+# Add the regression line and R2
+lm_model <- lm(beta_reg$fitted.values ~ beta_reg$model$relative_depth)
+abline(lm_model, col = "red")
+r_squared <- summary(lm_model)$r.squared
+legend("topleft", legend = paste("R² =", round(r_squared, 3)), bty = "n")
+
+
+smoothScatter(gam20$model$relative_depth,
+              gam20$fitted.values,
+              main = "GAM",
+              xlab = "Actual depth", ylab = "Predicted depth", xlim = c(0,1), ylim = c(0,1))
+# Add the regression line and R2
+lm_model <- lm(gam20$fitted.values ~ gam20$model$relative_depth)
+abline(lm_model, col = "red")
+r_squared <- summary(lm_model)$r.squared
+legend("topleft", legend = paste("R² =", round(r_squared, 3)), bty = "n")
+
+
+
+smoothScatter(x = mars_cv_ident$trainingData$.outcome, 
+              y = mars_cv_ident$finalModel$fitted.values, 
+              main = "Multivariate spline", 
+              xlab = "Actual depth", ylab = "Predicted depth", xlim = c(0,1), ylim = c(0,1))
+# Add the regression line and R2
+lm_model <- lm(mars_cv_ident$finalModel$fitted.values ~ mars_cv_ident$trainingData$.outcome)
+abline(lm_model, col = "red") 
+r_squared <- summary(lm_model)$r.squared
+legend("topleft", legend = paste("R² =", round(r_squared, 3)), bty = "n")
+```
+
+# save figure
 ```{r}
-smoothScatter(lm_ident$model$relative_depth, lm_ident$fitted.values, main = "linear regression",
-              xlab = "relative depth", ylab = "predicted depth", xlim = c(0,1), ylim = c(0,1))
-smoothScatter(sigmoid(lm_logit$model$logit_prob), sigmoid(lm_logit$fitted.values), main = "linear regression (logit transformation)",
-              xlab = "relative depth", ylab = "predicted depth", xlim = c(0,1), ylim = c(0,1))
-smoothScatter(br$model$relative_depth, br$fitted.values, main = "beta regression",
-              xlab = "relative depth", ylab = "predicted depth", xlim = c(0,1), ylim = c(0,1))
-smoothScatter(model$model$relative_depth, model$fitted.values, main = "GAM",
-              xlab = "relative depth", ylab = "predicted depth", xlim = c(0,1), ylim = c(0,1))
-smoothScatter(sigmoid(mars_cv_logit$trainingData$.outcome), sigmoid(mars_cv_logit$finalModel$fitted.values), main = "Multivariate spline",
-              xlab = "relative depth", ylab = "predicted depth", xlim = c(0,1), ylim = c(0,1))
+if(bool_rerun_plot){
+  rrbs_depth_cor_pred_figure = paste0(plot_path, "/rrbs_depth_cor_pred.pdf")
+  save2pdf(file = rrbs_depth_cor_pred_figure, overwrite = TRUE,
+           width = 5, height = 5, plot_code = quote({
+            corrplot(scor_mat, p.mat = scor_sig$p, mar = c(1, 2, 2, 1),
+                     method = 'circle', type = 'lower', insig='blank', sig.level = 0.05, tl.cex = 0.8,
+                     addCoef.col ='black', number.cex = 0.8, diag=FALSE, tl.srt = 0, tl.offset = 1, tl.col = "black")
+
+            par(pty = "s")
+            smoothScatter(x = lm_ident$model$relative_depth, 
+                          y = lm_ident$fitted.values, 
+                          main = "linear regression",
+                          xlab = "Actual depth", ylab = "Predicted depth", xlim = c(0,1), ylim = c(0,1))
+            # Add the regression line and R2
+            lm_model <- lm(lm_ident$fitted.values ~ lm_ident$model$relative_depth)
+            abline(lm_model, col = "red")
+            r_squared <- summary(lm_model)$r.squared
+            legend("topleft", legend = paste("R² =", round(r_squared, 3)), bty = "n")
+            
+            
+            smoothScatter(x = sigmoid(lm_logit$model$logit_prob), 
+                          y = sigmoid(lm_logit$fitted.values), 
+                          main = "linear regression (logit transformation)",
+                          xlab = "Actual depth", ylab = "Predicted depth", xlim = c(0,1), ylim = c(0,1))
+            # Add the regression line and R2
+            lm_model <- lm(sigmoid(lm_logit$fitted.values) ~ sigmoid(lm_logit$model$logit_prob))
+            abline(lm_model, col = "red")
+            r_squared <- summary(lm_model)$r.squared
+            legend("topleft", legend = paste("R² =", round(r_squared, 3)), bty = "n")
+            
+            
+            smoothScatter(x = beta_reg$model$relative_depth, 
+                          y = beta_reg$fitted.values, 
+                          main = "beta regression",
+                          xlab = "Actual depth", ylab = "Predicted depth", xlim = c(0,1), ylim = c(0,1))
+            # Add the regression line and R2
+            lm_model <- lm(beta_reg$fitted.values ~ beta_reg$model$relative_depth)
+            abline(lm_model, col = "red")
+            r_squared <- summary(lm_model)$r.squared
+            legend("topleft", legend = paste("R² =", round(r_squared, 3)), bty = "n")
+            
+            
+            smoothScatter(gam20$model$relative_depth,
+                          gam20$fitted.values,
+                          main = "GAM",
+                          xlab = "Actual depth", ylab = "Predicted depth", xlim = c(0,1), ylim = c(0,1))
+            # Add the regression line and R2
+            lm_model <- lm(gam20$fitted.values ~ gam20$model$relative_depth)
+            abline(lm_model, col = "red")
+            r_squared <- summary(lm_model)$r.squared
+            legend("topleft", legend = paste("R² =", round(r_squared, 3)), bty = "n")
+
+
+            smoothScatter(x = mars_cv_ident$trainingData$.outcome, 
+                          y = mars_cv_ident$finalModel$fitted.values, 
+                          main = "Multivariate spline", 
+                          xlab = "Actual depth", ylab = "Predicted depth", xlim = c(0,1), ylim = c(0,1))
+            # Add the regression line and R2
+            lm_model <- lm(mars_cv_ident$finalModel$fitted.values ~ mars_cv_ident$trainingData$.outcome)
+            abline(lm_model, col = "red") 
+            r_squared <- summary(lm_model)$r.squared
+            legend("topleft", legend = paste("R² =", round(r_squared, 3)), bty = "n")
+         }))
+}
 ```
+
+# save data
+```{r}
+if(bool_rerun){
+  frag_cut_df$pred = as.vector(mars_cv_ident$finalModel$fitted.values)
+  frag_cut_df$pred = ifelse(frag_cut_df$pred < 0, 0, frag_cut_df$pred)
+  #frag_cut_df$prob = scale_val(frag_cut_df$pred, frag_cut_df$pred, 1)
+  write.table(frag_cut_df %>% mutate(start0 = ref_l-1, end = ref_r, name = ".", strand = ".") %>% 
+                dplyr::select(all_of(c("chr", "start0", "end", "name", "pred", "strand"))),
+              file = frag_cut_prob_bed, sep = "\t", row.names = FALSE, quote = FALSE, col.names = FALSE)
+}
+```
+
 

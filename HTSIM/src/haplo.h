@@ -9,9 +9,9 @@
 #include "vcf.h"
 #include "struct.h"
 
-void parse_vcf_chr(char *fname, char *chr_id, std::vector<snp_rec>& snp_vec);
+void parse_vcf_chr(char *fname, char *chr_id, std::map<int, snpmeth_rec>& snpmeth_map);
 
-void sim_mut_vcf(const kseq_t *ks, char * vcf_file, mutseq_t *hap1, mutseq_t *hap2, uint32_t *posidx_arr, std::vector<snp_rec> &snp_vec);
+void sim_mut_vcf(const kseq_t *ks, char * vcf_file, mutseq_t *hap1, mutseq_t *hap2, uint32_t *posidx_arr, std::map<int, snpmeth_rec>& snpmeth_map);
 
 void sim_mut_diref(const kseq_t *ks, mut_param *mut_set, mutseq_t *hap1, mutseq_t *hap2, uint32_t *posidx_arr);
 

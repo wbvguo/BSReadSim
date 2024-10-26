@@ -46,7 +46,9 @@ const mut_t mutmsk = (mut_t)0xf000;
 
 
 //  global variables.
-const char PACKAGE_VERSION[] ="1.0.3";
+const char PACKAGE_VERSION[] = "1.1.0";
+const char OUTPUT_PREFIX[]   = "sim";
+const char PARAM_DEFAULT[]   = "0.5_0.5,0.05_0.05,0.05_0.05";
 
 const float ERR_RATE    = 0.005;
 const float MUT_RATE    = 0.01;
