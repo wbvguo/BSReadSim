@@ -6,46 +6,42 @@
 #include "vcf.h"
 #include "struct.h"
 
-
 KSEQ_INIT(gzFile, gzread)
 #include "rrcut.h"
 #include "haplo.h"
 
 
 std::vector<cut_rec> cut_vec;
-std::vector<snp_rec> snp_vec;
 std::vector<cutpos_rec> cutpos_vec;
 std::vector<frag_rrbs_rec> frag_rrbs_vec;
-
+std::map<int, snpmeth_rec> snpmeth_map;
 
 void parse_cut_site(char *cut_str, std::vector<cut_rec>& cut_vec)
 {
-    // check if cut_str is valid (seprate by ',' and '_' intercjangeably, no consercutive ',' or '_')
-    // space will be skipped
-    bool vline_flag = false;
+    // check if cut_str is valid (seprate by ',' and '_' intercjangeably, no consercutive ',' or '_'); space will be skipped
+    int i, c, idx = 0;
+    bool uline_flag = false;
     bool comma_flag = false;
 
-    for(int i =0; cut_str[i] !='\0'; ++i){
+    // check input format
+    for(i =0; cut_str[i] !='\0'; ++i){
         if(cut_str[i] == ' '){continue;}
         if(cut_str[i] == '_'){
-            if(vline_flag){fprintf (stderr, "[%s] ERROR: Invalid enzyme site format '%s'. Exit...\n", __func__, cut_str); exit (EXIT_FAILURE);}
-            vline_flag = true; comma_flag = false;
+            if(uline_flag){fprintf (stderr, "[%s] ERROR: Invalid enzyme site format '%s'. Exit...\n", __func__, cut_str); exit(EXIT_FAILURE);}
+            uline_flag = true; comma_flag = false;
         }else if(cut_str[i] == ','){
-            if(comma_flag){fprintf (stderr, "[%s] ERROR: Invalid enzyme site format '%s'. Exit...\n", __func__, cut_str); exit (EXIT_FAILURE);}
-            comma_flag = true; vline_flag = false;
+            if(comma_flag){fprintf (stderr, "[%s] ERROR: Invalid enzyme site format '%s'. Exit...\n", __func__, cut_str); exit(EXIT_FAILURE);}
+            comma_flag = true; uline_flag = false;
         }else{
             if(nst_nt4_table[(int)cut_str[i]]==4 && (cut_str[i] != 'N' || cut_str[i] != 'n')){
-                fprintf (stderr, "[%s] ERROR: Invalid enzyme site format '%s'. Exit...\n", __func__, cut_str); exit (EXIT_FAILURE);
+                fprintf (stderr, "[%s] ERROR: Invalid enzyme site format '%s'. Exit...\n", __func__, cut_str); exit(EXIT_FAILURE);
             }
         }
     }
 
-
     cut_vec.clear();
-    int c, idx = 0;
     cut_rec tmp_site;
-    
-    for(int i =0; cut_str[i] !='\0'; ++i){
+    for(i=0; cut_str[i] !='\0'; ++i){
         if(cut_str[i] == ' '){continue;}
         if (cut_str[i] == '_'){tmp_site.idx = idx; continue;}
         if (cut_str[i] == ','){
@@ -64,7 +60,7 @@ void parse_cut_site(char *cut_str, std::vector<cut_rec>& cut_vec)
     if(tmp_site.idx >=0){tmp_site.len = idx; cut_vec.push_back(tmp_site);}
 }
 
-void gen_cut_pos(mutseq_t *hap1, mutseq_t *hap2, std::vector<cutpos_rec>& cutpos_vec, std::vector<cut_rec>& cut_vec)
+void gen_cut_pos(mutseq_t *hap1, mutseq_t *hap2, std::vector<cut_rec>& cut_vec, std::vector<cutpos_rec>& cutpos_vec)
 {
     cutpos_vec.clear(); // clean the container
     
@@ -73,7 +69,6 @@ void gen_cut_pos(mutseq_t *hap1, mutseq_t *hap2, std::vector<cutpos_rec>& cutpos
     cut_rec tmp_cut;
     mut_t *arr_ptr;
 
-    
     for (int j = 0; j < cut_vec.size(); ++j) {
         tmp_cut = cut_vec[j];
 
@@ -100,7 +95,7 @@ void gen_cut_pos(mutseq_t *hap1, mutseq_t *hap2, std::vector<cutpos_rec>& cutpos
         }
     }
 
-    if(cutpos_map.empty()){fprintf (stderr, "[%s] ERROR: No cut site found in hap1 and hap2. Exit...\n", __func__); exit (EXIT_FAILURE);}
+    if(cutpos_map.empty()){fprintf (stderr, "[%s] ERROR: No cut site found in hap1 and hap2. Exit...\n", __func__); exit(EXIT_FAILURE);}
 
     // put into the vector
     for (auto it = cutpos_map.begin(); it != cutpos_map.end(); ++it) {
@@ -112,22 +107,23 @@ void gen_cut_pos(mutseq_t *hap1, mutseq_t *hap2, std::vector<cutpos_rec>& cutpos
     std::sort(cutpos_vec.begin(), cutpos_vec.end());
 }
 
-void gen_cut_frag(const kseq_t *ks, expt_param *expt_set, std::vector<frag_rrbs_rec> &frag_vec, std::vector<cutpos_rec>& cutpos_vec, std::vector<cut_rec>& cut_vec)
+void gen_cut_frag(int chr_len, expt_param *expt_set, std::vector<cut_rec>& cut_vec, std::vector<cutpos_rec>& cutpos_vec, std::vector<frag_rrbs_rec> &frag_vec)
 {
     frag_vec.clear();
 
     // generate potential intervals
-    int frag_len;
+    int i, frag_len, n_pos;
     frag_rrbs_rec tmp_frag;
 
     std::map<int8_t, int8_t> cut_map;
     std::map<int8_t, int8_t> tmp_cutmap;
-    for(size_t i=0; i<cut_vec.size(); ++i){cut_map[(int8_t)i] = 0;}
+    for(i=0; i < (int)cut_vec.size(); ++i){cut_map[(int8_t)i] = 0;}
     
-    for (int i = -1; i <= int(cutpos_vec.size()); ++i){
-        if(i==-1 || i == int(cutpos_vec.size())){ //check the first and last frag_recs
+    n_pos = (int) cutpos_vec.size();
+    for (i = -1; i <= n_pos; ++i){
+        if(i == -1 || i == n_pos){ //check the first and last frag_recs
             tmp_frag = {};
-            if(i==-1){
+            if(i == -1){
                 frag_len = cutpos_vec[0].pos;
                 if (frag_len > expt_set->min_insert && frag_len < expt_set->max_insert){
                     tmp_frag.pos_l = 0;
@@ -139,10 +135,10 @@ void gen_cut_frag(const kseq_t *ks, expt_param *expt_set, std::vector<frag_rrbs_
                     frag_vec.push_back(tmp_frag);
                 }
             }else{
-                frag_len = ks->seq.l - cutpos_vec[i-1].pos;
+                frag_len = chr_len - cutpos_vec[i-1].pos;
                 if (frag_len > expt_set->min_insert && frag_len < expt_set->max_insert){
                     tmp_frag.pos_l = cutpos_vec[i-1].pos;
-                    tmp_frag.pos_r = ks->seq.l;
+                    tmp_frag.pos_r = chr_len;
                     tmp_frag.cut_l = cutpos_vec[i-1].type;
                     tmp_frag.cut_r = 0;
                     tmp_frag.haplo = cutpos_vec[i-1].haplo;
@@ -221,10 +217,10 @@ void gen_cut_frag(const kseq_t *ks, expt_param *expt_set, std::vector<frag_rrbs_
     }
 }
 
-void output_rrcut_bed(const char *fname, const char *chr_id, std::vector<frag_rrbs_rec> &frag_vec, bool to_stdout)
+void save_rrcut_bed(char *fname, char *chr_id, bool to_stdout, std::vector<frag_rrbs_rec> &frag_vec)
 {
     FILE *fp = to_stdout ? stdout : fopen(fname, "a");
-    if(fp==NULL){fprintf(stderr, "[%s] ERROR: open rrbs bed file: %s failed. Exit...\n", __func__, fname); exit (EXIT_FAILURE);}
+    if(fp==NULL){fprintf(stderr, "[%s] ERROR: open rrbs bed file: %s failed. Exit...\n", __func__, fname); exit(EXIT_FAILURE);}
 
     frag_rrbs_rec tmp_frag;
     int map_size = frag_vec[0].n_cuts.size();
@@ -233,7 +229,7 @@ void output_rrcut_bed(const char *fname, const char *chr_id, std::vector<frag_rr
         fprintf(fp, "%s\t%d\t%d\t.\t1\t%d\t%d\t%d", chr_id, tmp_frag.pos_l, tmp_frag.pos_r, tmp_frag.haplo, tmp_frag.cut_l, tmp_frag.cut_r);
         for(int j=0; j < map_size; ++j){fprintf(fp, "\t%d", tmp_frag.n_cuts[j]);}
         fprintf(fp, "\n");
-        //if (ferror(fp)) {fprintf(stderr, "[%s] ERROR: failed to write to file %s. Exit... \n", __func__, fname);exit(EXIT_FAILURE);}
+        //if (ferror(fp)) {fprintf(stderr, "[%s] ERROR: failed to write to file %s. Exit... \n", __func__, fname); exit(EXIT_FAILURE);}
     }
     if(!to_stdout){fclose(fp);}
 }
@@ -327,7 +323,6 @@ int main(int argc, char *argv[])
     // parse the cut site, hold
     parse_cut_site(cut_str, cut_vec);
     
-
     // parse reference
     kseq_t *ks;
     mutseq_t rseq[2];
@@ -346,8 +341,8 @@ int main(int argc, char *argv[])
         // introduce mutations and print them to stdout
         //fprintf(stdout, "Contig Variant Start\n");
         if(mut_set.is_vcf_set){
-            sim_mut_vcf(ks, vcf_file, rseq, rseq+1, posidx_arr, snp_vec);
-            if(snp_vec.size() == 0){fprintf(stdout, "%s\n", ks->name.s);}       //if no variants, print chromosome id
+            sim_mut_vcf(ks, vcf_file, rseq, rseq+1, posidx_arr, snpmeth_map);
+            if(snpmeth_map.size() == 0){fprintf(stdout, "%s\n", ks->name.s);}       //if no variants, print chromosome id
         } else {
             sim_mut_diref(ks, &mut_set, rseq, rseq+1, posidx_arr);
             if(mut_set.mut_rate == 0.0){fprintf(stdout, "%s\n", ks->name.s);}  //if no variants, print chromosome id
@@ -355,9 +350,9 @@ int main(int argc, char *argv[])
         //sim_print_mutref(ks->name.s, ks, rseq, rseq+1, expt_set.output_fmt);
         //fprintf(stdout, "Contig Variant End\n");
 
-        gen_cut_pos(rseq, rseq+1, cutpos_vec, cut_vec);
-        gen_cut_frag(ks, &expt_set, frag_rrbs_vec, cutpos_vec, cut_vec);
-        output_rrcut_bed(bed_file, ks->name.s, frag_rrbs_vec, to_stdout);
+        gen_cut_pos(rseq, rseq+1, cut_vec, cutpos_vec);
+        gen_cut_frag((int)ks->seq.l, &expt_set,cut_vec, cutpos_vec, frag_rrbs_vec);
+        save_rrcut_bed(bed_file, ks->name.s, to_stdout, frag_rrbs_vec);
         free(posidx_arr);
     }
     kseq_destroy(ks);

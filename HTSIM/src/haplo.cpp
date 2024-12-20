@@ -9,15 +9,18 @@
 KSEQ_INIT(gzFile, gzread)
 #include "haplo.h"
 
-void parse_vcf_chr(char *fname, char *chr_id, std::vector<snp_rec>& snp_vec)
+void parse_vcf_chr(char *fname, char *chr_id, std::map<int, snpmeth_rec>& snpmeth_map)
 {
-    snp_vec.clear(); //clean the container
+    snpmeth_map.clear(); //clean the container
 
     //open vcf file
     htsFile   *fp  = hts_open(fname,"rb");
     bcf_hdr_t *hdr = bcf_hdr_read(fp);
     bcf1_t    *rec = bcf_init();
-    
+
+    //store snp info
+    snpmeth_rec tmp_snp;
+
     //collect control
     int ngt_arr = 0;
     int ngt     = 0;
@@ -35,7 +38,7 @@ void parse_vcf_chr(char *fname, char *chr_id, std::vector<snp_rec>& snp_vec)
     }
 
     while (bcf_read(fp, hdr, rec)>=0) {	
-        if (collect_present == false && collect_previous == true) { break; } // finished collecting
+        if (!collect_present && collect_previous) { break; } // collect_present false && collect_previous true, finished collecting
         
         // a new round, save last status
         collect_previous = collect_present; 
@@ -91,7 +94,7 @@ void parse_vcf_chr(char *fname, char *chr_id, std::vector<snp_rec>& snp_vec)
                 ref_int = (mut_t)nst_nt4_table[(int)ref_str[0]];
                 alt_int = (mut_t)nst_nt4_table[(int)alt_str[0]];
             } else {
-                if (ref_str[0] != alt_str[0]) {         //check if the first base are the same if it's indel, if not skip
+                if (ref_str[0] != alt_str[0]) {         //check if the first base are the same: yes -> indel, no -> skip
                     fprintf(stderr, "[%s] Skip unusual SNP/INDEL [indel & ref]: CHROM:%s; POS:%d; REF:%s; ALT %s\n", __func__, chr_id, snp_pos, ref_str.c_str(), alt_str.c_str());
                     continue;
                 }
@@ -116,25 +119,25 @@ void parse_vcf_chr(char *fname, char *chr_id, std::vector<snp_rec>& snp_vec)
                 }
             }
 
-            int geno_int = base_offset << 12 | ref_len << 8 | snp_hap2 << 6 | snp_hap1 << 4 | is_phased;
-            snp_rec tmp_snp = {.pos = base_change_pos, .ref = ref_int, .alt = alt_int, .geno = geno_int};
-            snp_vec.push_back(tmp_snp);
+            tmp_snp = {.ref = (uint16_t) ref_int, .alt = (uint16_t) alt_int, 
+                       .hap1= (int8_t) snp_hap1, .hap2 = (int8_t) snp_hap2, .is_phased = (int8_t) is_phased, .offset = (int8_t) base_offset};
+            snpmeth_map[base_change_pos]= tmp_snp;
             tmp_snp = {};
         }
     }
     
-    fprintf(stderr, "[%s] Finish collecting %lu SNP/INDEL from %s\n", __func__, snp_vec.size(), chr_id);
+    fprintf(stderr, "[%s] Finish collecting %lu SNP/INDEL from %s\n", __func__, snpmeth_map.size(), chr_id);
 
     free(gt);
     bcf_destroy(rec);
     bcf_hdr_destroy(hdr);
 
     if (int ret=hts_close(fp)){
-        fprintf(stderr,"[%s] ERROR: hts_close(%s): non-zero status %d\n", __func__, fname, ret); exit(ret); 
+        fprintf(stderr, "[%s] ERROR: hts_close(%s): non-zero status %d\n", __func__, fname, ret); exit(ret); 
     }
 }
 
-void sim_mut_vcf(const kseq_t *ks, char * vcf_file, mutseq_t *hap1, mutseq_t *hap2, uint32_t *posidx_arr, std::vector<snp_rec> &snp_vec) 
+void sim_mut_vcf(const kseq_t *ks, char * vcf_file, mutseq_t *hap1, mutseq_t *hap2, uint32_t *posidx_arr, std::map<int, snpmeth_rec>& snpmeth_map)
 {
     // initiate
     mutseq_t *ret[2];
@@ -146,58 +149,55 @@ void sim_mut_vcf(const kseq_t *ks, char * vcf_file, mutseq_t *hap1, mutseq_t *ha
     ret[1]->s = (mut_t *)calloc(ks->seq.m, sizeof(mut_t));
     
     // parse VCF
-    parse_vcf_chr(vcf_file, ks->name.s, snp_vec);
+    parse_vcf_chr(vcf_file, ks->name.s, snpmeth_map);
 
-    int vec_ptr = 0;
+    std::map<int, snpmeth_rec>::iterator it = snpmeth_map.begin();
     int i, c, tmp_hap;
     int deleting = 0, deletion_count = 0;
 
     for (i = 0; i != (int) ks->seq.l; ++i){
         c = ret[0]->s[i] = ret[1]->s[i] = (mut_t)nst_nt4_table[(int)ks->seq.s[i]];
-        if (cg_table[c]) {posidx_arr[i]= 2;}
-        if (snp_vec.size() == 0){ continue;} // ignore the rest if there is no SNP
+        if (cg_table[c]) {posidx_arr[i] = 2;}
+        if (snpmeth_map.size() == 0){ continue; } // ignore the rest if there is no SNP
 
         if (deleting){
             if(deletion_count > 0){
                 if (deleting & 1){ ret[0]->s[i] |= DELETE;}
                 if (deleting & 2){ ret[1]->s[i] |= DELETE;}
                 --deletion_count;
-                posidx_arr[i] |= 1;
+                posidx_arr[i]|= 1;
                 continue;
-            } else {deleting = 0;}
+            } else { deleting = 0;}
         }
-
-        if(vec_ptr < (int) snp_vec.size() && i == snp_vec[vec_ptr].pos && c < 4){
-            int geno_int = snp_vec[vec_ptr].geno;
-            int alt_int  = snp_vec[vec_ptr].alt;
-            int is_phased= (geno_int & 0x000f);
-            int snp_hap1 = (geno_int & 0x003f) >> 4;
-            int snp_hap2 = (geno_int & 0x00ff) >> 6;
-            int ref_len  = (geno_int & 0x0fff) >> 8;
-            int base_offset= geno_int >> 12;
+        if(i == it->first && c < 4 && it != snpmeth_map.end()){
+            int alt_int  = it->second.alt;
+            int snp_hap1 = it->second.hap1;
+            int snp_hap2 = it->second.hap2;
+            int is_phased= it->second.is_phased;
+            int base_offset= it->second.offset;
             posidx_arr[i] |= 1;
-            //fprintf(stderr, "%d,%d,%d,%d,%d,%d\n", i, is_pahsed,snp_hap1, snp_hap2, ref_len, base_offset);
+            //fprintf(stderr, "%d,%d,%d,%d,%d\n", i, is_pahsed,snp_hap1, snp_hap2, base_offset);
 
             if (!is_phased){ // for unphased genotype, randomly swap the haplotype
                 if(drand48() < 0.5){int tmp_hap = snp_hap1; snp_hap1 = snp_hap2; snp_hap2 = tmp_hap;}
             }
 
-            if(base_offset == 0 && ref_len == 1){ // SNP substitution
+            if(base_offset == 0){           // SNP substitution
                 if (snp_hap1 == 1){ret[0]->s[i] = SUBSTITUTE|alt_int;}
                 if (snp_hap2 == 1){ret[1]->s[i] = SUBSTITUTE|alt_int;}
-            } else if (base_offset < 0 ) { // deletion
-                deletion_count = abs(base_offset) - 1; //minus one because here already delete one base
-                if (snp_hap1 == 1){ret[0]->s[i] |= DELETE; deleting+=1;}
-                if (snp_hap2 == 1){ret[1]->s[i] |= DELETE; deleting+=2;}
-            } else if (base_offset > 0){ // inserstion
+            } else if (base_offset < 0 ) {  // deletion
+                deletion_count = abs(base_offset) - 1; //minus one because here already delete one base here
+                if (snp_hap1 == 1){ret[0]->s[i]|= DELETE; deleting+=1;}
+                if (snp_hap2 == 1){ret[1]->s[i]|= DELETE; deleting+=2;}
+            } else if (base_offset > 0){    // inserstion
                 int num_ins = base_offset;
                 int ins_msk = (1 << (num_ins*2)) - 1;
-                int ins = snp_vec[vec_ptr].alt & ins_msk;
+                int ins = alt_int & ins_msk;
                 //fprintf(stderr, "%d,%d,%d,%d\n", num_ins, ins_msk, alt_vec[vec_ptr], ins);
                 if (snp_hap1 == 1){ret[0]->s[i] |= (num_ins << 12) | (ins << 4);}
                 if (snp_hap2 == 1){ret[1]->s[i] |= (num_ins << 12) | (ins << 4);}
             }
-            ++vec_ptr;
+            ++it;
         }
     }
 }
@@ -226,16 +226,15 @@ void sim_mut_diref(const kseq_t *ks, mut_param *mut_set, mutseq_t *hap1, mutseq_
         }
         if (c < 4 && drand48() < mut_set->mut_rate) { // mutation
             if (drand48() >= mut_set->indel_frac) { // substitution
-                double r = drand48();
-                c = (c + (int)(r * 3.0 + 1)) & 3;
-                if (mut_set->is_hap || drand48() < 0.333333) { // hom
+                c = (c + (int)(drand48() * 3.0 + 1)) & 3;   // random mutation
+                if (mut_set->is_hap || drand48() < 0.333333) {      // hom-sub
                     ret[0]->s[i] = ret[1]->s[i] = SUBSTITUTE|c;
                 } else { // het
                     ret[drand48()<0.5?0:1]->s[i]= SUBSTITUTE|c;
                 }
             } else { // indel
                 if (drand48() < 0.5) { // deletion
-                    if (mut_set->is_hap || drand48() < 0.333333) { // hom-del
+                    if (mut_set->is_hap || drand48() < 0.333333) {  // hom-del
                         ret[0]->s[i] = ret[1]->s[i] |= DELETE;
                         deleting = 3;
                     } else { // het-del
@@ -265,25 +264,27 @@ void sim_print_mutref(const char *name, const kseq_t *ks, mutseq_t *hap1, mutseq
 {
     int fmt_offset = output_fmt == 0;
     int i, j = 0; // j keeps the end of the last deletion
+    int hap1_mut, hap2_mut;
     for (i = 0; i != (int)ks->seq.l; ++i) {
         int c[3];
         c[0] = nst_nt4_table[(int)ks->seq.s[i]];
-        c[1] = hap1->s[i]; c[2] = hap2->s[i];
         if (c[0] >= 4) continue;
-        if ((c[1] & mutmsk) != NOCHANGE || (c[2] & mutmsk) != NOCHANGE) {
+        c[1] = hap1->s[i]; hap1_mut = (c[1] & mutmsk);
+        c[2] = hap2->s[i]; hap2_mut = (c[2] & mutmsk);
+        if (hap1_mut != NOCHANGE || hap2_mut != NOCHANGE) {
             if (c[1] == c[2]) { // hom
-                if ((c[1]&mutmsk) == SUBSTITUTE) { // substitution
+                if (hap1_mut == SUBSTITUTE) { // substitution
                     printf("%s\t%d\t%c\t%c\t-\n", name, i+fmt_offset, "ACGTN"[c[0]], "ACGTN"[c[1]&0xf]); // coordinate is 1-based
-                } else if ((c[1]&mutmsk) == DELETE) { // del
+                } else if (hap1_mut == DELETE) { // del
                     if (i >= j) {
                         printf("%s\t%d\t", name, i+fmt_offset);
                         for (j = i; j < ks->seq.l && hap1->s[j] == hap2->s[j] && (hap1->s[j]&mutmsk) == DELETE; ++j)
                             putchar("ACGTN"[nst_nt4_table[(int)ks->seq.s[j]]]);
                         printf("\t-\t-\n");
                     }
-                } else if (((c[1] & mutmsk) >> 12) <= 4) { // ins
+                } else if ((hap1_mut >> 12) <= 4) { // ins
                     printf("%s\t%d\t-\t", name, i+fmt_offset);
-                    int n = (c[1]&mutmsk) >> 12, ins = c[1] >> 4;
+                    int n = hap1_mut >> 12, ins = c[1] >> 4;
                     while (n > 0) {
                         putchar("ACGTN"[ins & 0x3]);
                         ins >>= 2;
@@ -292,34 +293,34 @@ void sim_print_mutref(const char *name, const kseq_t *ks, mutseq_t *hap1, mutseq
                     printf("\t-\n");
                 } // else: deleted base in a long deletion
             } else { // het
-                if ((c[1]&mutmsk) == SUBSTITUTE || (c[2]&mutmsk) == SUBSTITUTE) { // substitution
+                if (hap1_mut == SUBSTITUTE || hap2_mut == SUBSTITUTE) { // substitution
                     printf("%s\t%d\t%c\t%c\t+\n", name, i+fmt_offset, "ACGTN"[c[0]], "XACMGRSVTWYHKDBN"[1<<(c[1]&0x3)|1<<(c[2]&0x3)]);
-                } else if ((c[1]&mutmsk) == DELETE) {
+                } else if (hap1_mut == DELETE) {
                     if (i >= j) {
                         printf("%s\t%d\t", name, i+fmt_offset);
                         for (j = i; j < ks->seq.l && hap1->s[j] != hap2->s[j] && (hap1->s[j]&mutmsk) == DELETE; ++j)
                             putchar("ACGTN"[nst_nt4_table[(int)ks->seq.s[j]]]);
                         printf("\t-\t-\n");
                     }
-                } else if ((c[2]&mutmsk) == DELETE) {
+                } else if (hap2_mut == DELETE) {
                     if (i >= j) {
                         printf("%s\t%d\t", name, i+fmt_offset);
                         for (j = i; j < ks->seq.l && hap1->s[j] != hap2->s[j] && (hap2->s[j]&mutmsk) == DELETE; ++j)
                             putchar("ACGTN"[nst_nt4_table[(int)ks->seq.s[j]]]);
                         printf("\t-\t-\n");
                     }
-                } else if (((c[1] & mutmsk) >> 12) <= 4 && ((c[1] & mutmsk) >> 12) > 0) { // ins1
+                } else if ((hap1_mut >> 12) <= 4 && (hap1_mut >> 12) > 0) { // ins1
                     printf("%s\t%d\t-\t", name, i+fmt_offset);
-                    int n = (c[1]&mutmsk) >> 12, ins = c[1] >> 4;
+                    int n = hap1_mut >> 12, ins = c[1] >> 4;
                     while (n > 0) {
                         putchar("ACGTN"[ins & 0x3]);
                         ins >>= 2;
                         --n;
                     }
                     printf("\t+\n");
-                } else if (((c[2] & mutmsk) >> 12) <= 4 || ((c[2] & mutmsk) >> 12) > 0) { // ins2
+                } else if ((hap2_mut >> 12) <= 4 || (hap2_mut >> 12) > 0) { // ins2
                     printf("%s\t%d\t-\t", name, i+fmt_offset);
-                    int n = (c[2]&mutmsk) >> 12, ins = c[2] >> 4;
+                    int n = hap2_mut >> 12, ins = c[2] >> 4;
                     while (n > 0) {
                         putchar("ACGTN"[ins & 0x3]);
                         ins >>= 2;

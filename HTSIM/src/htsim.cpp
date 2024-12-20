@@ -68,25 +68,23 @@ const  uint8_t mut_table[16] = {
 
 std::vector<float> eff_vec;
 std::vector<cut_rec> cut_vec;
-std::vector<snp_rec> snp_vec;
 std::vector<meth_rec> meth_vec;
 std::vector<frag_rec> frag_vec;
 std::vector<frag_rec> probe_vec;
-std::vector<param_rec> param_vec;
-std::map<std::string, chr_rec> chr_count;
+std::map<int, param_rec> params_map;
 std::map<int, snpmeth_rec> snpmeth_map;
+std::map<std::string, chr_rec> chr_count;
 
 
-void output_read(int* tmp_seq[2], int* tmp_context[2], char* chr_id, uint32_t ii, int flag_mut, 
-                 int half_size, int flip_thre, int err_thre, int Q, 
+void output_read(int* tmp_seq[2], int* tmp_context[2], char* chr_id, uint32_t ii, int flag_mut, int Q, expt_param *expt_set,
                  int (&size)[2], int (&start)[2], int (&end)[2], int (&n_sub)[2], int (&n_indel)[2], int (&n_err)[2], int (&cover_pos)[2])
 {
     int j, k;
     int tmp_k, tmp_base, tmp_cigar;
-    int is_flip = rand() > flip_thre;
+    int is_flip = rand() > expt_set->flip_thre;
     // Flip and get the reverse complementary sequence
     for (k = 0; k < size[1]; ++k) {
-        if (k < half_size) {                    // consider length 100, exchange 49 and 50, consider 101, exchange 49 and 51
+        if (k < expt_set->half_size) {          // consider length 100, exchange 49 and 50, consider 101, exchange 49 and 51
             tmp_k = size[1] - 1 - k;            // consider length 100, exchange 0 and 99, thus should be size[1] - 1 - k
 
             tmp_base = tmp_seq[1][k];
@@ -110,7 +108,7 @@ void output_read(int* tmp_seq[2], int* tmp_context[2], char* chr_id, uint32_t ii
         // Sequence (introduce random sequencing error)
         for (k = 0; k < size[jj]; ++k) {
             int c = tmp_seq[jj][k];
-            if (rand()< err_thre) {
+            if (rand()< expt_set->err_thre) {
                 c = (c + std::rand()%3 + 1)&3;  // Random sequencing errors
                 //c = (c + 1) & 3;              // Recurrent sequencing errors
                 ++n_err[jj];
@@ -139,8 +137,7 @@ void output_read(int* tmp_seq[2], int* tmp_context[2], char* chr_id, uint32_t ii
 }
 
 
-void output_read(int *tmp_seq[2], int *tmp_context[2], int *tmp_pos[2], char *chr_id, uint32_t ii, int flag_mut, int strand,
-                 uint32_t *posidx_arr, uint32_t *kmeridx_arr,
+void output_read(int *tmp_seq[2], int *tmp_context[2], int *tmp_pos[2], char *chr_id, uint32_t ii, int flag_mut, int strand, uint32_t *posidx_arr, 
                  int (&size)[2], int (&start)[2], int (&end)[2], int (&n_sub)[2], int (&n_indel)[2], int (&n_err)[2], int (&cover_pos)[2])
 {
     int j, k, idx;
@@ -201,35 +198,33 @@ void output_read(int *tmp_seq[2], int *tmp_context[2], int *tmp_pos[2], char *ch
 }
 
 
-void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char *methdb_file, char *cgmap_file, char *asm_file, 
-                expt_param *expt_set, mut_param *mut_set, meth_param *meth_set)
+void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char *methdb_file, char *cgmap_file, char *asm_file, char *snpmeth_file,
+              expt_param *expt_set, mut_param *mut_set, meth_param *meth_set)
 {
     gzFile   fp_fa;
     kseq_t   *ks;
     mut_t    *target;
     mutseq_t rseq[2];
     uint64_t tot_sub = 0, tot_indel = 0, tot_err = 0, tot_pairs = 0;
-    uint32_t n_pairs =0;        // max 4,294,967,295 reads per contig
+    uint32_t n_pairs = 0;   // max 4,294,967,295 reads per contig
     
     // strange error with int8_t or uint8_t, offset messed up
     int *tmp_seq[2];    	// sequence
-    int *tmp_pos[2];    	// position 
+    int *tmp_pos[2];    	// position
     int *tmp_context[2];	// cytosine context (CG/CHG/CHH) & mutation (upper half mutation, lower half sequence)
-    int size[2], max_length, arr_size, half_size, flip_thre, err_thre, Q;
+    int *tmp_kmeridx[2];    // kmer index
+    int size[2], Q;
 
     size[0] = expt_set->size_l; size[1] = expt_set->size_r;
-    max_length = std::max(size[0], size[1]);
-    tmp_seq[0] = (int*)calloc(max_length, 4);           // sizeof(uint8_t)=1, sizeof(int)=4
-    tmp_seq[1] = (int*)calloc(max_length, 4);
-    tmp_pos[0] = (int*)calloc(max_length, 4);         
-    tmp_pos[1] = (int*)calloc(max_length, 4);
-    tmp_context[0] = (int*)calloc(max_length, 4);
-    tmp_context[1] = (int*)calloc(max_length, 4);
+    tmp_seq[0] = (int*)calloc(expt_set->max_length, 4);           // sizeof(uint8_t)=1, sizeof(int)=4
+    tmp_seq[1] = (int*)calloc(expt_set->max_length, 4);
+    tmp_pos[0] = (int*)calloc(expt_set->max_length, 4);
+    tmp_pos[1] = (int*)calloc(expt_set->max_length, 4);
+    tmp_context[0] = (int*)calloc(expt_set->max_length, 4);
+    tmp_context[1] = (int*)calloc(expt_set->max_length, 4);
+    tmp_kmeridx[0] = (int*)calloc(expt_set->max_length, 4);
+    tmp_kmeridx[1] = (int*)calloc(expt_set->max_length, 4);
     
-    arr_size   = max_length << 2;
-    half_size  = size[1] >> 1;
-    flip_thre  = RAND_MAX >> 1;
-    err_thre   = (int) RAND_MAX * expt_set->err_rate;
     Q = (expt_set->err_rate == 0.0)? 'I' : (int)(-10.0 * log(expt_set->err_rate) / log(10.0) + 0.499) + 33;
 
     // start simulate
@@ -247,52 +242,37 @@ void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char
         // Initialize pos_idx array as 0, last 2 bits: whether it's C/G, if it's a SNP position (base can be either REF/ALT)
         // uint8_t posidx_arr[ks->seq.l] = {0}; // only work when length is small, otherwise stack overflow
         uint32_t* posidx_arr = (uint32_t*) calloc(ks->seq.l, sizeof(uint32_t));
-        if (posidx_arr == NULL) { fprintf(stderr, "ERROR: could not allocate memory\n");exit(EXIT_FAILURE);}
+        if (posidx_arr == NULL) { fprintf(stderr, "ERROR: could not allocate memory\n"); exit(EXIT_FAILURE);}
 
         // introduce mutations and print them to stdout
-        fprintf(stdout, "Contig Variant Start\n");
+        //fprintf(stdout, "Contig Variant Start\n");
         if(mut_set->is_vcf_set){
-            sim_mut_vcf(ks, vcf_file, rseq, rseq+1, posidx_arr, snp_vec);
-            if(snp_vec.size() == 0){fprintf(stdout, "%s\n", ks->name.s);}       //if no variants, print chromosome id
+            sim_mut_vcf(ks, vcf_file, rseq, rseq+1, posidx_arr, snpmeth_map);
+            //if(snpmeth_map.size() == 0){fprintf(stdout, "%s\n", ks->name.s);}   //if no variants, print chromosome id
         } else {
             sim_mut_diref(ks, mut_set, rseq, rseq+1, posidx_arr);
-            if(mut_set->mut_rate == 0.0){fprintf(stdout, "%s\n", ks->name.s);}  //if no variants, print chromosome id
+            collect_snpmeth(ks, rseq, rseq+1, posidx_arr, snpmeth_map);
+            //if(mut_set->mut_rate == 0.0){fprintf(stdout, "%s\n", ks->name.s);}  //if no variants, print chromosome id
         }
-        sim_print_mutref(ks->name.s, ks, rseq, rseq+1, expt_set->output_fmt);
-        fprintf(stdout, "Contig Variant End\n");
-
-
-        uint32_t* kmeridx_arr = NULL;
-        if(expt_set->is_kmer_set){
-            kmeridx_arr = (uint32_t*) calloc(ks->seq.l, sizeof(uint32_t));
-            if (kmeridx_arr == NULL) { fprintf(stderr, "ERROR: could not allocate memory for kmer index\n");exit(EXIT_FAILURE);}
-            for (int i = 3; i < ks->seq.l-3; ++i){
-                if(posidx_arr[i]&0x2){continue;}//skip non-CG positions
-                int tmp_kmeridx =0;
-                for (int j = -3; j < 4; ++j){
-                    int ref_base = nst_nt4_table[(uint8_t)ks->seq.s[i]];
-                    ref_base = ref_base < 4 ? ref_base : (rand()&0x3);          // will not interfere with the drand48()
-                    tmp_kmeridx = (tmp_kmeridx << 2) | ref_base;
-                }
-                kmeridx_arr[i] = tmp_kmeridx <<16 | tmp_kmeridx;
-            }
-        }
+        save_snpmeth(snpmeth_file, ks->name.s, snpmeth_map);
+        //sim_print_mutref(ks->name.s, ks, rseq, rseq+1, expt_set->output_fmt);
+        //fprintf(stdout, "Contig Variant End\n");
 
 
         // load or create the methdb
         if(meth_set->is_methdb_set){
             // can check methdb_file's filename is the same as ks.name
             fprintf(stderr, "[%s] contig '%s': load methdb...\n", __func__, ks->name.s);
-            load_methdb(posidx_arr, meth_vec, methdb_file);
+            load_methdb(methdb_file, ks->name.s, posidx_arr, meth_vec);
         }else{
             fprintf(stderr, "[%s] contig '%s': create methdb...\n", __func__, ks->name.s);
             create_methdb(ks, posidx_arr, meth_vec);
             if(meth_set->is_cgmap_set){fill_cgmap_chr(cgmap_file, ks->name.s, posidx_arr, meth_vec, meth_set);}
             if(meth_set->is_asm_set){fill_asm_chr(asm_file, ks->name.s, posidx_arr, meth_vec);}
-            fill_beta(meth_vec, param_vec, meth_set->seed_meth);
+            fill_beta(meth_vec, params_map, meth_set->seed_meth);
             //update methdb with genetic variants
-            update_variant(ks, rseq, rseq+1, posidx_arr, meth_vec, kmeridx_arr, meth_set, param_vec, snpmeth_map);
-            if(meth_set->methdb_save){save_methdb(meth_vec, methdb_file);}
+            update_variant(ks, rseq, rseq+1, posidx_arr, meth_vec, meth_set, params_map, snpmeth_map);
+            if(meth_set->methdb_save){save_methdb(methdb_file, ks->name.s, meth_vec);}
         }
 
         // // 4DEBUG: print methdb to stderr
@@ -317,7 +297,7 @@ void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char
         std::vector<float> weights;
 
         if(expt_set->tech_mode){
-            parse_bed_chr(bed_file, ks->name.s, probe_vec, expt_set->tech_mode);    // parse probe, fill weights
+            parse_bed_chr(bed_file, ks->name.s, expt_set->tech_mode, probe_vec);    // parse probe, fill weights
             if(probe_vec.size() == 0){
                 fprintf(stderr, "[%s] contig '%s': found 0 region in BED file (tech mode %d). exit ...\n", __func__, ks->name.s, expt_set->tech_mode); 
                 exit(EXIT_FAILURE);
@@ -336,7 +316,7 @@ void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char
         int chunk_size = std::min((uint32_t)std::max(1000, expt_set->chunk_size), n_pairs);
         while(ii < n_pairs){// the core loop
             // generate #chunk_size sorted fragments records (at least 1000)
-            gen_frag_vec(&dis_ud, &dis_dd, posidx_arr, (int) ks->seq.l, chunk_size, frag_vec, probe_vec, eff_vec, expt_set);
+            gen_frag_vec(posidx_arr, (int) ks->seq.l, chunk_size, expt_set, &dis_ud, &dis_dd, frag_vec, probe_vec, eff_vec);
             // ii += chunk_size; // 4DEBUG
             
             // generate the read sequences
@@ -354,12 +334,12 @@ void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char
                 int n_sub[2] = {0,0}, n_indel[2] = {0,0}, n_err[2] = {0,0}, cover_pos[2] = {0,0};
 
                 // reset
-                memset(tmp_seq[0], 0, arr_size);
-                memset(tmp_seq[1], 0, arr_size);
-                memset(tmp_pos[0], 0, arr_size);
-                memset(tmp_pos[1], 0, arr_size);
-                memset(tmp_context[0], 0, arr_size);
-                memset(tmp_context[1], 0, arr_size);
+                memset(tmp_seq[0], 0, expt_set->arr_size);
+                memset(tmp_seq[1], 0, expt_set->arr_size);
+                memset(tmp_pos[0], 0, expt_set->arr_size);
+                memset(tmp_pos[1], 0, expt_set->arr_size);
+                memset(tmp_context[0], 0, expt_set->arr_size);
+                memset(tmp_context[1], 0, expt_set->arr_size);
 
                 // x: select read1 or read2; ext_coor: extend corrdinates;
                 #define __gen_read(x, start_pos, iter) do {                     \
@@ -475,11 +455,11 @@ void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char
 
                 // print reads to stdout: mode 0 print string (WGS), else print chars&numbers (WGBS)
                 if(expt_set->output_fmt == 0){
-                    output_read(tmp_seq, tmp_context, err_thre, flip_thre, flag_mut, ii, ks->name.s, half_size, Q,
+                    output_read(tmp_seq, tmp_context, ks->name.s, ii, flag_mut, Q, expt_set, 
                                 size, start, end, n_sub, n_indel, n_err, cover_pos);
                 } else {
                     // if(!flag_indel){continue;} // for bug testing
-                    output_read(tmp_seq, tmp_context, tmp_pos, flag_mut, ii, ks->name.s, tmp_frag.strand, posidx_arr, kmeridx_arr,
+                    output_read(tmp_seq, tmp_context, tmp_pos, ks->name.s, ii, flag_mut, tmp_frag.strand, posidx_arr,
                                 size, start, end, n_sub, n_indel, n_err, cover_pos);
                 }
                 tot_sub   += (int)(n_sub[0]  + n_sub[1] > 0);
@@ -489,7 +469,6 @@ void sim_core(const char *fn, char *vcf_file, char *bed_file, char *chr_id, char
         }
         free(rseq[0].s); free(rseq[1].s);
         free(posidx_arr);
-        if(expt_set->is_kmer_set){free(kmeridx_arr);}
         tot_pairs += n_pairs;
     }
 
@@ -525,24 +504,27 @@ static int simu_usage()
     fprintf(stderr, "         -2 INT        length of the second read [%d]\n", SIZE_R);
     fprintf(stderr, "         -E FLOAT      base error rate (set to be 0 for bisulfite sequencing) [%.3f]\n", ERR_RATE);
     fprintf(stderr, "         -A FLOAT      disgard if the fraction of ambiguous bases higher than FLOAT [%.2f]\n", MAX_N_RATIO);
+    fprintf(stderr, "         -o STRING     output prefix [%s]\n", OUTPUT_PREFIX);
     fprintf(stderr, "         -O INT        output format: 0 for letters; nonzero for ascii numbers (for python module) [%d]\n", OUTPUT_FMT);
     fprintf(stderr, "         -k INT        whether to output kmer index: 0 for no; nonzero for yes [0]\n");
     fprintf(stderr, "mutation setting:\n");
     fprintf(stderr, "         -v STRING     path to the genetic variant file (.vcf/vcf.gz) [None]\n");
+    fprintf(stderr, "         -V STRING     snpmeth intermediate file [None]\n");
     fprintf(stderr, "         -R FLOAT      rate of mutations [%.4f]\n", MUT_RATE);
     fprintf(stderr, "         -F FLOAT      fraction of indels [%.2f]\n", INDEL_FRAC);
     fprintf(stderr, "         -X FLOAT      probability an indel is extended [%.2f]\n", INDEL_EXTN);
     fprintf(stderr, "         -H INT        haplotype mode: 0 for disable, nonzero for enable (all variants are homozygotes) [0]\n");
     fprintf(stderr, "         -s INT        seed for random generator [-1]\n");
+    fprintf(stderr, "         -w INT        write snpmeth_map to disk: 0 for disable, nonzero for enable [0]\n");
     fprintf(stderr, "MethDB setting:\n");
-    fprintf(stderr, "         -a STRING     ASM file for allelic-specific methylation simulation (.asm/.asm.gz) [None]\n");
     fprintf(stderr, "         -m STRING     methylation reference (.CGmap/.CGmap.gz) [None]\n");
     fprintf(stderr, "         -p INT        pool CGmap: 0 for disable, nonzero for enable (randomly draw value based on context) [0]\n");
-    fprintf(stderr, "         -W INT        write MethDB to disk: 0 for disable, nonzero for enable [0]\n");
+    fprintf(stderr, "         -a STRING     ASM file for allelic-specific methylation simulation (.asm/.asm.gz) [None]\n");
     fprintf(stderr, "         -M STRING     MethDB intermediate file [None]\n");
+    fprintf(stderr, "         -P STRING     Parameter string for beta distribution %s\n", PARAM_DEFAULT);
     fprintf(stderr, "         -S INT        seed for methylation value generation (for cgmap pool or beta distribution) [-1]\n");
-    fprintf(stderr, "         -P STRING     Parameter string for beta distribution [0.5_0.5,0.05_0.05,0.05_0.05]\n");
     fprintf(stderr, "         -U INT        update methdb boundary sites for variants: 0 for no, non-zero for yes [0]\n");
+    fprintf(stderr, "         -W INT        write MethDB to disk: 0 for disable, nonzero for enable [0]\n");
     fprintf(stderr, "technology setting:\n");
     fprintf(stderr, "         -T INT        technology: 0 for Whole genome; 1 for Reduced representation; 2 for Targeted [%d]\n", TECH_MODE);
     fprintf(stderr, "         -u INT        uniform coverage: 0 for diable, nonzero for enable [1]\n");
@@ -560,16 +542,21 @@ int main(int argc, char *argv[])
     uint64_t N  = 0;
     uint32_t chr_N  = 0;
     char none_default[] = "None";
-    char param_default[]= "0.5_0.5,0.05_0.05,0.05_0.05";
-    char *chr_id    = none_default;
-    char *vcf_file  = none_default;
-    char *bias_file = none_default;
-    char *cut_str   = none_default;
-    char *bed_file  = none_default; 
-    char *asm_file  = none_default; 
-    char *cgmap_file= none_default;
-    char *param_str = param_default;
-    char *methdb_file= none_default;
+    char param_default[]= "";
+    strcpy(param_default, PARAM_DEFAULT);
+
+    char *chr_id        = none_default;
+    char *vcf_file      = none_default;
+    char *snpmeth_file  = none_default;
+    char *bias_file     = none_default;
+    char *cut_str       = none_default;
+    char *bed_file      = none_default; 
+    char *cgmap_file    = none_default;
+    char *asm_file      = none_default;
+    char *methdb_file   = none_default;
+    char *out_prefix    = none_default;
+    char *param_str     = param_default;
+    
 
     expt_param expt_set;
     meth_param meth_set;
@@ -577,7 +564,7 @@ int main(int argc, char *argv[])
 
     //update parameters from command line
     int c = 0;
-    while ((c = getopt(argc, argv, "I:J:K:L:c:C:n:N:d:1:2:E:A:O:v:R:F:X:H:s:a:m:p:W:M:S:P:T:u:B:b:D:x:")) >= 0) {
+    while ((c = getopt(argc, argv, "I:J:K:L:c:C:n:N:d:1:2:E:A:o:O:v:V:R:F:X:H:s:w:m:p:a:M:P:S:U:W:T:u:B:b:D:x:")) >= 0) {
         switch (c) {
             case 'I': expt_set.mean_insert= atoi(optarg); break;
             case 'J': expt_set.sd_insert  = atoi(optarg); break;
@@ -600,84 +587,127 @@ int main(int argc, char *argv[])
             case 'X': mut_set.indel_extn  = atof(optarg); break;
             case 'H': mut_set.is_hap      = atoi(optarg)!=0; break;
             case 's': mut_set.seed_snp    = atoi(optarg); break;
+            case 'w': mut_set.snpmeth_save= atoi(optarg)!=0; break;
 
             case 'S': meth_set.seed_meth  = atoi(optarg); break;
             case 'W': meth_set.methdb_save= atoi(optarg)!=0; break;
             case 'p': meth_set.cgmap_pool = atoi(optarg)!=0; break;
             case 'U': meth_set.update_meth= atoi(optarg)!=0; break;
 
-            case 'n': chr_N      = atoi(optarg); break;
-            case 'N': N          = atoi(optarg); break;
-            case 'c': chr_id     = optarg; break;
-            case 'v': vcf_file   = optarg; break;
-            case 'a': asm_file   = optarg; break;
-            case 'm': cgmap_file = optarg; break;
-            case 'M': methdb_file= optarg; break;
-            case 'P': param_str  = optarg; break;
-            case 'B': bias_file  = optarg; break;
-            case 'b': bed_file   = optarg; break;
-            case 'x': cut_str    = optarg; break;
+            case 'n': chr_N         = atoi(optarg); break;
+            case 'N': N             = atoi(optarg); break;
+            case 'c': chr_id        = optarg; break;
+            case 'v': vcf_file      = optarg; break;
+            case 'V': snpmeth_file  = optarg; break;
+            case 'm': cgmap_file    = optarg; break;
+            case 'a': asm_file      = optarg; break;
+            case 'M': methdb_file   = optarg; break;
+            case 'o': out_prefix    = optarg; break;
+            case 'P': param_str     = optarg; break;
+            case 'B': bias_file     = optarg; break;
+            case 'b': bed_file      = optarg; break;
+            case 'x': cut_str       = optarg; break;
         }
     }
     if (argc - optind < 1) return simu_usage();
     if (mut_set.seed_snp <= 0) mut_set.seed_snp    = time(0)&0x7fffffff;
     if (meth_set.seed_meth<= 0) meth_set.seed_meth = time(0)&0x7fffffff;
     expt_set.min_insert = std::max(std::max(expt_set.size_l, expt_set.size_r), expt_set.min_insert); // ensure MIN_INSERT >= SIZE_L or SIZE_R
+    expt_set.max_length = std::max(expt_set.size_l, expt_set.size_r);
+    expt_set.half_size  = expt_set.max_length >> 1;
+    expt_set.arr_size   = expt_set.max_length << 2; // because int takes 4 bytes
+    expt_set.err_thre   = (int) RAND_MAX * expt_set.err_rate;
 
-    parse_param(param_str, param_vec);
     expt_set.is_chr_set   = strcmp(chr_id, "None") && strlen(chr_id);
     expt_set.is_bias_set  = strcmp(bias_file,"None")&& strlen(bias_file);
-    expt_set.is_bed_set   = strcmp(bed_file,"None") && strlen(bed_file);
     expt_set.is_site_set  = strcmp(cut_str, "None") && strlen(cut_str);
+    expt_set.is_bed_set   = strcmp(bed_file,"None") && strlen(bed_file);
     mut_set.is_vcf_set    = strcmp(vcf_file,"None") && strlen(vcf_file);
-    meth_set.is_asm_set   = strcmp(asm_file, "None") && strlen(asm_file);
+    mut_set.is_snpmeth_set= strcmp(snpmeth_file, "None")&& strlen(snpmeth_file);
     meth_set.is_cgmap_set = strcmp(cgmap_file, "None")&& strlen(cgmap_file);
+    meth_set.is_asm_set   = strcmp(asm_file, "None") && strlen(asm_file);
     meth_set.is_methdb_set= strcmp(methdb_file, "None")&& strlen(methdb_file);
 
-    if(!expt_set.is_bed_set && expt_set.tech_mode){
-        fprintf(stderr, "ERROR: Please specify bed file for your choosen tech mode\n");exit(EXIT_FAILURE);
-    }
-
-    if (expt_set.is_bed_set && (expt_set.tech_mode==2 || !expt_set.is_site_set)){
-        fprintf(stderr, "Simulating targeted sequencing reads:\n");
-        expt_set.tech_mode = 2;
-    } else if (expt_set.is_bed_set && (expt_set.tech_mode==1 || expt_set.is_site_set)){
-        fprintf(stderr, "Simulating restricted enzyme cutting reads:\n");
-        expt_set.tech_mode = 1;
-    } else {
-        fprintf(stderr, "Simulating whole genome reads:\n");
-        if(!expt_set.is_uniform){
-            if(expt_set.is_bias_set){
-                parse_bias_file(bias_file, eff_vec); expt_set.is_uniform = false; expt_set.bin_size = eff_vec.size();
-            }else{
-                fprintf(stderr, "ERROR: Please specify GC-Bias file when specifying -u as 0\n");exit(EXIT_FAILURE);
-            }
+    // check input tech mode
+    if(expt_set.is_bed_set){
+        if(expt_set.tech_mode==2 || !expt_set.is_site_set){
+            fprintf(stderr, "Simulating targeted sequencing reads:\n");
+            expt_set.tech_mode = 2;
+        }else if (expt_set.tech_mode==1 || expt_set.is_site_set){
+            fprintf(stderr, "Simulating restricted enzyme cutting reads:\n");
+            expt_set.tech_mode = 1;
+        }else if (expt_set.tech_mode==0){
+            fprintf(stderr, "Simulating whole genome reads:\n");
+            fprintf(stderr, "Ignoring the BED file:%s in this mode\n", bed_file);
+        }else{
+            fprintf(stderr, "ERROR: Invalid mode detected for given BED file\n"); exit(EXIT_FAILURE);
         }
-        expt_set.tech_mode = 0;
+    }else{
+        if(expt_set.tech_mode){
+            fprintf(stderr, "ERROR: Please specify BED file for the choosen mode\n"); exit(EXIT_FAILURE);
+        }else{
+            fprintf(stderr, "Simulating whole genome reads:\n");
+        }
     }
 
     // prepare to simulate reads
-    fprintf(stderr, "Reference genome file: %s\n", argv[optind]);
-    
-    // check input vcf file
-    if (mut_set.is_vcf_set) {
+    fprintf(stderr, "[Input] Reference genome file: %s\n", argv[optind]);
+
+    // check input vcf or snpmeth file
+    if (mut_set.is_snpmeth_set && !mut_set.snpmeth_save) {
+        FILE *snpmeth;
+        if((snpmeth=fopen(snpmeth_file,"r"))){fprintf(stderr, "[Input] snpmeth file: %s, use it to create haplotypes\n", snpmeth_file); fclose(snpmeth);
+        }else{fprintf(stderr, "ERROR: The specified snpmeth file does not exist, please check!\n"); exit(EXIT_FAILURE);}
+    } else if (mut_set.is_vcf_set) {
         FILE *vcf;
-        if((vcf=fopen(vcf_file,"r"))){fprintf(stderr, "VCF file: %s, use it to create haplotypes\n", vcf_file); fclose(vcf);
+        if((vcf=fopen(vcf_file,"r"))){fprintf(stderr, "[Input] VCF file: %s, use it to create haplotypes\n", vcf_file); fclose(vcf);
         }else{fprintf(stderr, "ERROR: The specified VCF file does not exist, please check!\n"); exit(EXIT_FAILURE);}
     } else {
-        fprintf(stderr, "[%s] No VCF input, will generate SNP randomly if mutation rate is nonzero\n", __func__);
+        fprintf(stderr, "[%s] No VCF or snpmeth input, will generate SNP randomly if mutation rate is nonzero\n", __func__);
     }
-    if (expt_set.is_bed_set) {fprintf(stderr, "BED file: %s\n", bed_file);}
+    
+    // check input methylation profile
+    if (meth_set.is_methdb_set && !meth_set.methdb_save) {
+        FILE *methdb;
+        if((methdb=fopen(methdb_file,"r"))){fprintf(stderr, "[Input] MethDB file: %s, use it to create methylation profile\n", methdb_file); fclose(methdb);
+        }else{fprintf(stderr, "ERROR: The specified MethDB file does not exist, please check!\n"); exit(EXIT_FAILURE);}
+    } else if (meth_set.is_cgmap_set) {
+        FILE *cgmap;
+        if((cgmap=fopen(cgmap_file,"r"))){fprintf(stderr, "[Input] CGmap file: %s, use it to create methylation profile\n", cgmap_file); fclose(cgmap);
+        }else{fprintf(stderr, "ERROR: The specified CGmap file does not exist, please check!\n"); exit(EXIT_FAILURE);}
+    } else {
+        fprintf(stderr, "[%s] No MethDB or CGmap input, will generate methylation profile randomly based on context and beta parameters\n", __func__);
+    }
+
+    // check input GC bias file for WGS/WGBS, bed file for RRBS/TBS
+    if(expt_set.tech_mode==0){
+        if(expt_set.is_bias_set){
+            fprintf(stderr, "[Input] GC-Bias file: %s\n", bias_file);
+            parse_bias_file(bias_file, eff_vec);
+            expt_set.is_uniform = false;
+            expt_set.bin_size = eff_vec.size();
+        }else if(!expt_set.is_uniform){
+            fprintf(stderr, "ERROR: Please specify GC-Bias file when specifying -u as 0\n");exit(EXIT_FAILURE);
+        }else{}
+    } else{
+        if (expt_set.is_bed_set) {
+            FILE *bed;
+            if((bed=fopen(bed_file,"r"))){fprintf(stderr,"[Input] BED file: %s\n", bed_file); fclose(bed);
+            }else{fprintf(stderr, "ERROR: The specified BED file does not exist, please check!\n"); exit(EXIT_FAILURE);}
+        }
+    }
+
+    // parse parameters string
+    parse_param(param_str, params_map);
 
     // check existence of fasta, parse the length and calculate the count for each chr_id
     cal_chr_count(argv[optind], chr_id, bed_file, N, chr_N, &expt_set, probe_vec, chr_count);
-
 
     fprintf(stderr, "[htsim] snp seed = %d, meth seed = %d\n", mut_set.seed_snp, meth_set.seed_meth);
     srand48(mut_set.seed_snp);
     srand(time(0)&0x7fffffff);
 
-    sim_core(argv[optind], vcf_file, bed_file, chr_id, methdb_file, cgmap_file, asm_file, &expt_set, &mut_set, &meth_set);
+    sim_core(argv[optind], vcf_file, bed_file, chr_id, methdb_file, cgmap_file, asm_file, snpmeth_file, &expt_set, &mut_set, &meth_set);
 
     return 0;
 }

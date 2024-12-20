@@ -8,6 +8,8 @@
 
 /*-------------------------variable-------------------------*/
 extern const char PACKAGE_VERSION[];
+extern const char OUTPUT_PREFIX[];
+extern const char PARAM_DEFAULT[];
 
 extern const uint8_t nst_nt4_table[256];
 extern const uint8_t cg_table[5];
@@ -40,20 +42,14 @@ extern const mut_t mutmsk;
 
 
 /*-------------------------struct-------------------------*/
-// parse VCF
+// parse VCF and hold the methylation information
 typedef struct {
-    int pos, ref, alt, geno;
-} snp_rec;
-
-
-typedef struct {
-    uint16_t ref, alt; //alt have insert length
-    uint16_t pos;
-    uint8_t geno, type;//nonzero for insertion
-    std::vector<float> meth;
-    std::vector<uint16_t> kmeridx;
-    std::vector<uint8_t> context;
-} snpmeth_rec;
+    float meth[4];
+    uint16_t kmeridx[4];
+    uint16_t ref, alt;
+    uint8_t context[4];
+    int8_t hap1, hap2, is_phased, offset;
+} snpmeth_rec;                  /*each struct take 36 bytes*/   
 
 
 // parse BED
@@ -127,9 +123,10 @@ typedef struct {
 typedef struct {
     int pos = -1;
     float meth[2]  = {-1,-1};
+    uint16_t kmeridx[2]= {0,0};
     uint8_t context[2] = {0,0}; /*1,3,7;9,11,15 for the context*/
     uint8_t type   = 0;         /*0,2,4,8,10 for uninitial, cgmap, asm, beta, pool*/
-    // int16_t asm_ofs= 0;      /*0,1 for asm*/
+    uint8_t is_asm = 0;         /*0,1 for asm*/
 } meth_rec;                     /*each struct take 15 bytes*/
 
 typedef struct {
@@ -157,6 +154,12 @@ typedef struct {
     int max_insert      = MAX_INSERT;
     int size_l          = SIZE_L;
     int size_r          = SIZE_R;
+    int max_length      = SIZE_L;
+    int half_size       = SIZE_L >> 1;
+    int arr_size        = SIZE_L << 2; // because int takes 4 bytes
+    int flip_thre       = RAND_MAX >> 1;
+    int err_thre        = (int) RAND_MAX * ERR_RATE;
+
     int sd_center       = SD_CENTER;
     int bin_size        = BIN_SIZE;
     int chunk_size      = CHUNK_SIZE;
@@ -178,6 +181,8 @@ typedef struct {
     int   seed_snp      = -1;
     bool  is_hap        = false;
     bool  is_vcf_set    = false;
+    bool  is_snpmeth_set= false;
+    bool  snpmeth_save  = false;
 } mut_param;
 
 typedef struct{
@@ -191,4 +196,3 @@ typedef struct{
 } meth_param;
 
 #endif
-
