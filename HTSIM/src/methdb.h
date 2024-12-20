@@ -10,17 +10,19 @@
 #include "vcf.h"
 #include "struct.h"
 
-// create/stream MethDB
+
+// create/save/load MethDB
 void create_methdb(const kseq_t *ks, uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec);
 
 void update_variant(const kseq_t *ks, mutseq_t *hap1, mutseq_t *hap2, uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec, 
-                    uint32_t *kmeridx_arr, meth_param *meth_set, std::vector<param_rec>& param_vec, std::map<int, snpmeth_rec>& snpmeth_map);
+                    meth_param *meth_set, std::map<int, param_rec>& params_map, std::map<int, snpmeth_rec>& snpmeth_map);
 
-void save_methdb(std::vector<meth_rec>& meth_vec, const char *fname);
+void save_methdb(char *fname, char *chr_id, std::vector<meth_rec>& meth_vec);
 
-void parse_methdb_line(char *line, meth_rec *tmp_meth);
+int parse_methdb_line(char *line, char *chr_id, meth_rec *tmp_meth);
 
-void load_methdb(uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec, char *fname);
+void load_methdb(char *fname, char *chr_id, uint32_t *posidx_arr, std::vector<meth_rec>& meth_vec);
+
 
 // for CGmap
 int parse_cgmap_line(char *line, char *chr_id, meth_rec *tmp_meth);
@@ -37,11 +39,21 @@ void fill_asm_chr(char *fname, char *chr_id, uint32_t *posidx_arr, std::vector<m
 
 
 // fill with distribution
-void parse_param(char *param_str, std::vector<param_rec>& param_vec);
+void parse_param(char *param_str, std::map<int, param_rec>& params_map);
 
-float gen_beta(gsl_rng *rng, uint8_t context, std::vector<param_rec>& param_vec);
+float gen_beta(gsl_rng *rng, uint8_t context, std::map<int, param_rec>& params_map);
 
-void fill_beta(std::vector<meth_rec>& meth_vec, std::vector<param_rec>& param_vec, int seed);
+void fill_beta(std::vector<meth_rec>& meth_vec, std::map<int, param_rec>& params_map, int seed);
+
+
+// for SNP meth
+void collect_snpmeth(const kseq_t *ks, mutseq_t *hap1, mutseq_t *hap2, uint32_t *posidx_arr, std::map<int, snpmeth_rec>& snpmeth_map);
+
+void save_snpmeth(char *fname, char *chr_id, std::map<int, snpmeth_rec>& snpmeth_map);
+
+int parse_snpmeth_line(char *line, char *chr_id, snpmeth_rec *tmp_snpmeth);
+
+void load_snpmeth(char *fname, char *chr_id, uint32_t *posidx_arr, std::map<int, snpmeth_rec>& snpmeth_map);
 
 
 #endif
