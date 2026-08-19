@@ -1,0 +1,473 @@
+{
+  "created_at_utc": "2026-08-16T05:44:37.084716+00:00",
+  "environment": {
+    "core": "build/bin/htsim-core",
+    "core_sha256": "6347d29fa1b3b75ab9cf8553836cf8abe55745103188cb1ee8bae4d92355924b",
+    "core_version": "htsim-core 0.2.0",
+    "git_commit": "4b215777d276869efcc03cd09baf67db1929f7fd",
+    "git_status": "",
+    "lscpu_json": "{\n   \"lscpu\": [\n      {\n         \"field\": \"Architecture:\",\n         \"data\": \"x86_64\"\n      },{\n         \"field\": \"CPU op-mode(s):\",\n         \"data\": \"32-bit, 64-bit\"\n      },{\n         \"field\": \"Address sizes:\",\n         \"data\": \"46 bits physical, 48 bits virtual\"\n      },{\n         \"field\": \"Byte Order:\",\n         \"data\": \"Little Endian\"\n      },{\n         \"field\": \"CPU(s):\",\n         \"data\": \"28\"\n      },{\n         \"field\": \"On-line CPU(s) list:\",\n         \"data\": \"0-27\"\n      },{\n         \"field\": \"Vendor ID:\",\n         \"data\": \"GenuineIntel\"\n      },{\n         \"field\": \"Model name:\",\n         \"data\": \"Intel(R) Core(TM) i7-14700K\"\n      },{\n         \"field\": \"CPU family:\",\n         \"data\": \"6\"\n      },{\n         \"field\": \"Model:\",\n         \"data\": \"183\"\n      },{\n         \"field\": \"Thread(s) per core:\",\n         \"data\": \"2\"\n      },{\n         \"field\": \"Core(s) per socket:\",\n         \"data\": \"14\"\n      },{\n         \"field\": \"Socket(s):\",\n         \"data\": \"1\"\n      },{\n         \"field\": \"Stepping:\",\n         \"data\": \"1\"\n      },{\n         \"field\": \"BogoMIPS:\",\n         \"data\": \"6835.19\"\n      },{\n         \"field\": \"Flags:\",\n         \"data\": \"fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology tsc_reliable nonstop_tsc cpuid tsc_known_freq pni pclmulqdq vmx ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch ssbd ibrs ibpb stibp ibrs_enhanced tpr_shadow ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid rdseed adx smap clflushopt clwb sha_ni xsaveopt xsavec xgetbv1 xsaves avx_vnni vnmi umip waitpkg gfni vaes vpclmulqdq rdpid movdiri movdir64b fsrm md_clear serialize flush_l1d arch_capabilities\"\n      },{\n         \"field\": \"Virtualization:\",\n         \"data\": \"VT-x\"\n      },{\n         \"field\": \"Hypervisor vendor:\",\n         \"data\": \"Microsoft\"\n      },{\n         \"field\": \"Virtualization type:\",\n         \"data\": \"full\"\n      },{\n         \"field\": \"L1d cache:\",\n         \"data\": \"672 KiB (14 instances)\"\n      },{\n         \"field\": \"L1i cache:\",\n         \"data\": \"448 KiB (14 instances)\"\n      },{\n         \"field\": \"L2 cache:\",\n         \"data\": \"28 MiB (14 instances)\"\n      },{\n         \"field\": \"L3 cache:\",\n         \"data\": \"33 MiB (1 instance)\"\n      },{\n         \"field\": \"NUMA node(s):\",\n         \"data\": \"1\"\n      },{\n         \"field\": \"NUMA node0 CPU(s):\",\n         \"data\": \"0-27\"\n      },{\n         \"field\": \"Vulnerability Gather data sampling:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Itlb multihit:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability L1tf:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Mds:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Meltdown:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Mmio stale data:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Reg file data sampling:\",\n         \"data\": \"Mitigation; Clear Register File\"\n      },{\n         \"field\": \"Vulnerability Retbleed:\",\n         \"data\": \"Mitigation; Enhanced IBRS\"\n      },{\n         \"field\": \"Vulnerability Spec rstack overflow:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Spec store bypass:\",\n         \"data\": \"Mitigation; Speculative Store Bypass disabled via prctl\"\n      },{\n         \"field\": \"Vulnerability Spectre v1:\",\n         \"data\": \"Mitigation; usercopy/swapgs barriers and __user pointer sanitization\"\n      },{\n         \"field\": \"Vulnerability Spectre v2:\",\n         \"data\": \"Mitigation; Enhanced / Automatic IBRS; IBPB conditional; RSB filling; PBRSB-eIBRS SW sequence; BHI BHI_DIS_S\"\n      },{\n         \"field\": \"Vulnerability Srbds:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Tsx async abort:\",\n         \"data\": \"Not affected\"\n      }\n   ]\n}",
+    "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "processor": "x86_64",
+    "python": "3.12.3 (main, Jun 19 2026, 12:46:00) [GCC 13.3.0]"
+  },
+  "execution_lane": {
+    "affinity": [
+      0
+    ],
+    "logical_cpu": 0,
+    "paired_order": [
+      "uniform",
+      "profile",
+      "profile",
+      "uniform",
+      "uniform",
+      "profile"
+    ],
+    "workspace": "<temporary>/coverage-benchmark"
+  },
+  "lanes": {
+    "FASTQ-E2E": {
+      "measurements": [
+        {
+          "core_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "methylation_site_count": 61403334,
+            "per_contig_fragment_counts": [
+              500000
+            ],
+            "skipped_fragment_count": 0,
+            "template_base_count": 150000000
+          },
+          "coverage": "uniform",
+          "cpu": {
+            "system_seconds": 0.6669590000000003,
+            "user_seconds": 23.556624999999997
+          },
+          "fragments_per_second": 20352.301454526267,
+          "order_index": 0,
+          "output_bytes": 55598864,
+          "outputs": [
+            {
+              "record_count": 500000,
+              "role": "read1",
+              "sha256": "5bd2cfbd9d555a709d441965ab74e20ef9f00dcd9ab512e47962af9598b19d02",
+              "size_bytes": 27797231
+            },
+            {
+              "record_count": 500000,
+              "role": "read2",
+              "sha256": "3d75e2302b056f49564be47bfee685b6a07797dc6df51e48fed8dcbd1c498205",
+              "size_bytes": 27801633
+            }
+          ],
+          "pair_index": 0,
+          "python_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "records_by_role": {
+              "read1": 500000,
+              "read2": 500000
+            }
+          },
+          "stream_sha256": "4faf20b6a42e3d81dee040cf58b475b97ad43b08e115e18dd7f35590910feceb",
+          "wall_seconds": 24.567246171995066
+        },
+        {
+          "core_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "methylation_site_count": 67343544,
+            "per_contig_fragment_counts": [
+              500000
+            ],
+            "skipped_fragment_count": 405921,
+            "template_base_count": 150000000
+          },
+          "coverage": "profile",
+          "cpu": {
+            "system_seconds": 0.6426719999999997,
+            "user_seconds": 26.224544000000023
+          },
+          "fragments_per_second": 18442.23028694757,
+          "order_index": 1,
+          "output_bytes": 55930529,
+          "outputs": [
+            {
+              "record_count": 500000,
+              "role": "read1",
+              "sha256": "01a352b80d42463f68a307e35d7e165b0da2047d441f3c9ae9545d2249409117",
+              "size_bytes": 27964339
+            },
+            {
+              "record_count": 500000,
+              "role": "read2",
+              "sha256": "bd01b2989997bb32c2165aefbfd80999fa762189392627fd826ee3ed932d6418",
+              "size_bytes": 27966190
+            }
+          ],
+          "pair_index": 0,
+          "python_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "records_by_role": {
+              "read1": 500000,
+              "read2": 500000
+            }
+          },
+          "stream_sha256": "747dc935b9b6f0d4cf9ef9aa3ee10fb723948ff848f936d755c92ec48b5f3109",
+          "wall_seconds": 27.111688348988537
+        },
+        {
+          "core_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "methylation_site_count": 67343544,
+            "per_contig_fragment_counts": [
+              500000
+            ],
+            "skipped_fragment_count": 405921,
+            "template_base_count": 150000000
+          },
+          "coverage": "profile",
+          "cpu": {
+            "system_seconds": 0.6515410000000004,
+            "user_seconds": 26.199370999999985
+          },
+          "fragments_per_second": 18450.697130297285,
+          "order_index": 2,
+          "output_bytes": 55930529,
+          "outputs": [
+            {
+              "record_count": 500000,
+              "role": "read1",
+              "sha256": "01a352b80d42463f68a307e35d7e165b0da2047d441f3c9ae9545d2249409117",
+              "size_bytes": 27964339
+            },
+            {
+              "record_count": 500000,
+              "role": "read2",
+              "sha256": "bd01b2989997bb32c2165aefbfd80999fa762189392627fd826ee3ed932d6418",
+              "size_bytes": 27966190
+            }
+          ],
+          "pair_index": 1,
+          "python_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "records_by_role": {
+              "read1": 500000,
+              "read2": 500000
+            }
+          },
+          "stream_sha256": "ecf2fa4409df725e8b62e434ab27249126dd55b3de1e00c021f7d2f507733404",
+          "wall_seconds": 27.09924706199672
+        },
+        {
+          "core_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "methylation_site_count": 61403334,
+            "per_contig_fragment_counts": [
+              500000
+            ],
+            "skipped_fragment_count": 0,
+            "template_base_count": 150000000
+          },
+          "coverage": "uniform",
+          "cpu": {
+            "system_seconds": 0.631977,
+            "user_seconds": 23.57516700000002
+          },
+          "fragments_per_second": 20527.262238880834,
+          "order_index": 3,
+          "output_bytes": 55598864,
+          "outputs": [
+            {
+              "record_count": 500000,
+              "role": "read1",
+              "sha256": "5bd2cfbd9d555a709d441965ab74e20ef9f00dcd9ab512e47962af9598b19d02",
+              "size_bytes": 27797231
+            },
+            {
+              "record_count": 500000,
+              "role": "read2",
+              "sha256": "3d75e2302b056f49564be47bfee685b6a07797dc6df51e48fed8dcbd1c498205",
+              "size_bytes": 27801633
+            }
+          ],
+          "pair_index": 1,
+          "python_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "records_by_role": {
+              "read1": 500000,
+              "read2": 500000
+            }
+          },
+          "stream_sha256": "8cf97e9e0b207e620d8ef9bb65c9395a5eceb8971b8335ed849de38942e01757",
+          "wall_seconds": 24.35785124101676
+        },
+        {
+          "core_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "methylation_site_count": 61403334,
+            "per_contig_fragment_counts": [
+              500000
+            ],
+            "skipped_fragment_count": 0,
+            "template_base_count": 150000000
+          },
+          "coverage": "uniform",
+          "cpu": {
+            "system_seconds": 1.7154470000000002,
+            "user_seconds": 23.900194
+          },
+          "fragments_per_second": 17061.483763308337,
+          "order_index": 4,
+          "output_bytes": 55598864,
+          "outputs": [
+            {
+              "record_count": 500000,
+              "role": "read1",
+              "sha256": "5bd2cfbd9d555a709d441965ab74e20ef9f00dcd9ab512e47962af9598b19d02",
+              "size_bytes": 27797231
+            },
+            {
+              "record_count": 500000,
+              "role": "read2",
+              "sha256": "3d75e2302b056f49564be47bfee685b6a07797dc6df51e48fed8dcbd1c498205",
+              "size_bytes": 27801633
+            }
+          ],
+          "pair_index": 2,
+          "python_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "records_by_role": {
+              "read1": 500000,
+              "read2": 500000
+            }
+          },
+          "stream_sha256": "173658f2eacd7cb2cc53a9ffa74c9cdbcf2e85141094084eebe9277db151b17f",
+          "wall_seconds": 29.30577474599704
+        },
+        {
+          "core_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "methylation_site_count": 67343544,
+            "per_contig_fragment_counts": [
+              500000
+            ],
+            "skipped_fragment_count": 405921,
+            "template_base_count": 150000000
+          },
+          "coverage": "profile",
+          "cpu": {
+            "system_seconds": 0.9334039999999995,
+            "user_seconds": 27.24258900000001
+          },
+          "fragments_per_second": 17276.031536268412,
+          "order_index": 5,
+          "output_bytes": 55930529,
+          "outputs": [
+            {
+              "record_count": 500000,
+              "role": "read1",
+              "sha256": "01a352b80d42463f68a307e35d7e165b0da2047d441f3c9ae9545d2249409117",
+              "size_bytes": 27964339
+            },
+            {
+              "record_count": 500000,
+              "role": "read2",
+              "sha256": "bd01b2989997bb32c2165aefbfd80999fa762189392627fd826ee3ed932d6418",
+              "size_bytes": 27966190
+            }
+          ],
+          "pair_index": 2,
+          "python_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "records_by_role": {
+              "read1": 500000,
+              "read2": 500000
+            }
+          },
+          "stream_sha256": "843d3e3cff15133d46fe6069baed81adfb9de9d9e10624b13f90386e555053c0",
+          "wall_seconds": 28.941831864009146
+        }
+      ],
+      "summary": {
+        "paired_ratios": [
+          {
+            "pair_index": 0,
+            "profile_to_uniform_throughput_ratio": 0.9061496228401283
+          },
+          {
+            "pair_index": 1,
+            "profile_to_uniform_throughput_ratio": 0.8988386719856722
+          },
+          {
+            "pair_index": 2,
+            "profile_to_uniform_throughput_ratio": 1.0125749774132466
+          }
+        ],
+        "profile": {
+          "maximum_fragments_per_second": 18450.697130297285,
+          "median_fragments_per_second": 18442.23028694757,
+          "median_wall_seconds": 27.111688348988537,
+          "minimum_fragments_per_second": 17276.031536268412,
+          "output_bytes": 55930529
+        },
+        "profile_observed_proposal_acceptance": 0.5519245055584316,
+        "profile_throughput_change_percent": -9.385037715987165,
+        "profile_to_uniform_throughput_ratio": 0.9061496228401283,
+        "profile_wall_overhead_percent": 10.35705084395644,
+        "uniform": {
+          "maximum_fragments_per_second": 20527.262238880834,
+          "median_fragments_per_second": 20352.301454526267,
+          "median_wall_seconds": 24.567246171995066,
+          "minimum_fragments_per_second": 17061.483763308337,
+          "output_bytes": 55598864
+        }
+      }
+    },
+    "core-producer": {
+      "measurements": [
+        {
+          "coverage": "uniform",
+          "cpu": {
+            "system_seconds": 0.20773999999999998,
+            "user_seconds": 12.173063
+          },
+          "fragments_per_second": 40215.60914528946,
+          "order_index": 0,
+          "pair_index": 0,
+          "protocol_batch_fragments": 64,
+          "stdout_sink": "/dev/null",
+          "wall_seconds": 12.43298337701708
+        },
+        {
+          "coverage": "profile",
+          "cpu": {
+            "system_seconds": 0.19191599999999998,
+            "user_seconds": 14.568595000000002
+          },
+          "fragments_per_second": 33805.73492788768,
+          "order_index": 1,
+          "pair_index": 0,
+          "protocol_batch_fragments": 64,
+          "stdout_sink": "/dev/null",
+          "wall_seconds": 14.790389886999037
+        },
+        {
+          "coverage": "profile",
+          "cpu": {
+            "system_seconds": 0.188002,
+            "user_seconds": 14.594205000000002
+          },
+          "fragments_per_second": 33803.434892209174,
+          "order_index": 2,
+          "pair_index": 1,
+          "protocol_batch_fragments": 64,
+          "stdout_sink": "/dev/null",
+          "wall_seconds": 14.791396246990189
+        },
+        {
+          "coverage": "uniform",
+          "cpu": {
+            "system_seconds": 0.2081360000000001,
+            "user_seconds": 12.116244999999992
+          },
+          "fragments_per_second": 40481.993348113705,
+          "order_index": 3,
+          "pair_index": 1,
+          "protocol_batch_fragments": 64,
+          "stdout_sink": "/dev/null",
+          "wall_seconds": 12.351170450041536
+        },
+        {
+          "coverage": "uniform",
+          "cpu": {
+            "system_seconds": 0.18398399999999993,
+            "user_seconds": 12.13123800000001
+          },
+          "fragments_per_second": 40582.93413273171,
+          "order_index": 4,
+          "pair_index": 2,
+          "protocol_batch_fragments": 64,
+          "stdout_sink": "/dev/null",
+          "wall_seconds": 12.320449733000714
+        },
+        {
+          "coverage": "profile",
+          "cpu": {
+            "system_seconds": 0.19598800000000005,
+            "user_seconds": 14.506653
+          },
+          "fragments_per_second": 33989.57098876084,
+          "order_index": 5,
+          "pair_index": 2,
+          "protocol_batch_fragments": 64,
+          "stdout_sink": "/dev/null",
+          "wall_seconds": 14.710394555004314
+        }
+      ],
+      "summary": {
+        "paired_ratios": [
+          {
+            "pair_index": 0,
+            "profile_to_uniform_throughput_ratio": 0.8406122808125466
+          },
+          {
+            "pair_index": 1,
+            "profile_to_uniform_throughput_ratio": 0.8350239723011139
+          },
+          {
+            "pair_index": 2,
+            "profile_to_uniform_throughput_ratio": 0.8375336016265746
+          }
+        ],
+        "profile": {
+          "maximum_fragments_per_second": 33989.57098876084,
+          "median_fragments_per_second": 33805.73492788768,
+          "median_wall_seconds": 14.790389886999037,
+          "minimum_fragments_per_second": 33803.434892209174
+        },
+        "profile_throughput_change_percent": -16.491921143347334,
+        "profile_to_uniform_throughput_ratio": 0.8350807885665267,
+        "profile_wall_overhead_percent": 19.748893004300648,
+        "uniform": {
+          "maximum_fragments_per_second": 40582.93413273171,
+          "median_fragments_per_second": 40481.993348113705,
+          "median_wall_seconds": 12.351170450041536,
+          "minimum_fragments_per_second": 40215.60914528946
+        }
+      }
+    }
+  },
+  "schema": "bsreadsim-wgbs-coverage-paired-benchmark-1",
+  "workload": {
+    "chunk_size": 4096,
+    "compression": "gzip",
+    "core_workers": 1,
+    "error_rate": 0,
+    "fragments": 500000,
+    "gzip_level": 1,
+    "insert_length": 300,
+    "max_in_flight_fragments": 4096,
+    "mutation_rate": 0,
+    "paired_end": true,
+    "profile": "data/experiments/wgbs-gc-target-mock.tsv",
+    "profile_sha256": "4b4414bd17cd621e0623ea9f7312172646e6144942694b263f4af5737d4757c0",
+    "read_length": 150,
+    "reads": 1000000,
+    "reference": "<external-reference>/chr21.fa.gz",
+    "reference_sha256": "c979ca1e5065c2521a50773473e0d0cc018fd6f3e9bb3aa90493fe7b45d57d1b",
+    "warmup_fragments": 50000,
+    "workers": 1
+  }
+}

@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Native build outputs
+*.o
+*.pico
+*.a
+*.so
+*.so.*
+
+# Notebook, editor, and agent-local state
+.ipynb_checkpoints/
+.vscode/
+.idea/
+.history/
+.agents/
+.codex/
+/docs/design/
+/TODO.md
+
+# R session state
+.Rproj.user/
+.Rhistory
+.RData
+*.Rproj
+
+# Large local datasets and experiment outputs.
+# Keep the small top-level experiment/benchmark contracts reviewable while
+# ignoring every nested run directory and generated artifact.
+data/*
+!data/README.md
+!data/experiments/
+!data/benchmarks/
+data/experiments/*
+!data/experiments/README.md
+!data/experiments/*.py
+!data/experiments/*.sh
+!data/experiments/*.json
+!data/experiments/*.toml
+!data/experiments/*.fa
+!data/experiments/*.bed
+!data/experiments/*.vcf
+!data/experiments/*.tsv
+data/benchmarks/*
+!data/benchmarks/README.md
+!data/benchmarks/*.py
+!data/benchmarks/*.sh
+!data/benchmarks/*.json
+!data/benchmarks/*.toml
+
+# Generic generated files
+*.log
+.cache/

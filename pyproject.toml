@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel>=0.41"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bsreadsim"
+version = "0.3.0"
+description = "Bisulfite sequencing read simulation"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Wenbin Guo" },
+]
+dependencies = [
+  "jsonschema>=4.10",
+  "numpy>=1.24",
+]
+
+[project.scripts]
+bsreadsim = "bsreadsim.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+bsreadsim = ["run-config.schema.json", "_licenses/*.txt"]

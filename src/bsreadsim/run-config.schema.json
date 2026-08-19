@@ -1,0 +1,311 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bsreadsim.org/schemas/run-config-1.0.json",
+  "title": "BSReadSim run configuration",
+  "description": "Input for the C++ generation plus Python post-processing architecture. Relative paths resolve against the config file directory.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "reference",
+    "inputs",
+    "mutation",
+    "fragments",
+    "methylation",
+    "sequencing",
+    "execution",
+    "output"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "reference": {
+      "$ref": "#/$defs/path"
+    },
+    "seed": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$",
+      "description": "Unsigned 64-bit decimal master seed. Runtime validation also enforces <= 18446744073709551615. Omit to generate and record one OS-entropy seed."
+    },
+    "technology": {
+      "enum": ["WGBS", "RRBS", "TBS"],
+      "default": "WGBS"
+    },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "vcf": { "$ref": "#/$defs/path" },
+        "cgmap": { "$ref": "#/$defs/path" },
+        "bed_methyl": { "$ref": "#/$defs/path" },
+        "asm": { "$ref": "#/$defs/path" },
+        "asm_bed": { "$ref": "#/$defs/path" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              { "required": ["asm"] },
+              { "required": ["asm_bed"] }
+            ]
+          },
+          "then": { "required": ["vcf"] }
+        },
+        { "not": { "required": ["cgmap", "bed_methyl"] } },
+        { "not": { "required": ["asm", "asm_bed"] } }
+      ]
+    },
+    "mutation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rate": { "$ref": "#/$defs/probability", "default": 0.001 },
+        "indel_fraction": { "$ref": "#/$defs/probability", "default": 0.15 },
+        "indel_extension_probability": { "$ref": "#/$defs/probability", "default": 0.15 },
+        "homozygous_only": { "type": "boolean", "default": false }
+      }
+    },
+    "fragments": {
+      "type": "object",
+      "description": "Runtime validation additionally enforces each read length <= insert_min <= insert_mean <= insert_max.",
+      "additionalProperties": false,
+      "required": ["paired_end", "read_length_1", "insert_min", "insert_max"],
+      "properties": {
+        "paired_end": { "type": "boolean" },
+        "read_length_1": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "read_length_2": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "insert_mean": { "type": "integer", "minimum": 1, "maximum": 4294967295, "default": 400 },
+        "insert_stddev": { "type": "number", "minimum": 0, "maximum": 1.7976931348623157e308, "default": 25 },
+        "insert_min": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
+        "insert_max": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
+        "depth": { "type": "number", "exclusiveMinimum": 0, "maximum": 1.7976931348623157e308 },
+        "read_pairs": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
+        "max_ambiguous_fraction": { "$ref": "#/$defs/probability", "default": 0.05 }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "paired_end": { "const": true } },
+            "required": ["paired_end"]
+          },
+          "then": { "required": ["read_length_2"] },
+          "else": { "not": { "required": ["read_length_2"] } }
+        },
+        {
+          "oneOf": [
+            { "required": ["depth"], "not": { "required": ["read_pairs"] } },
+            { "required": ["read_pairs"], "not": { "required": ["depth"] } }
+          ]
+        }
+      ]
+    },
+    "methylation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["beta"],
+      "properties": {
+        "collect_non_cpg": { "type": "boolean", "default": true },
+        "cgmap_pool": { "type": "boolean", "default": false },
+        "update_variant_boundaries": { "type": "boolean", "default": true },
+        "beta": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["CG", "CHG", "CHH"],
+          "properties": {
+            "CG": { "$ref": "#/$defs/betaPair" },
+            "CHG": { "$ref": "#/$defs/betaPair" },
+            "CHH": { "$ref": "#/$defs/betaPair" }
+          }
+        }
+      }
+    },
+    "coverage": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "const": "uniform" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "artifact"],
+          "properties": {
+            "kind": { "const": "profile" },
+            "artifact": { "$ref": "#/$defs/modelArtifact" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "const": "profile" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "const": "target-score" } }
+        }
+      ],
+      "default": { "kind": "uniform" }
+    },
+    "rrbs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cut_sites"],
+      "properties": {
+        "cut_sites": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "maxLength": 1025,
+            "pattern": "^[ACGTN]*\\|[ACGTN]+$"
+          }
+        },
+        "candidate_bed": { "$ref": "#/$defs/path" }
+      }
+    },
+    "tbs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bed"],
+      "properties": {
+        "bed": { "$ref": "#/$defs/path" },
+        "fragment_center_stddev": { "type": "number", "minimum": 0, "maximum": 1.7976931348623157e308, "default": 50 }
+      }
+    },
+    "sequencing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["conversion_rate", "directional", "quality", "error"],
+      "properties": {
+        "conversion_rate": { "$ref": "#/$defs/probability" },
+        "directional": { "type": "boolean" },
+        "quality": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "phred"],
+              "properties": {
+                "kind": { "const": "uniform" },
+                "phred": { "type": "integer", "minimum": 0, "maximum": 93 }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "artifact"],
+              "properties": {
+                "kind": { "const": "markov" },
+                "artifact": { "$ref": "#/$defs/modelArtifact" }
+              }
+            }
+          ]
+        },
+        "error": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "rate"],
+              "properties": {
+                "kind": { "const": "uniform" },
+                "rate": { "$ref": "#/$defs/probability" }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "artifact"],
+              "properties": {
+                "kind": { "const": "quality-confusion" },
+                "artifact": { "$ref": "#/$defs/modelArtifact" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workers": { "type": "integer", "minimum": 1, "maximum": 1024, "default": 1 },
+        "core_workers": { "type": "integer", "minimum": 1, "maximum": 64, "default": 1 },
+        "chunk_size": { "type": "integer", "minimum": 1, "maximum": 10000000, "default": 10000 },
+        "max_in_flight_fragments": { "type": "integer", "minimum": 1, "maximum": 1000000, "default": 4096 }
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["directory", "prefix"],
+      "properties": {
+        "directory": { "$ref": "#/$defs/path" },
+        "prefix": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$" },
+        "compression": { "enum": ["none", "gzip"], "default": "gzip" },
+        "gzip_level": { "type": "integer", "minimum": 0, "maximum": 9, "default": 6 },
+        "truth_bam": { "type": "boolean", "default": false }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "technology": { "const": "WGBS" } }, "required": ["technology"] },
+      "then": {
+        "properties": { "rrbs": false, "tbs": false }
+      }
+    },
+    {
+      "if": { "properties": { "technology": { "const": "RRBS" } }, "required": ["technology"] },
+      "then": {
+        "required": ["rrbs"],
+        "properties": { "tbs": false }
+      }
+    },
+    {
+      "if": { "properties": { "technology": { "const": "TBS" } }, "required": ["technology"] },
+      "then": {
+        "required": ["tbs"],
+        "properties": { "rrbs": false }
+      }
+    }
+  ],
+  "$defs": {
+    "path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "probability": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "betaPair": {
+      "type": "array",
+      "prefixItems": [
+        { "type": "number", "exclusiveMinimum": 0, "maximum": 1.7976931348623157e308 },
+        { "type": "number", "exclusiveMinimum": 0, "maximum": 1.7976931348623157e308 }
+      ],
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "modelArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "format", "version", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/path" },
+        "format": { "enum": ["json", "npz", "onnx", "tsv"] },
+        "version": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    }
+  }
+}

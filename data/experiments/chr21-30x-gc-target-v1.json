@@ -1,0 +1,52 @@
+{
+  "accounting": {
+    "eligible_start_count": 40075248,
+    "fragment_count": 4670998,
+    "protocol_batch_fragments": 64,
+    "skipped_fragment_count": 3781335,
+    "stream_matches_fastq_run": true,
+    "stream_sha256": "5ee3ccac0260328cc579c5610277201ad2303838a87b71a8d76c411ef691e12c"
+  },
+  "experiment_schema_version": "1.0",
+  "metrics": {
+    "candidate_vs_observed_overlap": 0.8147998247226546,
+    "expected_proposal_acceptance": 0.5526580704935855,
+    "observed_proposal_acceptance": 0.5526282506853433,
+    "target_vs_observed_max_abs_error": 0.00012023691885199028,
+    "target_vs_observed_overlap": 0.9990093408943893,
+    "target_vs_observed_total_variation": 0.0009906591056106917
+  },
+  "outputs": {
+    "per_bin_tsv": "data/experiments/chr21-30x-gc-target-v1.tsv",
+    "plot": null
+  },
+  "profile": {
+    "bin_count": 100,
+    "path": "data/experiments/wgbs-gc-target-mock.tsv",
+    "sha256": "4b4414bd17cd621e0623ea9f7312172646e6144942694b263f4af5737d4757c0",
+    "version": "wgbs-gc-target-v1"
+  },
+  "reference": {
+    "contig": "chr21",
+    "length": 46709983,
+    "path": "<external-reference>/chr21.fa.gz",
+    "sha256": "c979ca1e5065c2521a50773473e0d0cc018fd6f3e9bb3aa90493fe7b45d57d1b"
+  },
+  "run_id": "ad30ba12-a58e-42cf-9dd8-3eb6f776497f",
+  "simulation": {
+    "core_workers": 1,
+    "depth": 30.0,
+    "insert_length": 300,
+    "master_seed": "20260815",
+    "max_ambiguous_fraction": 0.05,
+    "read_length_1": 150,
+    "read_length_2": 150,
+    "workers": 1
+  },
+  "source_manifest": "<temporary>/output/chr21_30x_target.manifest.json",
+  "timing_seconds": {
+    "candidate_histogram": 2.2992706280201674,
+    "core_replay": 71.7559567479766,
+    "total": 75.57332968799165
+  }
+}
