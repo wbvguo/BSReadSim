@@ -1,0 +1,16 @@
+include CMakeLists.txt
+include .gitmodules
+include docs/truth-bam-v1.md
+include docs/read-name-v1.md
+recursive-include HTSIM/src *.cpp *.h
+graft HTSLIB
+exclude HTSLIB/.git
+exclude HTSLIB/htscodecs/.git
+prune HTSLIB/.github
+prune HTSLIB/ref_cache
+prune HTSLIB/samples
+prune HTSLIB/test
+prune HTSLIB/htscodecs/.github
+prune HTSLIB/htscodecs/javascript
+prune HTSLIB/htscodecs/tests
+prune tests
