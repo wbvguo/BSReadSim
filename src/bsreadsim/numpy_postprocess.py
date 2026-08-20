@@ -394,14 +394,20 @@ def _process_numpy_fragment_batch(
     converted = oriented.copy()
     attempt_rows, attempt_cycles = np.nonzero(attempted)
     if attempt_rows.size:
-        success = _draw_mate_base_bernoulli(
+        attempt_template_offsets = _mate_template_offsets(
+            template_starts,
+            template_ends,
+            reverse,
+            attempt_rows,
+            attempt_cycles,
+        )
+        success = _draw_fragment_base_bernoulli(
             config.master_seed,
             RNGStage.CONVERSION,
             contig_indices,
             mate_fragment[attempt_rows],
             ordinals[mate_fragment[attempt_rows]],
-            mate_indices[attempt_rows],
-            attempt_cycles,
+            attempt_template_offsets,
             config.conversion_rate,
         )
         success_rows = attempt_rows[success]
@@ -601,14 +607,30 @@ def _fragment_conversion_modes(
     return result
 
 
-def _draw_mate_base_bernoulli(
+def _mate_template_offsets(
+    template_starts: np.ndarray,
+    template_ends: np.ndarray,
+    reverse: np.ndarray,
+    mate_rows: np.ndarray,
+    cycles: np.ndarray,
+) -> np.ndarray:
+    cycles_u64 = cycles.astype(np.uint64, copy=False)
+    starts_u64 = template_starts[mate_rows].astype(np.uint64, copy=False)
+    ends_u64 = template_ends[mate_rows].astype(np.uint64, copy=False)
+    return np.where(
+        reverse[mate_rows],
+        ends_u64 - np.uint64(1) - cycles_u64,
+        starts_u64 + cycles_u64,
+    ).astype(np.uint64, copy=False)
+
+
+def _draw_fragment_base_bernoulli(
     master_seed: int,
     stage: RNGStage,
     contig_indices: np.ndarray,
     fragment_indices: np.ndarray,
     ordinals: np.ndarray,
-    mate_indices: np.ndarray,
-    cycles: np.ndarray,
+    template_offsets: np.ndarray,
     probability: float,
 ) -> np.ndarray:
     result = np.empty(len(ordinals), dtype=np.bool_)
@@ -618,10 +640,7 @@ def _draw_mate_base_bernoulli(
     if probability == 1.0:
         result.fill(True)
         return result
-    local_indices = np.left_shift(
-        mate_indices.astype(np.uint64),
-        np.uint64(32),
-    ) | cycles.astype(np.uint64)
+    local_indices = template_offsets.astype(np.uint64, copy=False)
     groups = _contig_fragment_groups(contig_indices)
     if len(groups) == 1:
         contig_index = next(iter(groups))

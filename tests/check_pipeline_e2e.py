@@ -150,7 +150,10 @@ def run_direct_profile_cli(core: Path, root: Path) -> None:
                 "--seed", "1311768467463790320",
                 "--mutation-rate", "0",
                 "--read-length", "3",
-                "--insert-size", "5",
+                "--insert-min", "3",
+                "--insert-mean", "5",
+                "--insert-max", "8",
+                "--insert-stddev", "1",
                 "--max-ambiguous-fraction", "0",
                 "--coverage-profile", str(profile_path),
                 "--error-rate", "0",
@@ -169,6 +172,14 @@ def run_direct_profile_cli(core: Path, root: Path) -> None:
         raise SystemExit("direct CLI lost profile coverage")
     if artifact["sha256"] != hashlib.sha256(profile_bytes).hexdigest():
         raise SystemExit("direct CLI recorded the wrong profile digest")
+    fragments = normalized["fragments"]
+    if (
+        fragments["insert_min"] != 3
+        or fragments["insert_mean"] != 5
+        or fragments["insert_max"] != 8
+        or fragments["insert_stddev"] != 1.0
+    ):
+        raise SystemExit("direct profile CLI changed variable insert parameters")
     if document["counts"]["core"]["fragment_count"] != 7:
         raise SystemExit("direct profile CLI emitted the wrong fragment count")
     if {item["role"] for item in document["outputs"]} != {"read1", "read2"}:

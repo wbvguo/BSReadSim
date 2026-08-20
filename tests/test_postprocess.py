@@ -254,8 +254,9 @@ class UniformPostprocessTests(unittest.TestCase):
             POSTPROCESS_STAGE_ORDER,
             (
                 "methylation",
-                "orientation",
-                "conversion",
+                "fragment-orientation",
+                "fragment-conversion",
+                "mate-derivation",
                 "quality",
                 "sequencing-error",
                 "format-ready",
@@ -470,11 +471,10 @@ class UniformPostprocessTests(unittest.TestCase):
             [
                 (site_key, 0, 0, 0.0),
                 (conversion_key, 0, 0, 1.0),
-                (conversion_key, 0, 1 << 32, 1.0),
             ],
         )
 
-    def test_site_free_overlap_uses_stable_packed_conversion_addresses(self) -> None:
+    def test_site_free_overlap_converts_each_fragment_base_once(self) -> None:
         fragment = make_site_free_fragment(
             template_bases=(1, 2, 1, 2),
             paired_end=True,
@@ -517,8 +517,6 @@ class UniformPostprocessTests(unittest.TestCase):
             [
                 (conversion_key, 17, 0, 1.0),
                 (conversion_key, 17, 2, 1.0),
-                (conversion_key, 17, (1 << 32) | 1, 1.0),
-                (conversion_key, 17, (1 << 32) | 3, 1.0),
             ],
         )
         self.assertEqual(process_fragment(fragment, "chrOverlap", config), result)

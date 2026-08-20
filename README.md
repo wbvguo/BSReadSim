@@ -22,7 +22,7 @@ part of the runtime.
 
 | Technology | Fragment source | Released coverage | Count mode | Current gate |
 | --- | --- | --- | --- | --- |
-| WGBS (default) | reference/haplotype spans | uniform or target GC distribution | `read_pairs` or depth | uniform supports fixed/variable insert and variants; target GC requires fixed, reference-only inserts |
+| WGBS (default) | reference/haplotype spans | uniform or target GC distribution | `read_pairs` or depth | uniform supports fixed/variable insert and variants; target GC is reference-only, exact for fixed inserts and approximate for variable inserts |
 | RRBS | restriction motifs scanned on each haplotype | uniform or external fragment scores | `read_pairs` | physical enzyme-bounded `[insert_min, insert_max]`; VCF and de novo variants supported |
 | TBS | verified BED6 targets, then conditional haplotype projection | uniform or exact target output weights | `read_pairs` | fixed physical insert; capture strand, VCF, and de novo variants supported |
 
@@ -157,7 +157,7 @@ bsreadsim run \
   --output runs/wgbs-profile \
   --read-pairs 1000000 \
   --read-length 150 \
-  --insert-size 300 \
+  --insert-min 150 --insert-mean 400 --insert-max 1000 --insert-stddev 25 \
   --coverage-profile data/experiments/wgbs-gc-target-mock.tsv \
   --seed 42
 

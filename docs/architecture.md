@@ -1,6 +1,6 @@
 # BSReadSim architecture
 
-Status: current architecture for BSReadSim 0.2.
+Status: current architecture for BSReadSim 0.3.
 
 BSReadSim has one runtime path. The C++17 HTSIM process generates biological
 fragment templates and writes the columnar binary protocol. BSReadSim's Python
@@ -40,7 +40,8 @@ Python owns:
 - configuration validation, defaults, path resolution, and immutable-input
   hashing (the RRBS scored-candidate exchange uses regenerated-row matching);
 - core lifecycle and strict protocol decoding;
-- bisulfite conversion, quality generation, and sequencing errors;
+- fragment-level bisulfite conversion before mate derivation, quality
+  generation, and sequencing errors;
 - bounded process scheduling and ordered output publication;
 - FASTQ, optional Truth JSONL/truth BAM, and the reproducibility manifest.
 
@@ -194,6 +195,9 @@ submodule; the resulting core links HTSlib statically.
   offset arrays are monotone and bounds-checked.
 - Complete diploid haplotypes and contig-level methylation catalogs are built
   before provider-specific fragment discovery.
+- Methylation state and bisulfite conversion are physical fragment events.
+  Conversion is attempted once per template offset before mate windows are
+  derived, so overlapping mates observe the same converted molecule.
 - Philox addresses stochastic decisions by numeric stage, contig index, fragment, mate,
   site, and cycle as applicable. Worker count, chunk size, and completion order
   cannot change generated reads.

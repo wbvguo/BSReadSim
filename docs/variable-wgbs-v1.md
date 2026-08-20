@@ -2,9 +2,9 @@
 
 Status: released normative C++ fragment-candidate component.
 
-This reference-only proposal component supplies uniform-coverage WGBS.
-Target-GC coverage is intentionally restricted to fixed inserts, so it does
-not consume this proposal stream. Typed VCF and de novo catalogs use the sibling
+This reference-only proposal component supplies uniform-coverage WGBS and the
+proposal stream for approximate variable-insert target-GC coverage. Typed VCF
+and de novo catalogs use the sibling
 [variable-haplotype-wgbs-v1.md](variable-haplotype-wgbs-v1.md) boundary.
 Fixed-insert runs retain the existing valid-rank sampler and byte stream.
 
@@ -22,6 +22,13 @@ Each sampling attempt uses one per-contig `uint64 candidate_ordinal`:
 3. The attempt is accepted only when each emitted mate has at most
    `floor(max_ambiguous_fraction * read_length)` ambiguous bases. Bases in the
    unsequenced insert interior do not affect eligibility.
+
+For target-GC coverage, a valid proposal's complete actual insert is assigned a
+GC bin and `fragment/local_index=2` supplies its calibrated acceptance draw.
+The acceptance vector comes from the deterministic `insert_mean` proxy defined
+in [coverage-profile-target-v1.md](coverage-profile-target-v1.md); therefore the
+target guarantee is approximate, while insert length and start still use the
+same proposal contract as uniform coverage.
 
 A rejected attempt increments both the candidate ordinal and the `uint64`
 skipped count. The next chunk starts at the returned next candidate ordinal,

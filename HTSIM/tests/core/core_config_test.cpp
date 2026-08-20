@@ -260,9 +260,6 @@ void test_valid_rrbs_tbs_and_profile_projection()
 
     auto profile_arguments = base_arguments();
     replace_value(profile_arguments, "--coverage", "profile");
-    replace_value(profile_arguments, "--insert-mean", "100");
-    replace_value(profile_arguments, "--insert-max", "100");
-    replace_value(profile_arguments, "--insert-stddev", "0");
     replace_value(profile_arguments, "--mutation-rate", "0");
     profile_arguments.insert(
         profile_arguments.end(),
@@ -277,6 +274,11 @@ void test_valid_rrbs_tbs_and_profile_projection()
                 && profile.coverage_profile_version == "wgbs-gc-target-v1"
                 && profile.coverage_profile_sha256->front() == 0x44,
             "coverage profile metadata was lost");
+    require(profile.insert_min == 100U
+                && profile.insert_mean == 400U
+                && profile.insert_max == 1000U
+                && profile.insert_stddev == 25.0,
+            "profile coverage did not retain variable insert parameters");
 }
 
 void test_unknown_duplicate_and_missing_options_fail()

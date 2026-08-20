@@ -1,0 +1,484 @@
+{
+  "schema": "bsreadsim-technology-paired-benchmark-1",
+  "created_at_utc": "2026-08-20T05:15:47Z",
+  "workload": {
+    "fragments": 500000,
+    "reads": 1000000,
+    "warmup_reads_per_technology": 100000,
+    "paired_end": true,
+    "read_length": 150,
+    "insert_size": 300,
+    "reference": "<generated>/technology-synthetic-10m.fa",
+    "reference_sha256": "5d436a0de36d479aa65d751f3fc56435da77a0aec9832116915e3dd87fd79235",
+    "targets": "<generated>/tbs-targets.bed",
+    "targets_sha256": "826f87e42598a6428b52cc1490a8c8902d196c43ac9dfafd5cf68eebf66d8e8d",
+    "mutation_rate": 0,
+    "error_rate": 0,
+    "compression": "gzip",
+    "gzip_level": 1,
+    "workers": 1,
+    "core_workers": 1,
+    "logical_cpu": 0,
+    "order": [
+      "WGBS",
+      "RRBS",
+      "TBS",
+      "RRBS",
+      "TBS",
+      "WGBS",
+      "TBS",
+      "WGBS",
+      "RRBS"
+    ]
+  },
+  "environment": {
+    "git_commit": "7fd2301d4803fd470607a148402853443c3fd4bd",
+    "git_status": "",
+    "core": "build/bin/htsim-core",
+    "core_sha256": "975fea49f2a39708dd60d104b18be4cf2c1e88c20c8d574c99afb91a9e0b3add",
+    "core_version": "htsim-core 0.3.0",
+    "python": "3.12.3 (main, Jun 19 2026, 12:46:00) [GCC 13.3.0]",
+    "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39"
+  },
+  "measurements": [
+    {
+      "order_index": 0,
+      "pair_index": 0,
+      "technology": "WGBS",
+      "wall_seconds": 8.746785574941896,
+      "fragments_per_second": 57163.8570210773,
+      "reads_per_second": 114327.7140421546,
+      "output_bytes": 21791718,
+      "peak_pss_kib": 53831,
+      "core_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "methylation_site_count": 2000000,
+        "per_contig_fragment_counts": [
+          500000
+        ],
+        "skipped_fragment_count": 0,
+        "template_base_count": 150000000
+      },
+      "python_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "records_by_role": {
+          "read1": 500000,
+          "read2": 500000
+        }
+      },
+      "outputs": [
+        {
+          "record_count": 500000,
+          "role": "read1",
+          "sha256": "753099671df2e1f54eab06a7761e9dbbb3360a62ad307839c1186e9bbf974edb",
+          "size_bytes": 10866571
+        },
+        {
+          "record_count": 500000,
+          "role": "read2",
+          "sha256": "0aa1570a4e14011a95cfc097ee8ce146df7785c69ff25b8b833b4d1d83c285e0",
+          "size_bytes": 10925147
+        }
+      ]
+    },
+    {
+      "order_index": 1,
+      "pair_index": 0,
+      "technology": "RRBS",
+      "wall_seconds": 8.563391114003025,
+      "fragments_per_second": 58388.08403628677,
+      "reads_per_second": 116776.16807257354,
+      "output_bytes": 14528517,
+      "peak_pss_kib": 88025,
+      "core_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "methylation_site_count": 2000000,
+        "per_contig_fragment_counts": [
+          500000
+        ],
+        "skipped_fragment_count": 0,
+        "template_base_count": 150000000
+      },
+      "python_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "records_by_role": {
+          "read1": 500000,
+          "read2": 500000
+        }
+      },
+      "outputs": [
+        {
+          "record_count": 500000,
+          "role": "read1",
+          "sha256": "f9e3ede2900f65ba35b41696986f14938ed9fb368ef70ac361ac5b502448fefe",
+          "size_bytes": 7235724
+        },
+        {
+          "record_count": 500000,
+          "role": "read2",
+          "sha256": "f746f8b8c8984b098888948212c8f9a9fd5346498b58d6f9494f5326d5f9b5be",
+          "size_bytes": 7292793
+        }
+      ]
+    },
+    {
+      "order_index": 2,
+      "pair_index": 0,
+      "technology": "TBS",
+      "wall_seconds": 8.625345121021383,
+      "fragments_per_second": 57968.694931570666,
+      "reads_per_second": 115937.38986314133,
+      "output_bytes": 14417188,
+      "peak_pss_kib": 59155,
+      "core_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "methylation_site_count": 2000000,
+        "per_contig_fragment_counts": [
+          500000
+        ],
+        "skipped_fragment_count": 0,
+        "template_base_count": 150000000
+      },
+      "python_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "records_by_role": {
+          "read1": 500000,
+          "read2": 500000
+        }
+      },
+      "outputs": [
+        {
+          "record_count": 500000,
+          "role": "read1",
+          "sha256": "41d5ef38b0c8c6956796e66939f967eab1315dde48cf27b27f771898fd1236b1",
+          "size_bytes": 7640201
+        },
+        {
+          "record_count": 500000,
+          "role": "read2",
+          "sha256": "c92b97a492504d9802a7f7fdad0bf49fbe7092800a151bda7b0ced71cc6f0602",
+          "size_bytes": 6776987
+        }
+      ]
+    },
+    {
+      "order_index": 3,
+      "pair_index": 1,
+      "technology": "RRBS",
+      "wall_seconds": 8.583512958954088,
+      "fragments_per_second": 58251.208146474986,
+      "reads_per_second": 116502.41629294997,
+      "output_bytes": 14528517,
+      "peak_pss_kib": 88018,
+      "core_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "methylation_site_count": 2000000,
+        "per_contig_fragment_counts": [
+          500000
+        ],
+        "skipped_fragment_count": 0,
+        "template_base_count": 150000000
+      },
+      "python_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "records_by_role": {
+          "read1": 500000,
+          "read2": 500000
+        }
+      },
+      "outputs": [
+        {
+          "record_count": 500000,
+          "role": "read1",
+          "sha256": "f9e3ede2900f65ba35b41696986f14938ed9fb368ef70ac361ac5b502448fefe",
+          "size_bytes": 7235724
+        },
+        {
+          "record_count": 500000,
+          "role": "read2",
+          "sha256": "f746f8b8c8984b098888948212c8f9a9fd5346498b58d6f9494f5326d5f9b5be",
+          "size_bytes": 7292793
+        }
+      ]
+    },
+    {
+      "order_index": 4,
+      "pair_index": 1,
+      "technology": "TBS",
+      "wall_seconds": 8.53950682503637,
+      "fragments_per_second": 58551.39064168036,
+      "reads_per_second": 117102.78128336072,
+      "output_bytes": 14417188,
+      "peak_pss_kib": 59197,
+      "core_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "methylation_site_count": 2000000,
+        "per_contig_fragment_counts": [
+          500000
+        ],
+        "skipped_fragment_count": 0,
+        "template_base_count": 150000000
+      },
+      "python_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "records_by_role": {
+          "read1": 500000,
+          "read2": 500000
+        }
+      },
+      "outputs": [
+        {
+          "record_count": 500000,
+          "role": "read1",
+          "sha256": "41d5ef38b0c8c6956796e66939f967eab1315dde48cf27b27f771898fd1236b1",
+          "size_bytes": 7640201
+        },
+        {
+          "record_count": 500000,
+          "role": "read2",
+          "sha256": "c92b97a492504d9802a7f7fdad0bf49fbe7092800a151bda7b0ced71cc6f0602",
+          "size_bytes": 6776987
+        }
+      ]
+    },
+    {
+      "order_index": 5,
+      "pair_index": 1,
+      "technology": "WGBS",
+      "wall_seconds": 8.825303385965526,
+      "fragments_per_second": 56655.27610021056,
+      "reads_per_second": 113310.55220042112,
+      "output_bytes": 21791718,
+      "peak_pss_kib": 53792,
+      "core_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "methylation_site_count": 2000000,
+        "per_contig_fragment_counts": [
+          500000
+        ],
+        "skipped_fragment_count": 0,
+        "template_base_count": 150000000
+      },
+      "python_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "records_by_role": {
+          "read1": 500000,
+          "read2": 500000
+        }
+      },
+      "outputs": [
+        {
+          "record_count": 500000,
+          "role": "read1",
+          "sha256": "753099671df2e1f54eab06a7761e9dbbb3360a62ad307839c1186e9bbf974edb",
+          "size_bytes": 10866571
+        },
+        {
+          "record_count": 500000,
+          "role": "read2",
+          "sha256": "0aa1570a4e14011a95cfc097ee8ce146df7785c69ff25b8b833b4d1d83c285e0",
+          "size_bytes": 10925147
+        }
+      ]
+    },
+    {
+      "order_index": 6,
+      "pair_index": 2,
+      "technology": "TBS",
+      "wall_seconds": 8.529592541977763,
+      "fragments_per_second": 58619.447240801564,
+      "reads_per_second": 117238.89448160313,
+      "output_bytes": 14417188,
+      "peak_pss_kib": 59251,
+      "core_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "methylation_site_count": 2000000,
+        "per_contig_fragment_counts": [
+          500000
+        ],
+        "skipped_fragment_count": 0,
+        "template_base_count": 150000000
+      },
+      "python_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "records_by_role": {
+          "read1": 500000,
+          "read2": 500000
+        }
+      },
+      "outputs": [
+        {
+          "record_count": 500000,
+          "role": "read1",
+          "sha256": "41d5ef38b0c8c6956796e66939f967eab1315dde48cf27b27f771898fd1236b1",
+          "size_bytes": 7640201
+        },
+        {
+          "record_count": 500000,
+          "role": "read2",
+          "sha256": "c92b97a492504d9802a7f7fdad0bf49fbe7092800a151bda7b0ced71cc6f0602",
+          "size_bytes": 6776987
+        }
+      ]
+    },
+    {
+      "order_index": 7,
+      "pair_index": 2,
+      "technology": "WGBS",
+      "wall_seconds": 8.806552138994448,
+      "fragments_per_second": 56775.908676683444,
+      "reads_per_second": 113551.81735336689,
+      "output_bytes": 21791718,
+      "peak_pss_kib": 53855,
+      "core_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "methylation_site_count": 2000000,
+        "per_contig_fragment_counts": [
+          500000
+        ],
+        "skipped_fragment_count": 0,
+        "template_base_count": 150000000
+      },
+      "python_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "records_by_role": {
+          "read1": 500000,
+          "read2": 500000
+        }
+      },
+      "outputs": [
+        {
+          "record_count": 500000,
+          "role": "read1",
+          "sha256": "753099671df2e1f54eab06a7761e9dbbb3360a62ad307839c1186e9bbf974edb",
+          "size_bytes": 10866571
+        },
+        {
+          "record_count": 500000,
+          "role": "read2",
+          "sha256": "0aa1570a4e14011a95cfc097ee8ce146df7785c69ff25b8b833b4d1d83c285e0",
+          "size_bytes": 10925147
+        }
+      ]
+    },
+    {
+      "order_index": 8,
+      "pair_index": 2,
+      "technology": "RRBS",
+      "wall_seconds": 8.658574914908968,
+      "fragments_per_second": 57746.223242702836,
+      "reads_per_second": 115492.44648540567,
+      "output_bytes": 14528517,
+      "peak_pss_kib": 85462,
+      "core_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "methylation_site_count": 2000000,
+        "per_contig_fragment_counts": [
+          500000
+        ],
+        "skipped_fragment_count": 0,
+        "template_base_count": 150000000
+      },
+      "python_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "records_by_role": {
+          "read1": 500000,
+          "read2": 500000
+        }
+      },
+      "outputs": [
+        {
+          "record_count": 500000,
+          "role": "read1",
+          "sha256": "f9e3ede2900f65ba35b41696986f14938ed9fb368ef70ac361ac5b502448fefe",
+          "size_bytes": 7235724
+        },
+        {
+          "record_count": 500000,
+          "role": "read2",
+          "sha256": "f746f8b8c8984b098888948212c8f9a9fd5346498b58d6f9494f5326d5f9b5be",
+          "size_bytes": 7292793
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "WGBS": {
+      "wall_seconds": [
+        8.746785574941896,
+        8.825303385965526,
+        8.806552138994448
+      ],
+      "reads_per_second": [
+        114327.7140421546,
+        113310.55220042112,
+        113551.81735336689
+      ],
+      "median_wall_seconds": 8.806552138994448,
+      "median_reads_per_second": 113551.81735336689,
+      "minimum_reads_per_second": 113310.55220042112,
+      "maximum_reads_per_second": 114327.7140421546,
+      "peak_pss_kib": 53855,
+      "output_bytes": 21791718
+    },
+    "RRBS": {
+      "wall_seconds": [
+        8.563391114003025,
+        8.583512958954088,
+        8.658574914908968
+      ],
+      "reads_per_second": [
+        116776.16807257354,
+        116502.41629294997,
+        115492.44648540567
+      ],
+      "median_wall_seconds": 8.583512958954088,
+      "median_reads_per_second": 116502.41629294997,
+      "minimum_reads_per_second": 115492.44648540567,
+      "maximum_reads_per_second": 116776.16807257354,
+      "peak_pss_kib": 88025,
+      "output_bytes": 14528517
+    },
+    "TBS": {
+      "wall_seconds": [
+        8.625345121021383,
+        8.53950682503637,
+        8.529592541977763
+      ],
+      "reads_per_second": [
+        115937.38986314133,
+        117102.78128336072,
+        117238.89448160313
+      ],
+      "median_wall_seconds": 8.53950682503637,
+      "median_reads_per_second": 117102.78128336072,
+      "minimum_reads_per_second": 115937.38986314133,
+      "maximum_reads_per_second": 117238.89448160313,
+      "peak_pss_kib": 59251,
+      "output_bytes": 14417188
+    }
+  },
+  "gates": {
+    "equal_core_workload_across_technologies": true,
+    "repeated_counts_and_output_hashes_identical_within_technology": true,
+    "source_commit_is_pre_squash_runtime": true
+  }
+}

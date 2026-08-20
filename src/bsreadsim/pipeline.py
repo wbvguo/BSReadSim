@@ -1033,14 +1033,6 @@ def _require_released_capabilities(config: Mapping[str, object]) -> None:
     if has_depth and technology != "WGBS":
         raise PipelineError("depth-to-count v1 currently supports WGBS only")
     variable_insert = _uses_variable_insert(fragments)
-    if (
-        technology == "WGBS"
-        and coverage["kind"] == "profile"
-        and variable_insert
-    ):
-        raise PipelineError(
-            "target GC profile requires one fixed insert length"
-        )
     if technology == "TBS" and variable_insert:
         raise PipelineError("the TBS baseline requires one fixed insert length")
     if technology == "TBS":

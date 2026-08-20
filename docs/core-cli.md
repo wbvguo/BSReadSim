@@ -100,7 +100,9 @@ use the addressed variable-insert contracts in
 [variable-wgbs-v1.md](variable-wgbs-v1.md) and, for typed VCF/de novo catalogs,
 [variable-haplotype-wgbs-v1.md](variable-haplotype-wgbs-v1.md). Typed VCF
 catalogs retain optional CGmap and ASM overlays on that variable-span path.
-Target-GC WGBS is a deliberately narrower fixed-insert, reference-only path.
+Target-GC WGBS remains reference-only. Fixed inserts use exact opportunity
+calibration; variable inserts use the documented deterministic `insert_mean`
+proxy and preserve the configured clamped-normal insert proposal.
 TBS center dispersion may be any finite non-negative value and follows the
 addressed normal/rejection contract in [tbs-catalog-v1.md](tbs-catalog-v1.md).
 

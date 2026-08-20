@@ -44,6 +44,11 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument("--mode", choices=("production", "debug"), default="production")
     parser.add_argument("--repetitions", type=int, default=5)
     parser.add_argument("--warmup", action="store_true")
+    parser.add_argument(
+        "--warmup-fragments",
+        type=int,
+        help="use this many read pairs for warmup; implies --warmup",
+    )
     parser.add_argument("--memory-sample-ms", type=int, default=25)
     parser.add_argument(
         "--workspace-root",
@@ -200,6 +205,44 @@ def _document_for_output(
     return document
 
 
+def _document_for_warmup(
+    template: Mapping[str, object],
+    output: Path,
+    fragments: Optional[int],
+) -> Mapping[str, object]:
+    document = _document_for_output(template, output)
+    if fragments is None:
+        return document
+    fragment_config = document.get("fragments")
+    if not isinstance(fragment_config, dict) or "read_pairs" not in fragment_config:
+        raise ValueError(
+            "--warmup-fragments requires a run configured with --read-pairs"
+        )
+    if fragment_config.get("depth") is not None:
+        raise ValueError(
+            "--warmup-fragments cannot replace a depth-based workload"
+        )
+    fragment_config["read_pairs"] = fragments
+    return document
+
+
+def _expected_output_roles(
+    template: Mapping[str, object], mode: str
+) -> set[str]:
+    fragments = template.get("fragments")
+    output = template.get("output")
+    if not isinstance(fragments, Mapping) or not isinstance(output, Mapping):
+        raise ValueError("normalized benchmark template is incomplete")
+    roles = {"read1"}
+    if fragments.get("paired_end"):
+        roles.add("read2")
+    if mode == "debug":
+        roles.add("truth")
+    if output.get("truth_bam"):
+        roles.add("truth_bam")
+    return roles
+
+
 def _measure(
     document: Mapping[str, object],
     core: Path,
@@ -228,6 +271,7 @@ def _measure(
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
     verify_complete_manifest(manifest)
     fragments = manifest["counts"]["core"]["fragment_count"]
+    reads = manifest["counts"]["core"]["mate_count"]
     outputs = [
         {
             "role": item.role,
@@ -240,7 +284,9 @@ def _measure(
     return {
         "wall_seconds": wall_seconds,
         "fragments_per_second": fragments / wall_seconds,
+        "reads_per_second": reads / wall_seconds,
         "fragments": fragments,
+        "reads": reads,
         "outputs": outputs,
         "output_bytes": sum(item["size_bytes"] for item in outputs),
         "core_counts": manifest["counts"]["core"],
@@ -292,6 +338,8 @@ def main() -> int:
     arguments = _arguments()
     if arguments.repetitions < 1:
         raise SystemExit("repetitions must be positive")
+    if arguments.warmup_fragments is not None and arguments.warmup_fragments < 1:
+        raise SystemExit("warmup-fragments must be positive")
     if arguments.memory_sample_ms < 0:
         raise SystemExit("memory-sample-ms must be non-negative")
 
@@ -321,9 +369,18 @@ def main() -> int:
     template["output"].pop("truth")
     core = resolve_core_executable(arguments.core)
 
-    if arguments.warmup:
+    warmup = arguments.warmup or arguments.warmup_fragments is not None
+    if warmup:
+        try:
+            warmup_document = _document_for_warmup(
+                template,
+                workspace / "warmup-output",
+                arguments.warmup_fragments,
+            )
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
         _measure(
-            _document_for_output(template, workspace / "warmup-output"),
+            warmup_document,
             core,
             arguments.mode,
             arguments.memory_sample_ms,
@@ -346,17 +403,14 @@ def main() -> int:
     expected = _output_signature(measurements[0])
     if any(_output_signature(item) != expected for item in measurements[1:]):
         raise SystemExit("repetitions produced different counts or output bytes")
-    expected_roles = {"read1"}
-    if template["fragments"]["paired_end"]:
-        expected_roles.add("read2")
-    if arguments.mode == "debug":
-        expected_roles.add("truth")
+    expected_roles = _expected_output_roles(template, arguments.mode)
     observed_roles = {item["role"] for item in measurements[0]["outputs"]}
     if observed_roles != expected_roles:
         raise SystemExit("output roles disagree with the selected mode")
 
     walls = [item["wall_seconds"] for item in measurements]
     throughputs = [item["fragments_per_second"] for item in measurements]
+    read_throughputs = [item["reads_per_second"] for item in measurements]
     memory_values = [
         item["process_tree_memory"]["peak_pss_kib"]
         for item in measurements
@@ -369,7 +423,8 @@ def main() -> int:
         "run_arguments": run_arguments,
         "effective_seed": str(loaded.master_seed),
         "mode": arguments.mode,
-        "warmup": arguments.warmup,
+        "warmup": warmup,
+        "warmup_fragments": arguments.warmup_fragments,
         "repetitions": arguments.repetitions,
         "environment": {
             "python": sys.version,
@@ -387,6 +442,9 @@ def main() -> int:
             "median_fragments_per_second": statistics.median(throughputs),
             "minimum_fragments_per_second": min(throughputs),
             "maximum_fragments_per_second": max(throughputs),
+            "median_reads_per_second": statistics.median(read_throughputs),
+            "minimum_reads_per_second": min(read_throughputs),
+            "maximum_reads_per_second": max(read_throughputs),
             "peak_pss_kib": max(memory_values) if memory_values else None,
             "output_bytes": measurements[0]["output_bytes"],
         },

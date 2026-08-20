@@ -1,0 +1,733 @@
+{
+  "schema": "bsreadsim-output-modes-benchmark-1",
+  "created_at_utc": "2026-08-20T05:15:47Z",
+  "workload": {
+    "fragments": 500000,
+    "reads": 1000000,
+    "paired_end": true,
+    "read_length": 150,
+    "insert_min": 150,
+    "insert_mean": 400,
+    "insert_max": 1000,
+    "insert_stddev": 25,
+    "compression": "gzip",
+    "gzip_level": 1,
+    "logical_cpu": 0
+  },
+  "policies": {
+    "production": {
+      "created_at_utc": "2026-08-20T04:35:22.914340+00:00",
+      "effective_seed": "20260815",
+      "environment": {
+        "core": "build/bin/htsim-core",
+        "core_sha256": "975fea49f2a39708dd60d104b18be4cf2c1e88c20c8d574c99afb91a9e0b3add",
+        "core_version": "htsim-core 0.3.0",
+        "cpu_count": 28,
+        "git_commit": "7fd2301d4803fd470607a148402853443c3fd4bd",
+        "git_status": "",
+        "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+        "python": "3.12.3 (main, Jun 19 2026, 12:46:00) [GCC 13.3.0]"
+      },
+      "measurements": [
+        {
+          "core_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "methylation_site_count": 81843071,
+            "per_contig_fragment_counts": [
+              500000
+            ],
+            "skipped_fragment_count": 82475,
+            "template_base_count": 200008688
+          },
+          "fragments": 500000,
+          "fragments_per_second": 17892.545684503628,
+          "output_bytes": 69904614,
+          "outputs": [
+            {
+              "record_count": 500000,
+              "role": "read1",
+              "sha256": "09c89dfc3a88cb78c6978e2d549042d467cc3274bb4d417bea73ef919aa1327b",
+              "size_bytes": 34949628
+            },
+            {
+              "record_count": 500000,
+              "role": "read2",
+              "sha256": "92da8c0c5850de25172fe17429a341fa21b932fc482047638e3992b594cf659c",
+              "size_bytes": 34954986
+            }
+          ],
+          "process_io": {
+            "cancelled_write_bytes": 0,
+            "rchar": 1789873958,
+            "read_bytes": 917504,
+            "syscr": 39495,
+            "syscw": 10456,
+            "wchar": 1193608713,
+            "write_bytes": 69910528
+          },
+          "process_tree_memory": {
+            "peak_processes": 2,
+            "peak_pss_kib": 334638,
+            "peak_rss_kib": 349724,
+            "sample_interval_ms": 25,
+            "samples": 948
+          },
+          "python_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "records_by_role": {
+              "read1": 500000,
+              "read2": 500000
+            }
+          },
+          "resource_usage": {
+            "children": {
+              "input_blocks": 1792.0,
+              "output_blocks": 0.0,
+              "system_seconds": 0.359465,
+              "user_seconds": 12.427218
+            },
+            "self": {
+              "input_blocks": 0.0,
+              "output_blocks": 136544.0,
+              "system_seconds": 2.078733,
+              "user_seconds": 12.956341
+            }
+          },
+          "wall_seconds": 27.94459820399061
+        },
+        {
+          "core_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "methylation_site_count": 81843071,
+            "per_contig_fragment_counts": [
+              500000
+            ],
+            "skipped_fragment_count": 82475,
+            "template_base_count": 200008688
+          },
+          "fragments": 500000,
+          "fragments_per_second": 17648.206435128643,
+          "output_bytes": 69904614,
+          "outputs": [
+            {
+              "record_count": 500000,
+              "role": "read1",
+              "sha256": "09c89dfc3a88cb78c6978e2d549042d467cc3274bb4d417bea73ef919aa1327b",
+              "size_bytes": 34949628
+            },
+            {
+              "record_count": 500000,
+              "role": "read2",
+              "sha256": "92da8c0c5850de25172fe17429a341fa21b932fc482047638e3992b594cf659c",
+              "size_bytes": 34954986
+            }
+          ],
+          "process_io": {
+            "cancelled_write_bytes": 0,
+            "rchar": 1789880254,
+            "read_bytes": 917504,
+            "syscr": 39532,
+            "syscw": 10456,
+            "wchar": 1193608713,
+            "write_bytes": 69910528
+          },
+          "process_tree_memory": {
+            "peak_processes": 2,
+            "peak_pss_kib": 336746,
+            "peak_rss_kib": 351872,
+            "sample_interval_ms": 25,
+            "samples": 952
+          },
+          "python_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "records_by_role": {
+              "read1": 500000,
+              "read2": 500000
+            }
+          },
+          "resource_usage": {
+            "children": {
+              "input_blocks": 1792.0,
+              "output_blocks": 0.0,
+              "system_seconds": 0.3162090000000001,
+              "user_seconds": 12.589066000000003
+            },
+            "self": {
+              "input_blocks": 0.0,
+              "output_blocks": 136544.0,
+              "system_seconds": 2.0778549999999996,
+              "user_seconds": 13.219599000000002
+            }
+          },
+          "wall_seconds": 28.331490898970515
+        },
+        {
+          "core_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "methylation_site_count": 81843071,
+            "per_contig_fragment_counts": [
+              500000
+            ],
+            "skipped_fragment_count": 82475,
+            "template_base_count": 200008688
+          },
+          "fragments": 500000,
+          "fragments_per_second": 17695.37178098442,
+          "output_bytes": 69904614,
+          "outputs": [
+            {
+              "record_count": 500000,
+              "role": "read1",
+              "sha256": "09c89dfc3a88cb78c6978e2d549042d467cc3274bb4d417bea73ef919aa1327b",
+              "size_bytes": 34949628
+            },
+            {
+              "record_count": 500000,
+              "role": "read2",
+              "sha256": "92da8c0c5850de25172fe17429a341fa21b932fc482047638e3992b594cf659c",
+              "size_bytes": 34954986
+            }
+          ],
+          "process_io": {
+            "cancelled_write_bytes": 0,
+            "rchar": 1789882352,
+            "read_bytes": 917504,
+            "syscr": 39556,
+            "syscw": 10456,
+            "wchar": 1193608713,
+            "write_bytes": 69918720
+          },
+          "process_tree_memory": {
+            "peak_processes": 2,
+            "peak_pss_kib": 336863,
+            "peak_rss_kib": 351968,
+            "sample_interval_ms": 25,
+            "samples": 954
+          },
+          "python_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "records_by_role": {
+              "read1": 500000,
+              "read2": 500000
+            }
+          },
+          "resource_usage": {
+            "children": {
+              "input_blocks": 1792.0,
+              "output_blocks": 0.0,
+              "system_seconds": 0.3545529999999999,
+              "user_seconds": 12.551184
+            },
+            "self": {
+              "input_blocks": 0.0,
+              "output_blocks": 136560.0,
+              "system_seconds": 2.0461669999999996,
+              "user_seconds": 13.177055000000003
+            }
+          },
+          "wall_seconds": 28.255975979962386
+        }
+      ],
+      "mode": "production",
+      "repetitions": 3,
+      "run_arguments": [
+        "-r",
+        "<external-reference>/chr21.fa",
+        "-n",
+        "500000",
+        "--seed",
+        "20260815",
+        "--mutation-rate",
+        "0",
+        "--read-length",
+        "150",
+        "--insert-min",
+        "150",
+        "--insert-mean",
+        "400",
+        "--insert-max",
+        "1000",
+        "--insert-stddev",
+        "25",
+        "--error-rate",
+        "0",
+        "--workers",
+        "1",
+        "--core-workers",
+        "1",
+        "--chunk-size",
+        "4096",
+        "--max-in-flight-fragments",
+        "4096",
+        "--compression",
+        "gzip",
+        "--gzip-level",
+        "1",
+        "--prefix",
+        "bench"
+      ],
+      "schema": "bsreadsim-current-benchmark-1",
+      "summary": {
+        "maximum_fragments_per_second": 17892.545684503628,
+        "median_fragments_per_second": 17695.37178098442,
+        "median_wall_seconds": 28.255975979962386,
+        "minimum_fragments_per_second": 17648.206435128643,
+        "output_bytes": 69904614,
+        "peak_pss_kib": 336863
+      },
+      "warmup": true,
+      "workspace": "<temporary>/output-modes"
+    },
+    "debug": {
+      "created_at_utc": "2026-08-20T04:52:13.542858+00:00",
+      "effective_seed": "20260815",
+      "environment": {
+        "core": "build/bin/htsim-core",
+        "core_sha256": "975fea49f2a39708dd60d104b18be4cf2c1e88c20c8d574c99afb91a9e0b3add",
+        "core_version": "htsim-core 0.3.0",
+        "cpu_count": 28,
+        "git_commit": "7fd2301d4803fd470607a148402853443c3fd4bd",
+        "git_status": "",
+        "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+        "python": "3.12.3 (main, Jun 19 2026, 12:46:00) [GCC 13.3.0]"
+      },
+      "measurements": [
+        {
+          "core_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "methylation_site_count": 81843071,
+            "per_contig_fragment_counts": [
+              500000
+            ],
+            "skipped_fragment_count": 82475,
+            "template_base_count": 200008688
+          },
+          "fragments": 500000,
+          "fragments_per_second": 935.5281326510681,
+          "output_bytes": 4429707915,
+          "outputs": [
+            {
+              "record_count": 500000,
+              "role": "read1",
+              "sha256": "09c89dfc3a88cb78c6978e2d549042d467cc3274bb4d417bea73ef919aa1327b",
+              "size_bytes": 34949628
+            },
+            {
+              "record_count": 500000,
+              "role": "read2",
+              "sha256": "92da8c0c5850de25172fe17429a341fa21b932fc482047638e3992b594cf659c",
+              "size_bytes": 34954986
+            },
+            {
+              "record_count": 500000,
+              "role": "truth",
+              "sha256": "11ab8e4eb6cc6de2caf995857dd773791e78d2a0de050499933e77c54bfdcfc9",
+              "size_bytes": 4359803301
+            }
+          ],
+          "process_io": {
+            "cancelled_write_bytes": 0,
+            "rchar": 2157158057,
+            "read_bytes": 917504,
+            "syscr": 191111,
+            "syscw": 127646,
+            "wchar": 5898212116,
+            "write_bytes": 4429926400
+          },
+          "process_tree_memory": {
+            "peak_processes": 2,
+            "peak_pss_kib": 278866,
+            "peak_rss_kib": 293800,
+            "sample_interval_ms": 25,
+            "samples": 17019
+          },
+          "python_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "records_by_role": {
+              "read1": 500000,
+              "read2": 500000,
+              "truth": 500000
+            }
+          },
+          "resource_usage": {
+            "children": {
+              "input_blocks": 1792.0,
+              "output_blocks": 0.0,
+              "system_seconds": 0.639957,
+              "user_seconds": 18.517756
+            },
+            "self": {
+              "input_blocks": 0.0,
+              "output_blocks": 8652200.0,
+              "system_seconds": 34.060579999999995,
+              "user_seconds": 479.84099699999996
+            }
+          },
+          "wall_seconds": 534.4574711859459
+        }
+      ],
+      "mode": "debug",
+      "repetitions": 1,
+      "run_arguments": [
+        "-r",
+        "<external-reference>/chr21.fa",
+        "-n",
+        "500000",
+        "--seed",
+        "20260815",
+        "--mutation-rate",
+        "0",
+        "--read-length",
+        "150",
+        "--insert-min",
+        "150",
+        "--insert-mean",
+        "400",
+        "--insert-max",
+        "1000",
+        "--insert-stddev",
+        "25",
+        "--error-rate",
+        "0",
+        "--workers",
+        "1",
+        "--core-workers",
+        "1",
+        "--chunk-size",
+        "4096",
+        "--max-in-flight-fragments",
+        "4096",
+        "--compression",
+        "gzip",
+        "--gzip-level",
+        "1",
+        "--prefix",
+        "bench"
+      ],
+      "schema": "bsreadsim-current-benchmark-1",
+      "summary": {
+        "maximum_fragments_per_second": 935.5281326510681,
+        "median_fragments_per_second": 935.5281326510681,
+        "median_wall_seconds": 534.4574711859459,
+        "minimum_fragments_per_second": 935.5281326510681,
+        "output_bytes": 4429707915,
+        "peak_pss_kib": 278866
+      },
+      "warmup": false,
+      "workspace": "<temporary>/output-modes"
+    },
+    "truth_bam": {
+      "created_at_utc": "2026-08-20T05:07:14.978477+00:00",
+      "effective_seed": "20260815",
+      "environment": {
+        "core": "build/bin/htsim-core",
+        "core_sha256": "975fea49f2a39708dd60d104b18be4cf2c1e88c20c8d574c99afb91a9e0b3add",
+        "core_version": "htsim-core 0.3.0",
+        "cpu_count": 28,
+        "git_commit": "7fd2301d4803fd470607a148402853443c3fd4bd",
+        "git_status": "",
+        "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+        "python": "3.12.3 (main, Jun 19 2026, 12:46:00) [GCC 13.3.0]"
+      },
+      "measurements": [
+        {
+          "core_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "methylation_site_count": 81843071,
+            "per_contig_fragment_counts": [
+              500000
+            ],
+            "skipped_fragment_count": 82475,
+            "template_base_count": 200008688
+          },
+          "fragments": 500000,
+          "fragments_per_second": 1689.1046273097695,
+          "output_bytes": 143814133,
+          "outputs": [
+            {
+              "record_count": 500000,
+              "role": "read1",
+              "sha256": "09c89dfc3a88cb78c6978e2d549042d467cc3274bb4d417bea73ef919aa1327b",
+              "size_bytes": 34949628
+            },
+            {
+              "record_count": 500000,
+              "role": "read2",
+              "sha256": "92da8c0c5850de25172fe17429a341fa21b932fc482047638e3992b594cf659c",
+              "size_bytes": 34954986
+            },
+            {
+              "record_count": 1000000,
+              "role": "truth_bam",
+              "sha256": "726d5dee118daa87233f3b7d49128735e8ca21bf5a52fed71c415eb70a5b1051",
+              "size_bytes": 73909519
+            }
+          ],
+          "process_io": {
+            "cancelled_write_bytes": 0,
+            "rchar": 2668938191,
+            "read_bytes": 1130496,
+            "syscr": 231038,
+            "syscw": 133133,
+            "wchar": 2053729810,
+            "write_bytes": 144044032
+          },
+          "process_tree_memory": {
+            "peak_processes": 3,
+            "peak_pss_kib": 278148,
+            "peak_rss_kib": 296964,
+            "sample_interval_ms": 25,
+            "samples": 9716
+          },
+          "python_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "records_by_role": {
+              "read1": 500000,
+              "read2": 500000,
+              "truth_bam": 1000000
+            }
+          },
+          "resource_usage": {
+            "children": {
+              "input_blocks": 2208.0,
+              "output_blocks": 144504.0,
+              "system_seconds": 1.478647,
+              "user_seconds": 20.65922
+            },
+            "self": {
+              "input_blocks": 0.0,
+              "output_blocks": 136832.0,
+              "system_seconds": 20.628063,
+              "user_seconds": 252.44051
+            }
+          },
+          "wall_seconds": 296.0148186890874
+        },
+        {
+          "core_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "methylation_site_count": 81843071,
+            "per_contig_fragment_counts": [
+              500000
+            ],
+            "skipped_fragment_count": 82475,
+            "template_base_count": 200008688
+          },
+          "fragments": 500000,
+          "fragments_per_second": 1629.4029461496177,
+          "output_bytes": 143814133,
+          "outputs": [
+            {
+              "record_count": 500000,
+              "role": "read1",
+              "sha256": "09c89dfc3a88cb78c6978e2d549042d467cc3274bb4d417bea73ef919aa1327b",
+              "size_bytes": 34949628
+            },
+            {
+              "record_count": 500000,
+              "role": "read2",
+              "sha256": "92da8c0c5850de25172fe17429a341fa21b932fc482047638e3992b594cf659c",
+              "size_bytes": 34954986
+            },
+            {
+              "record_count": 1000000,
+              "role": "truth_bam",
+              "sha256": "726d5dee118daa87233f3b7d49128735e8ca21bf5a52fed71c415eb70a5b1051",
+              "size_bytes": 73909519
+            }
+          ],
+          "process_io": {
+            "cancelled_write_bytes": 0,
+            "rchar": 2668636529,
+            "read_bytes": 1130496,
+            "syscr": 229542,
+            "syscw": 133133,
+            "wchar": 2053729810,
+            "write_bytes": 144031744
+          },
+          "process_tree_memory": {
+            "peak_processes": 3,
+            "peak_pss_kib": 278719,
+            "peak_rss_kib": 297612,
+            "sample_interval_ms": 25,
+            "samples": 9571
+          },
+          "python_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "records_by_role": {
+              "read1": 500000,
+              "read2": 500000,
+              "truth_bam": 1000000
+            }
+          },
+          "resource_usage": {
+            "children": {
+              "input_blocks": 2208.0,
+              "output_blocks": 144496.0,
+              "system_seconds": 1.5917430000000001,
+              "user_seconds": 20.551118999999996
+            },
+            "self": {
+              "input_blocks": 0.0,
+              "output_blocks": 136816.0,
+              "system_seconds": 23.511346000000003,
+              "user_seconds": 254.668094
+            }
+          },
+          "wall_seconds": 306.8608665410429
+        },
+        {
+          "core_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "methylation_site_count": 81843071,
+            "per_contig_fragment_counts": [
+              500000
+            ],
+            "skipped_fragment_count": 82475,
+            "template_base_count": 200008688
+          },
+          "fragments": 500000,
+          "fragments_per_second": 1682.178676298783,
+          "output_bytes": 143814133,
+          "outputs": [
+            {
+              "record_count": 500000,
+              "role": "read1",
+              "sha256": "09c89dfc3a88cb78c6978e2d549042d467cc3274bb4d417bea73ef919aa1327b",
+              "size_bytes": 34949628
+            },
+            {
+              "record_count": 500000,
+              "role": "read2",
+              "sha256": "92da8c0c5850de25172fe17429a341fa21b932fc482047638e3992b594cf659c",
+              "size_bytes": 34954986
+            },
+            {
+              "record_count": 1000000,
+              "role": "truth_bam",
+              "sha256": "726d5dee118daa87233f3b7d49128735e8ca21bf5a52fed71c415eb70a5b1051",
+              "size_bytes": 73909519
+            }
+          ],
+          "process_io": {
+            "cancelled_write_bytes": 0,
+            "rchar": 2668845825,
+            "read_bytes": 1130496,
+            "syscr": 230585,
+            "syscw": 133133,
+            "wchar": 2053729810,
+            "write_bytes": 144068608
+          },
+          "process_tree_memory": {
+            "peak_processes": 3,
+            "peak_pss_kib": 278757,
+            "peak_rss_kib": 297664,
+            "sample_interval_ms": 25,
+            "samples": 9671
+          },
+          "python_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "records_by_role": {
+              "read1": 500000,
+              "read2": 500000,
+              "truth_bam": 1000000
+            }
+          },
+          "resource_usage": {
+            "children": {
+              "input_blocks": 2208.0,
+              "output_blocks": 144520.0,
+              "system_seconds": 1.41553,
+              "user_seconds": 20.443238
+            },
+            "self": {
+              "input_blocks": 0.0,
+              "output_blocks": 136864.0,
+              "system_seconds": 22.228126000000003,
+              "user_seconds": 252.34490600000004
+            }
+          },
+          "wall_seconds": 297.2335858519655
+        }
+      ],
+      "mode": "production",
+      "repetitions": 3,
+      "run_arguments": [
+        "-r",
+        "<external-reference>/chr21.fa",
+        "-n",
+        "500000",
+        "--seed",
+        "20260815",
+        "--mutation-rate",
+        "0",
+        "--read-length",
+        "150",
+        "--insert-min",
+        "150",
+        "--insert-mean",
+        "400",
+        "--insert-max",
+        "1000",
+        "--insert-stddev",
+        "25",
+        "--error-rate",
+        "0",
+        "--workers",
+        "1",
+        "--core-workers",
+        "1",
+        "--chunk-size",
+        "4096",
+        "--max-in-flight-fragments",
+        "4096",
+        "--compression",
+        "gzip",
+        "--gzip-level",
+        "1",
+        "--prefix",
+        "bench",
+        "--truth-bam"
+      ],
+      "schema": "bsreadsim-current-benchmark-1",
+      "summary": {
+        "maximum_fragments_per_second": 1689.1046273097695,
+        "median_fragments_per_second": 1682.178676298783,
+        "median_wall_seconds": 297.2335858519655,
+        "minimum_fragments_per_second": 1629.4029461496177,
+        "output_bytes": 143814133,
+        "peak_pss_kib": 278757
+      },
+      "warmup": false,
+      "workspace": "<temporary>/output-modes"
+    }
+  },
+  "gates": {
+    "fastq_hashes_match_across_policies": true,
+    "production_repetitions_identical": true,
+    "truth_bam_repetitions_identical": true
+  },
+  "evidence": {
+    "production_source_report_sha256": "78bb6e7a0f51f7877525ffeebccc309455adb72a956890936f3e6ec28f4d04c9",
+    "debug_source_report_sha256": "ae891515837cfa206c807610d09faf5021d187723b3cbb66b132b490b0e3f511",
+    "truth_bam_source_report_sha256": "1ec9c7721c58e0dffdd35871842e5e3e2460d529a26a1fbe66ced925c96ba4cf",
+    "source_commit_is_pre_squash_runtime": true,
+    "truth_bam_driver_note": "Measurement used a temporary copy containing only the final expected truth_bam role fix; the timed path was unchanged.",
+    "debug_repetition_note": "One descriptive 1M-read run; a full-size warmup was stopped because it duplicated 4.4 GB of output.",
+    "path_sanitization_only": true
+  }
+}

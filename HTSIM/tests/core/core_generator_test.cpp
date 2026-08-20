@@ -194,11 +194,22 @@ void test_variable_wgbs_generation_and_capability_gate()
     profiled.coverage_profile_version = "wgbs-gc-target-v1";
     profiled.coverage_profile_sha256 =
         htsim::crypto::sha256(bytes_of(profile));
-    require_empty_failure(
-        [&](std::ostringstream &sink) {
-            (void)htsim::core::generate_core_stream(profiled, sink);
-        },
-        "target GC profile with variable inserts");
+    std::ostringstream profiled_stream(std::ios::binary);
+    const auto profiled_trailer =
+        htsim::core::generate_core_stream(profiled, profiled_stream);
+    require(profiled_trailer.fragment_count == 40U
+                && profiled_trailer.mate_count == 80U
+                && profiled_trailer.skipped_fragment_count > 0U
+                && profiled_stream.str() != first.str(),
+            "variable-insert target GC generation lost counts or rejection");
+    profiled.chunk_size = 27U;
+    std::ostringstream profiled_rechunked(std::ios::binary);
+    const auto profiled_rechunked_trailer =
+        htsim::core::generate_core_stream(profiled, profiled_rechunked);
+    require(profiled_rechunked.str() == profiled_stream.str()
+                && profiled_rechunked_trailer.skipped_fragment_count
+                    == profiled_trailer.skipped_fragment_count,
+            "chunk size changed variable-insert target GC output");
 
     const std::string vcf = vcf_header()
         + "chrVariable\t2\t.\tC\tT\t.\tPASS\t.\tGT\t1|0\n"

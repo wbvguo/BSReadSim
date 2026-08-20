@@ -347,9 +347,7 @@ class PipelineTests(unittest.TestCase):
                 "sha256": hashlib.sha256(profile_bytes).hexdigest(),
             },
         }
-        with self.assertRaisesRegex(
-            PipelineError, "target GC profile requires one fixed insert"
-        ):
+        with self.assertRaisesRegex(PipelineError, "cannot resolve"):
             run_prepared(
                 self.prepared(profiled),
                 core_executable=self.directory / "missing-core",

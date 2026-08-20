@@ -6,7 +6,9 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import hashlib
+import importlib
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -53,6 +55,11 @@ def _arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--core", type=Path, required=True)
     parser.add_argument("--fragments", type=int, default=500000)
     parser.add_argument("--warmup-fragments", type=int, default=50000)
+    parser.add_argument("--read-length", type=int, default=150)
+    parser.add_argument("--insert-min", type=int, default=150)
+    parser.add_argument("--insert-mean", type=int, default=400)
+    parser.add_argument("--insert-max", type=int, default=1000)
+    parser.add_argument("--insert-stddev", type=float, default=25.0)
     parser.add_argument("--output-json", type=Path, required=True)
     parser.add_argument(
         "--workspace-root",
@@ -81,6 +88,21 @@ def _command(*arguments: object) -> Optional[str]:
     except (OSError, subprocess.CalledProcessError):
         return None
     return completed.stdout.strip()
+
+
+def _native_extension_identity() -> Mapping[str, str]:
+    try:
+        module = importlib.import_module("bsreadsim._native")
+    except ImportError as error:
+        raise RuntimeError(
+            "formal FASTQ benchmarking requires the bsreadsim native extension; "
+            "build it with 'python3 setup.py build_ext --inplace'"
+        ) from error
+    origin = getattr(module, "__file__", None)
+    if not isinstance(origin, str):
+        raise RuntimeError("bsreadsim native extension has no filesystem identity")
+    path = Path(origin).resolve(strict=True)
+    return {"path": str(path), "sha256": _sha256(path)}
 
 
 def _usage(kind: int) -> Tuple[float, float]:
@@ -112,6 +134,11 @@ def _direct_arguments(
     output: Path,
     fragments: int,
     coverage: str,
+    read_length: int,
+    insert_min: int,
+    insert_mean: int,
+    insert_max: int,
+    insert_stddev: float,
 ) -> List[str]:
     result = [
         "run",
@@ -120,8 +147,11 @@ def _direct_arguments(
         "--read-pairs", str(fragments),
         "--seed", "20260815",
         "--mutation-rate", "0",
-        "--read-length", "150",
-        "--insert-size", "300",
+        "--read-length", str(read_length),
+        "--insert-min", str(insert_min),
+        "--insert-mean", str(insert_mean),
+        "--insert-max", str(insert_max),
+        "--insert-stddev", str(insert_stddev),
         "--max-ambiguous-fraction", "0.05",
         "--error-rate", "0",
         "--workers", "1",
@@ -143,9 +173,25 @@ def _document(
     output: Path,
     fragments: int,
     coverage: str,
+    read_length: int,
+    insert_min: int,
+    insert_mean: int,
+    insert_max: int,
+    insert_stddev: float,
 ) -> Mapping[str, object]:
     parsed = build_parser().parse_args(
-        _direct_arguments(reference, profile, output, fragments, coverage)
+        _direct_arguments(
+            reference,
+            profile,
+            output,
+            fragments,
+            coverage,
+            read_length,
+            insert_min,
+            insert_mean,
+            insert_max,
+            insert_stddev,
+        )
     )
     return build_run_document(parsed, REPOSITORY_ROOT)
 
@@ -236,6 +282,7 @@ def _measure_e2e(
         "python_counts": manifest["counts"]["python"],
         "outputs": outputs,
         "output_bytes": sum(int(item["size_bytes"]) for item in outputs),
+        "manifest": str(result.manifest_path),
     }
 
 
@@ -314,12 +361,26 @@ def _run_lane(
     workspace: Path,
     fragments: int,
     warmup_fragments: int,
+    read_length: int,
+    insert_min: int,
+    insert_mean: int,
+    insert_max: int,
+    insert_stddev: float,
 ) -> Tuple[List[Mapping[str, Any]], Mapping[str, Any]]:
     measure = _measure_core if lane == "core-producer" else _measure_e2e
     for coverage in ("uniform", "profile"):
         output = workspace / "{}-warmup-{}".format(lane, coverage)
         document = _document(
-            reference, profile, output, warmup_fragments, coverage
+            reference,
+            profile,
+            output,
+            warmup_fragments,
+            coverage,
+            read_length,
+            insert_min,
+            insert_mean,
+            insert_max,
+            insert_stddev,
         )
         print(
             "warmup lane={} coverage={}".format(lane, coverage),
@@ -331,7 +392,18 @@ def _run_lane(
     measurements = []  # type: List[Mapping[str, Any]]
     for order_index, (pair_index, coverage) in enumerate(PAIRED_ORDER):
         output = workspace / "{}-{}-{}".format(lane, order_index, coverage)
-        document = _document(reference, profile, output, fragments, coverage)
+        document = _document(
+            reference,
+            profile,
+            output,
+            fragments,
+            coverage,
+            read_length,
+            insert_min,
+            insert_mean,
+            insert_max,
+            insert_stddev,
+        )
         print(
             "measure lane={} order={} pair={} coverage={}".format(
                 lane, order_index, pair_index, coverage
@@ -361,7 +433,11 @@ def _run_lane(
                     "{} repetitions changed counts or FASTQ bytes".format(coverage)
                 )
             skipped = int(values[0]["core_counts"]["skipped_fragment_count"])
-            if coverage == "uniform" and skipped != 0:
+            fixed_insert = (
+                insert_min == insert_mean == insert_max
+                and insert_stddev == 0.0
+            )
+            if coverage == "uniform" and fixed_insert and skipped != 0:
                 raise RuntimeError("uniform sampling reported a rejection")
             if coverage == "profile" and skipped <= 0:
                 raise RuntimeError("profile sampling reported no rejections")
@@ -383,6 +459,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     arguments = _arguments(argv)
     if arguments.fragments <= 0 or arguments.warmup_fragments <= 0:
         raise SystemExit("fragment counts must be positive")
+    if arguments.read_length <= 0:
+        raise SystemExit("--read-length must be positive")
+    if not (
+        arguments.read_length <= arguments.insert_min
+        <= arguments.insert_mean
+        <= arguments.insert_max
+    ):
+        raise SystemExit(
+            "read-length <= insert-min <= insert-mean <= insert-max must hold"
+        )
+    if not math.isfinite(arguments.insert_stddev) or arguments.insert_stddev < 0:
+        raise SystemExit("--insert-stddev must be finite and non-negative")
     if arguments.output_json.exists():
         raise SystemExit("refusing to overwrite {}".format(arguments.output_json))
     affinity = sorted(os.sched_getaffinity(0))
@@ -396,6 +484,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     reference = arguments.reference.expanduser().resolve(strict=True)
     profile_path = arguments.profile.expanduser().resolve(strict=True)
     core = resolve_core_executable(arguments.core).resolve(strict=True)
+    native_extension = _native_extension_identity()
     workspace_root = arguments.workspace_root.expanduser().resolve(strict=False)
     workspace_root.mkdir(parents=True, exist_ok=True)
     workspace = Path(
@@ -412,6 +501,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             workspace,
             arguments.fragments,
             arguments.warmup_fragments,
+            arguments.read_length,
+            arguments.insert_min,
+            arguments.insert_mean,
+            arguments.insert_max,
+            arguments.insert_stddev,
         )
         lanes[lane] = {
             "measurements": measurements,
@@ -430,8 +524,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "profile": str(profile_path),
             "profile_sha256": _sha256(profile_path),
             "paired_end": True,
-            "read_length": 150,
-            "insert_length": 300,
+            "read_length": arguments.read_length,
+            "insert_min": arguments.insert_min,
+            "insert_mean": arguments.insert_mean,
+            "insert_max": arguments.insert_max,
+            "insert_stddev": arguments.insert_stddev,
             "mutation_rate": 0,
             "error_rate": 0,
             "compression": "gzip",
@@ -455,6 +552,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "core": str(core),
             "core_sha256": _sha256(core),
             "core_version": _command(core, "--version"),
+            "python_native_extension": native_extension,
             "git_commit": _command(
                 "git", "-C", REPOSITORY_ROOT, "rev-parse", "HEAD"
             ),

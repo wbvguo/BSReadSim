@@ -12,6 +12,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY_ROOT / "src"))
 
 from bsreadsim.numpy_postprocess import (  # noqa: E402
+    _mate_template_offsets,
     _philox_pairs,
     supports_common_postprocess,
 )
@@ -20,6 +21,26 @@ from bsreadsim.rng import _u64_unchecked  # noqa: E402
 
 
 class NumpyPostprocessTests(unittest.TestCase):
+    def test_overlapping_mates_share_fragment_template_offset(self) -> None:
+        template_starts = np.array([10, 5], dtype=np.uint64)
+        template_ends = np.array([20, 15], dtype=np.uint64)
+        reverse = np.array([False, True], dtype=np.bool_)
+        mate_rows = np.array([0, 1], dtype=np.intp)
+        cycles = np.array([4, 0], dtype=np.uint64)
+
+        offsets = _mate_template_offsets(
+            template_starts,
+            template_ends,
+            reverse,
+            mate_rows,
+            cycles,
+        )
+
+        np.testing.assert_array_equal(
+            offsets,
+            np.array([14, 14], dtype=np.uint64),
+        )
+
     def test_vectorized_philox_words_match_scalar_reference(self) -> None:
         entities = np.asarray(
             [

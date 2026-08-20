@@ -194,7 +194,7 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("invalid choice", result.stderr)
 
-    def test_profile_path_is_hashed_and_projected_without_json(self) -> None:
+    def test_profile_path_keeps_default_variable_insert_distribution(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             profile_bytes = b"0.1\n0.7\n0.2\n"
@@ -210,8 +210,6 @@ class CommandLineTests(unittest.TestCase):
                     "100",
                     "--coverage-profile",
                     "coverage.tsv",
-                    "--insert-size",
-                    "350",
                     "--workers",
                     "2",
                 ]
@@ -227,9 +225,10 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(
             artifact["sha256"], hashlib.sha256(profile_bytes).hexdigest()
         )
-        self.assertEqual(normalized["fragments"]["insert_min"], 350)
-        self.assertEqual(normalized["fragments"]["insert_max"], 350)
-        self.assertEqual(normalized["fragments"]["insert_stddev"], 0)
+        self.assertEqual(normalized["fragments"]["insert_min"], 100)
+        self.assertEqual(normalized["fragments"]["insert_mean"], 400)
+        self.assertEqual(normalized["fragments"]["insert_max"], 1000)
+        self.assertEqual(normalized["fragments"]["insert_stddev"], 25)
         self.assertEqual(normalized["mutation"]["rate"], 0)
         self.assertEqual(normalized["execution"]["workers"], 2)
         self.assertEqual(normalized["sequencing"]["quality"]["phred"], 40)

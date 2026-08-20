@@ -793,14 +793,15 @@ For each fragment row, Python:
 1. obtains its site range from `site_offsets`;
 2. samples the built-in Bernoulli state once for those fragment-level sites;
 3. validates exactly one state per site;
-4. finds each mate's covered site interval using sorted
-   `site_template_offsets`;
-5. derives oriented read offsets using the formulas in section 7.5;
-6. applies the shared states during bisulfite conversion;
-7. generates quality;
-8. samples the quality-conditioned sequencing-error category using the
+4. selects one fragment conversion orientation and applies methylation state
+   plus bisulfite conversion once across the complete template;
+5. derives mate windows and oriented read offsets using the formulas in
+   section 7.5, projecting the same physical conversion event into overlapping
+   mates;
+6. generates quality;
+7. samples the quality-conditioned sequencing-error category using the
    released cumulative-probability/search contract; and
-9. formats FASTQ and, if requested, reconstructs full per-base truth from the
+8. formats FASTQ and, if requested, reconstructs full per-base truth from the
    sparse projection.
 
 Example site-model input for fragment 42:

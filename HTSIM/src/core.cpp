@@ -559,12 +559,6 @@ void validate_core_config(const CoreConfig &config)
                 throw CoreConfigError(
                     "target GC profile requires reference-only WGBS");
             }
-            if (config.insert_min != config.insert_mean
-                || config.insert_min != config.insert_max
-                || config.insert_stddev != 0.0) {
-                throw CoreConfigError(
-                    "target GC profile requires one fixed insert length");
-            }
         } else if (config.technology == Technology::rrbs) {
             if (!config.rrbs_candidate_bed_path) {
                 throw CoreConfigError(
@@ -1145,6 +1139,12 @@ protocol::Trailer generate_core_stream(
             methylation_shapes(config);
         const wgbs::FixedFragmentShape sampler_shape = sampling_shape(config);
         const bool variable_wgbs_insert = uses_variable_wgbs_insert(config);
+        const wgbs::FixedFragmentShape target_calibration_shape{
+            variable_wgbs_insert ? config.insert_mean : config.insert_min,
+            config.read_length_1,
+            config.paired_end,
+            config.max_ambiguous_fraction,
+        };
         const insert_length::Parameters insert_parameters{
             config.insert_min,
             config.insert_mean,
@@ -1251,16 +1251,37 @@ protocol::Trailer generate_core_stream(
             }
             if (config.technology == Technology::wgbs) {
                 if (coverage_profile) {
-                    if (planned_variants || variable_wgbs_insert) {
+                    if (planned_variants) {
                         throw CoreGeneratorError(
-                            "target GC profile escaped its fixed reference-only gate");
+                            "target GC profile escaped its reference-only gate");
                     }
                     const wgbs::WgbsGcSampler target_domain(
-                        contig.bases, sampler_shape, *coverage_profile);
-                    candidate_weights[contig.index] =
-                        target_domain.valid_start_count();
-                    target_bin_counts[contig.index] =
-                        target_domain.bin_opportunity_counts();
+                        contig.bases,
+                        target_calibration_shape,
+                        *coverage_profile);
+                    if (variable_wgbs_insert) {
+                        candidate_weights[contig.index] =
+                            wgbs::VariableWgbsSampler(
+                                contig.bases,
+                                contig.index,
+                                config.master_seed,
+                                insert_parameters,
+                                config.read_length_1,
+                                config.paired_end,
+                                config.max_ambiguous_fraction)
+                                .allocation_weight();
+                        target_bin_counts[contig.index].assign(
+                            coverage_profile->bin_count(), 0U);
+                        if (candidate_weights[contig.index] > 0U) {
+                            target_bin_counts[contig.index] =
+                                target_domain.bin_opportunity_counts();
+                        }
+                    } else {
+                        candidate_weights[contig.index] =
+                            target_domain.valid_start_count();
+                        target_bin_counts[contig.index] =
+                            target_domain.bin_opportunity_counts();
+                    }
                 } else if (variable_wgbs_insert) {
                     if (planned_variants) {
                         candidate_weights[contig.index] =
@@ -1368,7 +1389,11 @@ protocol::Trailer generate_core_stream(
         std::optional<wgbs::WgbsGcTargetCalibration> target_calibration;
         if (coverage_profile) {
             target_calibration = wgbs::calibrate_gc_target(
-                *coverage_profile, target_bin_counts);
+                *coverage_profile,
+                target_bin_counts,
+                variable_wgbs_insert
+                    ? wgbs::UnreachableTargetPolicy::drop_and_renormalize
+                    : wgbs::UnreachableTargetPolicy::reject);
         }
 
         std::uint32_t requested_fragment_count = 0U;
@@ -1551,26 +1576,46 @@ protocol::Trailer generate_core_stream(
                     variable_haplotype_starts;
                 std::unique_ptr<wgbs::VariableWgbsSampler>
                     variable_starts;
+                std::unique_ptr<wgbs::VariableWgbsGcSampler>
+                    profiled_variable_starts;
                 std::unique_ptr<wgbs::ValidStartIndex> uniform_starts;
                 std::unique_ptr<wgbs::HaplotypeStartIndex> variant_starts;
                 std::unique_ptr<wgbs::WgbsGcSampler> profiled_starts;
                 if (coverage_profile) {
-                    if (contig_variants || variable_wgbs_insert
-                        || !target_calibration) {
+                    if (contig_variants || !target_calibration) {
                         throw CoreGeneratorError(
                             "target GC profile escaped its generation gate");
                     }
-                    profiled_starts =
-                        std::make_unique<wgbs::WgbsGcSampler>(
+                    if (variable_wgbs_insert) {
+                        profiled_variable_starts = std::make_unique<
+                            wgbs::VariableWgbsGcSampler>(
                             contig.bases,
-                            sampler_shape,
+                            contig.index,
+                            config.master_seed,
+                            insert_parameters,
+                            config.read_length_1,
+                            config.paired_end,
+                            config.max_ambiguous_fraction,
                             *coverage_profile);
-                    if (profiled_starts->valid_start_count()
+                        if (profiled_variable_starts->allocation_weight()
                             != candidate_weights[contig.index]
-                        || profiled_starts->bin_opportunity_counts()
-                            != target_bin_counts[contig.index]) {
-                        throw CoreGeneratorError(
-                            "target GC opportunity domain changed between planning and generation");
+                            || candidate_weights[contig.index] == 0U) {
+                            throw CoreGeneratorError(
+                                "profiled variable WGBS domain changed between planning and generation");
+                        }
+                    } else {
+                        profiled_starts =
+                            std::make_unique<wgbs::WgbsGcSampler>(
+                                contig.bases,
+                                sampler_shape,
+                                *coverage_profile);
+                        if (profiled_starts->valid_start_count()
+                                != candidate_weights[contig.index]
+                            || profiled_starts->bin_opportunity_counts()
+                                != target_bin_counts[contig.index]) {
+                            throw CoreGeneratorError(
+                                "target GC opportunity domain changed between planning and generation");
+                        }
                     }
                 } else if (variable_wgbs_insert) {
                     if (contig_variants) {
@@ -1661,9 +1706,13 @@ protocol::Trailer generate_core_stream(
                             ++fragment_ordinal;
                         }
                         candidate_ordinal = batch.next_candidate_ordinal;
-                    } else if (variable_starts) {
-                        const auto batch = variable_starts->sample(
-                            candidate_ordinal, chunk);
+                    } else if (profiled_variable_starts || variable_starts) {
+                        const auto batch = profiled_variable_starts
+                            ? profiled_variable_starts->sample(
+                                  candidate_ordinal,
+                                  chunk,
+                                  target_calibration->acceptance_probabilities)
+                            : variable_starts->sample(candidate_ordinal, chunk);
                         if (batch.skipped_count
                             > std::numeric_limits<std::uint64_t>::max()
                                 - skipped_fragment_count) {

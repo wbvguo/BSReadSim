@@ -44,8 +44,9 @@ except ImportError:
 
 POSTPROCESS_STAGE_ORDER = (
     "methylation",
-    "orientation",
-    "conversion",
+    "fragment-orientation",
+    "fragment-conversion",
+    "mate-derivation",
     "quality",
     "sequencing-error",
     "format-ready",
@@ -377,6 +378,16 @@ class _OrientedMate:
 
 
 @dataclass(frozen=True)
+class _ConvertedFragment:
+    conversion_mode: ConversionMode
+    bases: bytes
+    site_indices: Tuple[Optional[int], ...]
+    methylated: Tuple[Optional[bool], ...]
+    attempted: Tuple[bool, ...]
+    succeeded: Tuple[bool, ...]
+
+
+@dataclass(frozen=True)
 class _ConvertedMate:
     oriented: _OrientedMate
     bases: bytes
@@ -498,16 +509,14 @@ def _process_fragment_with_states(
         if include_truth
         else ()
     )
-    fragment_mode, oriented_mates = _orient_fragment(fragment, config)
-    converted_mates = tuple(
-        _convert_mate(
-            fragment,
-            mate,
-            sampled_methylation,
-            config,
-        )
-        for mate in oriented_mates
+    fragment_mode = _select_fragment_conversion_mode(fragment, config)
+    converted_fragment = _convert_fragment(
+        fragment,
+        fragment_mode,
+        sampled_methylation,
+        config,
     )
+    converted_mates = _derive_mates(fragment, converted_fragment)
     quality_mates = tuple(
         _generate_quality(fragment, mate, config)
         for mate in converted_mates
@@ -569,37 +578,6 @@ def _validate_fragment_batch_request(
             or "\x00" in contig_name
         ):
             raise PostprocessError("contig_name must be non-empty text without NUL")
-
-
-def _orient_fragment(
-    fragment: Fragment,
-    config: PostprocessConfig,
-) -> Tuple[ConversionMode, Tuple[_OrientedMate, ...]]:
-    fragment_mode = _select_fragment_conversion_mode(fragment, config)
-    oriented = []
-    for mate in sorted(fragment.mates, key=lambda value: value.mate_index):
-        bases = fragment.template_bases[mate.template_start : mate.template_end]
-        positions = fragment.reference_positions[mate.template_start : mate.template_end]
-        event_ids = fragment.base_event_ids[mate.template_start : mate.template_end]
-        if mate.reverse_complement:
-            bases = bytes(_COMPLEMENT[base] for base in reversed(bases))
-            positions = tuple(reversed(positions))
-            event_ids = tuple(reversed(event_ids))
-            mate_mode = _opposite_mode(fragment_mode)
-        else:
-            positions = tuple(positions)
-            event_ids = tuple(event_ids)
-            mate_mode = fragment_mode
-        oriented.append(
-            _OrientedMate(
-                mate,
-                mate_mode,
-                bases,
-                positions,
-                event_ids,
-            )
-        )
-    return fragment_mode, tuple(oriented)
 
 
 def _select_fragment_conversion_mode(
@@ -687,67 +665,133 @@ def _materialize_site_states(
     )
 
 
-def _convert_mate(
+def _convert_fragment(
     fragment: Fragment,
-    oriented: _OrientedMate,
+    conversion_mode: ConversionMode,
     sampled_methylation: Sequence[Union[bool, int]],
     config: PostprocessConfig,
-) -> _ConvertedMate:
+) -> _ConvertedFragment:
     key = derive_key(
         config.master_seed,
         RNGStage.CONVERSION,
         fragment.contig_index,
     )
-    bases = bytearray(oriented.bases)
+    bases = bytearray(fragment.template_bases)
     length = len(bases)
     site_indices = [None] * length
     methylated = [None] * length
     attempted = [False] * length
     succeeded = [False] * length
-    for site_ref in oriented.mate.site_refs:
-        offset = site_ref.read_offset
-        site_index = site_ref.site_index
-        if site_index < 0 or site_index >= len(sampled_methylation):
-            raise PostprocessError("mate refers to a missing fragment site state")
-        site = fragment.methylation_sites[site_index]
+    if len(sampled_methylation) != len(fragment.methylation_sites):
+        raise PostprocessError("methylation-state count disagrees with fragment sites")
+    for site_index, site in enumerate(fragment.methylation_sites):
         if site.site_index != site_index:
-            raise PostprocessError("mate refers to a missing fragment site state")
+            raise PostprocessError("fragment methylation sites are not index ordered")
+        offset = site.template_offset
+        if not 0 <= offset < length:
+            raise PostprocessError("fragment site points outside the template")
+        if site_indices[offset] is not None:
+            raise PostprocessError("fragment sites contain a duplicate template offset")
         site_indices[offset] = site_index
         methylated[offset] = bool(sampled_methylation[site_index])
 
-    # Protocol sites carry sampled methylation state, but the protocol does not
-    # require every convertible C/G to be a site.  A target without a site_ref is
-    # therefore implicitly unmethylated.  Explicit and implicit targets share
-    # the same collision-free conversion RNG address: (mate_index, read_offset).
-    for offset, oriented_base in enumerate(oriented.bases):
-        if not _is_conversion_target(oriented_base, oriented.conversion_mode):
+    # Conversion is one physical fragment event. A convertible C/G without a
+    # declared protocol site is implicitly unmethylated, and every template
+    # offset receives at most one conversion draw even when both mates observe it.
+    for offset, template_base in enumerate(fragment.template_bases):
+        if not _is_conversion_target(template_base, conversion_mode):
             continue
         if site_indices[offset] is None:
             methylated[offset] = False
         elif methylated[offset]:
             continue
         attempted[offset] = True
-        local_index = _pack_mate_base(oriented.mate.mate_index, offset)
         converted = bernoulli(
             key,
             fragment.fragment_ordinal,
-            local_index,
+            offset,
             config.conversion_rate,
         )
         if converted:
             bases[offset] = (
-                3 if oriented.conversion_mode is ConversionMode.C_TO_T else 0
+                3 if conversion_mode is ConversionMode.C_TO_T else 0
             )
             succeeded[offset] = True
 
-    return _ConvertedMate(
-        oriented,
+    return _ConvertedFragment(
+        conversion_mode,
         bytes(bases),
         tuple(site_indices),
         tuple(methylated),
         tuple(attempted),
         tuple(succeeded),
     )
+
+
+def _derive_mates(
+    fragment: Fragment,
+    converted: _ConvertedFragment,
+) -> Tuple[_ConvertedMate, ...]:
+    derived = []
+    for mate in sorted(fragment.mates, key=lambda value: value.mate_index):
+        template_slice = slice(mate.template_start, mate.template_end)
+        original_bases = fragment.template_bases[template_slice]
+        converted_bases = converted.bases[template_slice]
+        positions = tuple(fragment.reference_positions[template_slice])
+        event_ids = tuple(fragment.base_event_ids[template_slice])
+        site_indices = tuple(converted.site_indices[template_slice])
+        methylated = tuple(converted.methylated[template_slice])
+        attempted = tuple(converted.attempted[template_slice])
+        succeeded = tuple(converted.succeeded[template_slice])
+        mate_mode = converted.conversion_mode
+
+        if mate.reverse_complement:
+            original_bases = bytes(
+                _COMPLEMENT[base] for base in reversed(original_bases)
+            )
+            converted_bases = bytes(
+                _COMPLEMENT[base] for base in reversed(converted_bases)
+            )
+            positions = tuple(reversed(positions))
+            event_ids = tuple(reversed(event_ids))
+            site_indices = tuple(reversed(site_indices))
+            methylated = tuple(reversed(methylated))
+            attempted = tuple(reversed(attempted))
+            succeeded = tuple(reversed(succeeded))
+            mate_mode = _opposite_mode(mate_mode)
+
+        expected_refs = {
+            (read_offset, site_index)
+            for read_offset, site_index in enumerate(site_indices)
+            if site_index is not None
+        }
+        actual_refs = {
+            (site_ref.read_offset, site_ref.site_index)
+            for site_ref in mate.site_refs
+        }
+        if len(actual_refs) != len(mate.site_refs) or actual_refs != expected_refs:
+            raise PostprocessError(
+                "mate site references disagree with fragment site projection"
+            )
+
+        oriented = _OrientedMate(
+            mate,
+            mate_mode,
+            original_bases,
+            positions,
+            event_ids,
+        )
+        derived.append(
+            _ConvertedMate(
+                oriented,
+                converted_bases,
+                site_indices,
+                methylated,
+                attempted,
+                succeeded,
+            )
+        )
+    return tuple(derived)
 
 
 def _generate_quality(

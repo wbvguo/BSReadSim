@@ -602,15 +602,6 @@ def build_run_document(
             raise CommandLineError(
                 "--coverage-profile requires reference-only WGBS"
             )
-        if not (
-            fragments["insert_min"]
-            == fragments["insert_mean"]
-            == fragments["insert_max"]
-            and fragments["insert_stddev"] == 0
-        ):
-            raise CommandLineError(
-                "--coverage-profile requires one fixed --insert-size"
-            )
         from .config import WGBS_GC_PROFILE_FORMAT, WGBS_GC_PROFILE_VERSION
 
         document["coverage"] = {
