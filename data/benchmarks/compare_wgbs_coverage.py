@@ -18,7 +18,8 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -27,11 +28,14 @@ if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
 
 from bsreadsim.cli import build_parser, build_run_document  # noqa: E402
-from bsreadsim.config import normalize_run_config  # noqa: E402
-from bsreadsim.core_argv import build_core_argv  # noqa: E402
-from bsreadsim.manifest import verify_complete_manifest  # noqa: E402
-from bsreadsim.pipeline import resolve_core_executable, run_document  # noqa: E402
-from bsreadsim.preparation import prepare_run  # noqa: E402
+from bsreadsim.run.config import normalize_run_config  # noqa: E402
+from bsreadsim.native.launch import (  # noqa: E402
+    build_core_argv,
+    resolve_core_executable,
+)
+from bsreadsim.run.manifest import verify_complete_manifest  # noqa: E402
+from bsreadsim.run.execute import run_document  # noqa: E402
+from bsreadsim.run.prepare import prepare_run  # noqa: E402
 
 
 RUN_IDS = {
@@ -48,7 +52,7 @@ PAIRED_ORDER = (
 )
 
 
-def _arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+def _arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--reference", type=Path, required=True)
     parser.add_argument("--profile", type=Path, required=True)
@@ -70,14 +74,11 @@ def _arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
     with path.open("rb") as source:
-        for block in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+        return hashlib.file_digest(source, "sha256").hexdigest()
 
 
-def _command(*arguments: object) -> Optional[str]:
+def _command(*arguments: object) -> str | None:
     try:
         completed = subprocess.run(
             [str(value) for value in arguments],
@@ -105,14 +106,14 @@ def _native_extension_identity() -> Mapping[str, str]:
     return {"path": str(path), "sha256": _sha256(path)}
 
 
-def _usage(kind: int) -> Tuple[float, float]:
+def _usage(kind: int) -> tuple[float, float]:
     observed = resource.getrusage(kind)
     return observed.ru_utime, observed.ru_stime
 
 
 def _usage_delta(
-    self_before: Tuple[float, float],
-    children_before: Tuple[float, float],
+    self_before: tuple[float, float],
+    children_before: tuple[float, float],
 ) -> Mapping[str, float]:
     self_after = _usage(resource.RUSAGE_SELF)
     children_after = _usage(resource.RUSAGE_CHILDREN)
@@ -139,7 +140,7 @@ def _direct_arguments(
     insert_mean: int,
     insert_max: int,
     insert_stddev: float,
-) -> List[str]:
+) -> list[str]:
     result = [
         "run",
         "--reference", str(reference),
@@ -201,7 +202,7 @@ def _measure_core(
     core: Path,
     coverage: str,
 ) -> Mapping[str, Any]:
-    loaded = normalize_run_config(document, REPOSITORY_ROOT, mode="production")
+    loaded = normalize_run_config(document, REPOSITORY_ROOT)
     prepared = prepare_run(loaded)
     execution = prepared.config.normalized["execution"]
     if not isinstance(execution, Mapping):
@@ -302,13 +303,13 @@ def _e2e_signature(measurement: Mapping[str, Any]) -> object:
 
 
 def _summarize(measurements: Sequence[Mapping[str, Any]]) -> Mapping[str, Any]:
-    by_coverage = {}  # type: Dict[str, List[Mapping[str, Any]]]
+    by_coverage = {}  # type: dict[str, list[Mapping[str, Any]]]
     for measurement in measurements:
         by_coverage.setdefault(str(measurement["coverage"]), []).append(measurement)
     if set(by_coverage) != {"uniform", "profile"}:
         raise RuntimeError("benchmark did not produce both coverage modes")
 
-    summaries = {}  # type: Dict[str, Mapping[str, float]]
+    summaries = {}  # type: dict[str, Mapping[str, float]]
     for coverage, values in by_coverage.items():
         walls = [float(item["wall_seconds"]) for item in values]
         rates = [float(item["fragments_per_second"]) for item in values]
@@ -319,7 +320,7 @@ def _summarize(measurements: Sequence[Mapping[str, Any]]) -> Mapping[str, Any]:
             "maximum_fragments_per_second": max(rates),
         }
 
-    paired = []  # type: List[Mapping[str, float]]
+    paired = []  # type: list[Mapping[str, float]]
     for pair_index in range(3):
         pair = [
             item for item in measurements if int(item["pair_index"]) == pair_index
@@ -366,7 +367,7 @@ def _run_lane(
     insert_mean: int,
     insert_max: int,
     insert_stddev: float,
-) -> Tuple[List[Mapping[str, Any]], Mapping[str, Any]]:
+) -> tuple[list[Mapping[str, Any]], Mapping[str, Any]]:
     measure = _measure_core if lane == "core-producer" else _measure_e2e
     for coverage in ("uniform", "profile"):
         output = workspace / "{}-warmup-{}".format(lane, coverage)
@@ -389,7 +390,7 @@ def _run_lane(
         )
         measure(document, core, coverage)
 
-    measurements = []  # type: List[Mapping[str, Any]]
+    measurements = []  # type: list[Mapping[str, Any]]
     for order_index, (pair_index, coverage) in enumerate(PAIRED_ORDER):
         output = workspace / "{}-{}-{}".format(lane, order_index, coverage)
         document = _document(
@@ -455,7 +456,7 @@ def _run_lane(
     return measurements, summary
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     arguments = _arguments(argv)
     if arguments.fragments <= 0 or arguments.warmup_fragments <= 0:
         raise SystemExit("fragment counts must be positive")

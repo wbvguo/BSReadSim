@@ -16,7 +16,7 @@ namespace {
 using htsim::model::HaplotypeMask;
 using htsim::model::VariantKind;
 using htsim::variant::ContigVariants;
-using htsim::variant::Event;
+using htsim::variant::Variant;
 using htsim::variant::VariantCatalogError;
 using htsim::variant::VariantFile;
 
@@ -145,15 +145,15 @@ void test_normalization_phasing_and_reference_validation()
     TempFile file;
     const auto bytes = bytes_of(valid_vcf());
     const VariantFile variants = load(bytes, file);
-    require(variants.event_count() == 3U
-                && variants.events(0).size() == 3U
-                && variants.events(1).empty()
+    require(variants.variant_count() == 3U
+                && variants.variants(0).size() == 3U
+                && variants.variants(1).empty()
                 && variants.file_sha256() == htsim::crypto::sha256(bytes),
             "VCF event counts or raw identity changed");
 
-    const Event &snv = variants.events(0)[0];
-    const Event &insertion = variants.events(0)[1];
-    const Event &deletion = variants.events(0)[2];
+    const Variant &snv = variants.variants(0)[0];
+    const Variant &insertion = variants.variants(0)[1];
+    const Variant &deletion = variants.variants(0)[2];
     require(snv.kind == VariantKind::snv
                 && snv.reference_start == 1U && snv.reference_end == 2U
                 && snv.ref_bases == encode("C") && snv.alt_bases == encode("T")
@@ -175,20 +175,20 @@ void test_normalization_phasing_and_reference_validation()
             "deletion normalization or homozygous mask changed");
 
     const ContigVariants checked(
-        encode("ACGTACGTACGTACGTACGT"), variants.events(0), 0);
-    require(checked.events().size() == 3U && checked.contig_index() == 0U
+        encode("ACGTACGTACGTACGTACGT"), variants.variants(0), 0);
+    require(checked.variants().size() == 3U && checked.contig_index() == 0U
                 && checked.reference_length() == 20U,
             "reference-validated VCF catalog lost events");
     require_error(
         [&] {
             (void)ContigVariants(
-                encode("AAGTACGTACGTACGTACGT"), variants.events(0), 0);
+                encode("AAGTACGTACGTACGTACGT"), variants.variants(0), 0);
         },
         "VCF REF mismatch was accepted");
 
     TempFile other_seed_file;
     const VariantFile other_seed = load(bytes, other_seed_file, 126);
-    require(other_seed.events(0)[1].alt_haplotypes
+    require(other_seed.variants(0)[1].alt_haplotypes
                 == HaplotypeMask::haplotype_2,
             "master seed did not control unphased heterozygote assignment");
 }
@@ -198,7 +198,7 @@ void test_gzip_snapshot_and_format_versions()
     TempFile compressed_file;
     const auto compressed = gzip_bytes(valid_vcf());
     const VariantFile compressed_variants = load(compressed, compressed_file);
-    require(compressed_variants.event_count() == 3U
+    require(compressed_variants.variant_count() == 3U
                 && compressed_variants.file_sha256()
                     == htsim::crypto::sha256(compressed),
             "gzip VCF snapshot changed event projection or raw identity");
@@ -207,7 +207,7 @@ void test_gzip_snapshot_and_format_versions()
     version_42.replace(
         version_42.find("VCFv4.3"), std::string("VCFv4.3").size(), "VCFv4.2");
     TempFile version_file;
-    require(load(bytes_of(version_42), version_file).event_count() == 3U,
+    require(load(bytes_of(version_42), version_file).variant_count() == 3U,
             "VCF 4.2 was not accepted");
 }
 
@@ -271,7 +271,7 @@ void test_file_rejections()
 void test_typed_catalog_rejections()
 {
     const auto bases = encode("ACGTACGT");
-    std::vector<Event> wrong_contig = {
+    std::vector<Variant> wrong_contig = {
         {1, 1, 2, VariantKind::snv, encode("C"), encode("T"),
          HaplotypeMask::haplotype_1},
     };
@@ -279,14 +279,14 @@ void test_typed_catalog_rejections()
         [&] {(void)ContigVariants(bases, wrong_contig, 0);},
         "event from another contig was accepted");
 
-    std::vector<Event> invalid_mask = wrong_contig;
+    std::vector<Variant> invalid_mask = wrong_contig;
     invalid_mask[0].contig_index = 0;
     invalid_mask[0].alt_haplotypes = static_cast<HaplotypeMask>(0);
     require_error(
         [&] {(void)ContigVariants(bases, invalid_mask, 0);},
         "zero haplotype mask was accepted");
 
-    std::vector<Event> unsorted = {
+    std::vector<Variant> unsorted = {
         {0, 5, 6, VariantKind::snv, encode("C"), encode("A"),
          HaplotypeMask::both},
         {0, 1, 2, VariantKind::snv, encode("C"), encode("T"),
@@ -296,7 +296,7 @@ void test_typed_catalog_rejections()
         [&] {(void)ContigVariants(bases, unsorted, 0);},
         "non-canonical typed events were accepted");
 
-    const std::vector<std::vector<Event>> malformed = {
+    const std::vector<std::vector<Variant>> malformed = {
         {{0, 1, 2, VariantKind::snv, encode("C"), encode("TA"),
           HaplotypeMask::both}},
         {{0, 2, 2, VariantKind::insertion, {}, {},

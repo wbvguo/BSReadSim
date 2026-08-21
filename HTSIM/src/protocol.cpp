@@ -321,10 +321,6 @@ void validate_header(const Header &header)
     default:
         throw ProtocolError("header technology is invalid");
     }
-    if (header.truth_columns != TruthMode::none
-        && header.truth_columns != TruthMode::full) {
-        throw ProtocolError("header truth mode is invalid");
-    }
     if (header.mates_per_fragment != 1U
         && header.mates_per_fragment != 2U) {
         throw ProtocolError("header mates_per_fragment must be one or two");
@@ -452,7 +448,7 @@ std::vector<std::uint8_t> encode_header_payload(const Header &header)
     encoder.u64(header.master_seed);
     encoder.raw(header.normalized_config_sha256);
     encoder.u8(static_cast<std::uint8_t>(header.technology));
-    encoder.u8(static_cast<std::uint8_t>(header.truth_columns));
+    encoder.u8(static_cast<std::uint8_t>(header.has_details));
     encoder.u8(header.mates_per_fragment);
     encoder.u8(static_cast<std::uint8_t>(header.base_encoding));
     encoder.u8(static_cast<std::uint8_t>(header.ambiguity_policy));
@@ -471,7 +467,7 @@ std::vector<std::uint8_t> encode_header_payload(const Header &header)
     return payload;
 }
 
-void validate_truth(const FragmentBatch &, const Header &, const TruthColumns &);
+void validate_annotations(const FragmentBatch &, const Header &, const FragmentDetails &);
 
 void validate_batch(const FragmentBatch &batch, const Header &header)
 {
@@ -491,17 +487,17 @@ void validate_batch(const FragmentBatch &batch, const Header &header)
         > std::numeric_limits<std::uint32_t>::max()) {
         throw ProtocolError("batch fragment ordinal range exceeds u32");
     }
-    require_size("batch.reference_begins", batch.reference_begins.size(), fragments);
+    require_size("batch.reference_starts", batch.reference_starts.size(), fragments);
     require_size("batch.reference_ends", batch.reference_ends.size(), fragments);
     require_size("batch.haplotypes", batch.haplotypes.size(), fragments);
     require_size("batch.capture_strands", batch.capture_strands.size(), fragments);
-    require_size("batch.mate_template_begins", batch.mate_template_begins.size(), mates);
+    require_size("batch.mate_template_starts", batch.mate_template_starts.size(), mates);
     require_size("batch.mate_template_ends", batch.mate_template_ends.size(), mates);
     require_size("batch.mate_reverse_complements",
                  batch.mate_reverse_complements.size(), mates);
     require_size("batch.site_probabilities", batch.site_probabilities.size(), sites);
     require_size("batch.site_contexts", batch.site_contexts.size(), sites);
-    require_size("batch.site_sources", batch.site_sources.size(), sites);
+    require_size("batch.methylation_sources", batch.methylation_sources.size(), sites);
     require_size("batch.site_alleles", batch.site_alleles.size(), sites);
     validate_prefix("batch.template_offsets", batch.template_offsets, fragments, bases);
     validate_prefix("batch.mate_offsets", batch.mate_offsets, fragments, mates);
@@ -513,7 +509,7 @@ void validate_batch(const FragmentBatch &batch, const Header &header)
         if (contig_index >= header.contigs.size()) {
             throw ProtocolError("fragment contig index is outside the header");
         }
-        if (batch.reference_begins[row] >= batch.reference_ends[row]
+        if (batch.reference_starts[row] >= batch.reference_ends[row]
             || batch.reference_ends[row] > header.contigs[contig_index].length) {
             throw ProtocolError("fragment reference envelope is invalid");
         }
@@ -535,7 +531,7 @@ void validate_batch(const FragmentBatch &batch, const Header &header)
         }
         for (std::uint32_t local = 0; local < header.mates_per_fragment; ++local) {
             const std::uint32_t index = mate_begin + local;
-            const std::uint32_t begin = batch.mate_template_begins[index];
+            const std::uint32_t begin = batch.mate_template_starts[index];
             const std::uint32_t end = batch.mate_template_ends[index];
             const std::uint32_t expected =
                 local == 0U ? header.read_length_r1 : header.read_length_r2;
@@ -562,7 +558,7 @@ void validate_batch(const FragmentBatch &batch, const Header &header)
                 throw ProtocolError("site probability must be finite and in [0,1]");
             }
             if (!valid_context(batch.site_contexts[index])
-                || !valid_source(batch.site_sources[index])
+                || !valid_source(batch.methylation_sources[index])
                 || !valid_allele(batch.site_alleles[index])) {
                 throw ProtocolError("site enum value is invalid");
             }
@@ -574,70 +570,78 @@ void validate_batch(const FragmentBatch &batch, const Header &header)
             }
         }
     }
-    if (header.truth_columns == TruthMode::full) {
-        if (!batch.truth) {
-            throw ProtocolError("header requires Full-Truth batch columns");
+    if (header.has_details) {
+        if (!batch.details) {
+            throw ProtocolError("header requires Full-Details batch columns");
         }
-        validate_truth(batch, header, *batch.truth);
-    } else if (batch.truth) {
-        throw ProtocolError("header forbids Full-Truth batch columns");
+        validate_annotations(batch, header, *batch.details);
+    } else if (batch.details) {
+        throw ProtocolError("header forbids Full-Details batch columns");
     }
 }
 
-void validate_truth(
+void validate_annotations(
     const FragmentBatch &batch,
     const Header &,
-    const TruthColumns &truth)
+    const FragmentDetails &details)
 {
     const std::uint32_t fragments = batch.fragment_count();
     const std::uint32_t sites = batch.methylation_site_count();
     const std::uint32_t projections = checked_size(
-        "truth.projection_template_begins",
-        truth.projection_template_begins);
-    const std::uint32_t events =
-        checked_size("truth.event_ids", truth.event_ids);
+        "details.projection_template_starts",
+        details.projection_template_starts);
+    const std::uint32_t variants =
+        checked_size("details.variant_indices", details.variant_indices);
+    const std::uint32_t variant_id_bytes =
+        checked_size("details.variant_ids", details.variant_ids);
     const std::uint32_t ref_bases =
-        checked_size("truth.event_ref_bases", truth.event_ref_bases);
+        checked_size("details.variant_ref_bases", details.variant_ref_bases);
     const std::uint32_t alt_bases =
-        checked_size("truth.event_alt_bases", truth.event_alt_bases);
+        checked_size("details.variant_alt_bases", details.variant_alt_bases);
     const std::uint32_t original_ns = checked_size(
-        "truth.original_n_template_offsets",
-        truth.original_n_template_offsets);
+        "details.original_n_template_offsets",
+        details.original_n_template_offsets);
 
     validate_prefix(
-        "truth.projection_offsets", truth.projection_offsets, fragments, projections);
-    validate_prefix("truth.event_offsets", truth.event_offsets, fragments, events);
+        "details.projection_offsets", details.projection_offsets, fragments, projections);
+    validate_prefix("details.variant_offsets", details.variant_offsets, fragments, variants);
     validate_prefix(
-        "truth.original_n_offsets", truth.original_n_offsets, fragments, original_ns);
+        "details.original_n_offsets", details.original_n_offsets, fragments, original_ns);
     validate_prefix(
-        "truth.event_ref_offsets", truth.event_ref_offsets, events, ref_bases);
+        "details.variant_id_offsets",
+        details.variant_id_offsets,
+        variants,
+        variant_id_bytes);
     validate_prefix(
-        "truth.event_alt_offsets", truth.event_alt_offsets, events, alt_bases);
-    require_size("truth.projection_template_ends",
-                 truth.projection_template_ends.size(), projections);
-    require_size("truth.projection_reference_begins",
-                 truth.projection_reference_begins.size(), projections);
+        "details.variant_ref_offsets", details.variant_ref_offsets, variants, ref_bases);
+    validate_prefix(
+        "details.variant_alt_offsets", details.variant_alt_offsets, variants, alt_bases);
+    require_size("details.projection_template_ends",
+                 details.projection_template_ends.size(), projections);
+    require_size("details.projection_reference_starts",
+                 details.projection_reference_starts.size(), projections);
     require_size(
-        "truth.event_reference_begins", truth.event_reference_begins.size(), events);
+        "details.variant_reference_starts", details.variant_reference_starts.size(), variants);
     require_size(
-        "truth.event_reference_ends", truth.event_reference_ends.size(), events);
+        "details.variant_reference_ends", details.variant_reference_ends.size(), variants);
     require_size(
-        "truth.event_template_begins", truth.event_template_begins.size(), events);
+        "details.variant_template_starts", details.variant_template_starts.size(), variants);
     require_size(
-        "truth.event_template_ends", truth.event_template_ends.size(), events);
-    require_size("truth.site_reference_positions",
-                 truth.site_reference_positions.size(), sites);
-    require_size("truth.event_kinds", truth.event_kinds.size(), events);
-    require_size("truth.event_phased_haplotypes",
-                 truth.event_phased_haplotypes.size(), events);
-    validate_bases("truth.event_ref_bases", truth.event_ref_bases, 3U);
-    validate_bases("truth.event_alt_bases", truth.event_alt_bases, 3U);
+        "details.variant_template_ends", details.variant_template_ends.size(), variants);
+    require_size("details.site_reference_positions",
+                 details.site_reference_positions.size(), sites);
+    require_size("details.variant_kinds", details.variant_kinds.size(), variants);
+    require_size("details.variant_sources", details.variant_sources.size(), variants);
+    require_size("details.variant_phased_haplotypes",
+                 details.variant_phased_haplotypes.size(), variants);
+    validate_bases("details.variant_ref_bases", details.variant_ref_bases, 3U);
+    validate_bases("details.variant_alt_bases", details.variant_alt_bases, 3U);
 
     for (std::uint32_t row = 0; row < fragments; ++row) {
         const std::uint32_t flat_template_begin = batch.template_offsets[row];
         const std::uint32_t template_length =
             batch.template_offsets[row + 1U] - flat_template_begin;
-        const std::uint32_t reference_begin = batch.reference_begins[row];
+        const std::uint32_t reference_begin = batch.reference_starts[row];
         const std::uint32_t reference_end = batch.reference_ends[row];
         const std::uint8_t haplotype = batch.haplotypes[row];
         std::vector<std::uint8_t> projection_cover(template_length, 0U);
@@ -649,15 +653,15 @@ void validate_truth(
         std::optional<std::uint32_t> previous_template_end;
         std::optional<std::uint32_t> previous_reference_begin;
         std::optional<std::uint32_t> previous_reference_end;
-        for (std::uint32_t index = truth.projection_offsets[row];
-             index < truth.projection_offsets[row + 1U];
+        for (std::uint32_t index = details.projection_offsets[row];
+             index < details.projection_offsets[row + 1U];
              ++index) {
             const std::uint32_t template_begin =
-                truth.projection_template_begins[index];
+                details.projection_template_starts[index];
             const std::uint32_t template_end =
-                truth.projection_template_ends[index];
+                details.projection_template_ends[index];
             const std::uint32_t mapped_begin =
-                truth.projection_reference_begins[index];
+                details.projection_reference_starts[index];
             if (template_begin >= template_end || template_end > template_length) {
                 throw ProtocolError("projection run has an invalid template interval");
             }
@@ -694,33 +698,50 @@ void validate_truth(
             previous_reference_end = mapped_end;
         }
 
-        std::optional<std::uint32_t> previous_event_id;
-        for (std::uint32_t index = truth.event_offsets[row];
-             index < truth.event_offsets[row + 1U];
+        std::optional<std::uint32_t> previous_variant_index;
+        for (std::uint32_t index = details.variant_offsets[row];
+             index < details.variant_offsets[row + 1U];
              ++index) {
-            const std::uint32_t event_id = truth.event_ids[index];
-            if (event_id == no_reference_position
-                || (previous_event_id && event_id <= *previous_event_id)) {
+            const std::uint32_t variant_index = details.variant_indices[index];
+            if (variant_index == no_reference_position
+                || (previous_variant_index && variant_index <= *previous_variant_index)) {
                 throw ProtocolError("event ids must be strictly increasing");
             }
-            previous_event_id = event_id;
-            const std::uint8_t raw_kind = truth.event_kinds[index];
+            previous_variant_index = variant_index;
+            const std::uint8_t raw_source = details.variant_sources[index];
+            if (raw_source < static_cast<std::uint8_t>(VariantSource::vcf)
+                || raw_source
+                    > static_cast<std::uint8_t>(VariantSource::de_novo)) {
+                throw ProtocolError("variant source is invalid");
+            }
+            const std::uint32_t id_start = details.variant_id_offsets[index];
+            const std::uint32_t id_end = details.variant_id_offsets[index + 1U];
+            if (id_start == id_end) {
+                throw ProtocolError("variant ID must not be empty");
+            }
+            const std::string_view id(
+                reinterpret_cast<const char *>(details.variant_ids.data() + id_start),
+                id_end - id_start);
+            if (!valid_utf8(id)) {
+                throw ProtocolError("variant ID must be valid UTF-8");
+            }
+            const std::uint8_t raw_kind = details.variant_kinds[index];
             if (!valid_variant_kind(raw_kind)) {
                 throw ProtocolError("event kind is invalid");
             }
             const VariantKind kind = static_cast<VariantKind>(raw_kind);
-            const std::uint8_t phased = truth.event_phased_haplotypes[index];
+            const std::uint8_t phased = details.variant_phased_haplotypes[index];
             if (phased != 255U && phased != haplotype) {
                 throw ProtocolError("event phased haplotype disagrees with fragment");
             }
             const std::uint32_t event_reference_begin =
-                truth.event_reference_begins[index];
+                details.variant_reference_starts[index];
             const std::uint32_t event_reference_end =
-                truth.event_reference_ends[index];
+                details.variant_reference_ends[index];
             const std::uint32_t event_template_begin =
-                truth.event_template_begins[index];
+                details.variant_template_starts[index];
             const std::uint32_t event_template_end =
-                truth.event_template_ends[index];
+                details.variant_template_ends[index];
             if (event_reference_begin > event_reference_end
                 || event_reference_begin < reference_begin
                 || event_reference_end > reference_end) {
@@ -734,10 +755,10 @@ void validate_truth(
                 event_reference_end - event_reference_begin;
             const std::uint32_t template_span =
                 event_template_end - event_template_begin;
-            const std::uint32_t ref_begin = truth.event_ref_offsets[index];
-            const std::uint32_t ref_end = truth.event_ref_offsets[index + 1U];
-            const std::uint32_t alt_begin = truth.event_alt_offsets[index];
-            const std::uint32_t alt_end = truth.event_alt_offsets[index + 1U];
+            const std::uint32_t ref_begin = details.variant_ref_offsets[index];
+            const std::uint32_t ref_end = details.variant_ref_offsets[index + 1U];
+            const std::uint32_t alt_begin = details.variant_alt_offsets[index];
+            const std::uint32_t alt_end = details.variant_alt_offsets[index + 1U];
             if (ref_end - ref_begin != reference_span) {
                 throw ProtocolError("event REF bases disagree with reference span");
             }
@@ -808,7 +829,7 @@ void validate_truth(
                 }
                 event_cover[offset] = 1U;
                 if (batch.template_bases[flat_template_begin + offset]
-                    != truth.event_alt_bases[alt_begin + relative]) {
+                    != details.variant_alt_bases[alt_begin + relative]) {
                     throw ProtocolError("event ALT bases disagree with template");
                 }
                 if (kind == VariantKind::snv) {
@@ -834,7 +855,7 @@ void validate_truth(
         for (std::uint32_t index = batch.site_offsets[row];
              index < batch.site_offsets[row + 1U];
              ++index) {
-            if (truth.site_reference_positions[index]
+            if (details.site_reference_positions[index]
                 != mapped_positions[batch.site_template_offsets[index]]) {
                 throw ProtocolError("site reference position disagrees with projection");
             }
@@ -842,10 +863,10 @@ void validate_truth(
 
         std::vector<std::uint8_t> observed_n(template_length, 0U);
         std::optional<std::uint32_t> previous_n;
-        for (std::uint32_t index = truth.original_n_offsets[row];
-             index < truth.original_n_offsets[row + 1U];
+        for (std::uint32_t index = details.original_n_offsets[row];
+             index < details.original_n_offsets[row + 1U];
              ++index) {
-            const std::uint32_t offset = truth.original_n_template_offsets[index];
+            const std::uint32_t offset = details.original_n_template_offsets[index];
             if (offset >= template_length || (previous_n && offset <= *previous_n)) {
                 throw ProtocolError("original-N offsets are invalid");
             }
@@ -877,12 +898,12 @@ std::pair<std::uint8_t, std::vector<std::uint8_t>> encode_batch_payload(
     encoder.u32(batch.mate_count());
     encoder.u32(batch.methylation_site_count());
     encoder.u32s(batch.contig_indices);
-    encoder.u32s(batch.reference_begins);
+    encoder.u32s(batch.reference_starts);
     encoder.u32s(batch.reference_ends);
     encoder.u32s(batch.template_offsets);
     encoder.u32s(batch.mate_offsets);
     encoder.u32s(batch.site_offsets);
-    encoder.u32s(batch.mate_template_begins);
+    encoder.u32s(batch.mate_template_starts);
     encoder.u32s(batch.mate_template_ends);
     encoder.u32s(batch.site_template_offsets);
     encoder.f32s(batch.site_probabilities);
@@ -891,41 +912,45 @@ std::pair<std::uint8_t, std::vector<std::uint8_t>> encode_batch_payload(
     encoder.raw(batch.mate_indices);
     encoder.raw(batch.mate_reverse_complements);
     encoder.raw(batch.site_contexts);
-    encoder.raw(batch.site_sources);
+    encoder.raw(batch.methylation_sources);
     encoder.raw(batch.site_alleles);
     encoder.raw(batch.template_bases);
 
     std::uint8_t flags = 0U;
-    if (batch.truth) {
-        flags = truth_columns_present;
-        const TruthColumns &truth = *batch.truth;
+    if (batch.details) {
+        flags = details_present;
+        const FragmentDetails &details = *batch.details;
         encoder.align4();
         encoder.u32(static_cast<std::uint32_t>(
-            truth.projection_template_begins.size()));
-        encoder.u32(static_cast<std::uint32_t>(truth.event_ids.size()));
-        encoder.u32(static_cast<std::uint32_t>(truth.event_ref_bases.size()));
-        encoder.u32(static_cast<std::uint32_t>(truth.event_alt_bases.size()));
+            details.projection_template_starts.size()));
+        encoder.u32(static_cast<std::uint32_t>(details.variant_indices.size()));
+        encoder.u32(static_cast<std::uint32_t>(details.variant_ids.size()));
+        encoder.u32(static_cast<std::uint32_t>(details.variant_ref_bases.size()));
+        encoder.u32(static_cast<std::uint32_t>(details.variant_alt_bases.size()));
         encoder.u32(static_cast<std::uint32_t>(
-            truth.original_n_template_offsets.size()));
-        encoder.u32s(truth.projection_offsets);
-        encoder.u32s(truth.event_offsets);
-        encoder.u32s(truth.original_n_offsets);
-        encoder.u32s(truth.projection_template_begins);
-        encoder.u32s(truth.projection_template_ends);
-        encoder.u32s(truth.projection_reference_begins);
-        encoder.u32s(truth.event_ids);
-        encoder.u32s(truth.event_reference_begins);
-        encoder.u32s(truth.event_reference_ends);
-        encoder.u32s(truth.event_template_begins);
-        encoder.u32s(truth.event_template_ends);
-        encoder.u32s(truth.event_ref_offsets);
-        encoder.u32s(truth.event_alt_offsets);
-        encoder.u32s(truth.site_reference_positions);
-        encoder.u32s(truth.original_n_template_offsets);
-        encoder.raw(truth.event_kinds);
-        encoder.raw(truth.event_phased_haplotypes);
-        encoder.raw(truth.event_ref_bases);
-        encoder.raw(truth.event_alt_bases);
+            details.original_n_template_offsets.size()));
+        encoder.u32s(details.projection_offsets);
+        encoder.u32s(details.variant_offsets);
+        encoder.u32s(details.original_n_offsets);
+        encoder.u32s(details.projection_template_starts);
+        encoder.u32s(details.projection_template_ends);
+        encoder.u32s(details.projection_reference_starts);
+        encoder.u32s(details.variant_indices);
+        encoder.u32s(details.variant_id_offsets);
+        encoder.u32s(details.variant_reference_starts);
+        encoder.u32s(details.variant_reference_ends);
+        encoder.u32s(details.variant_template_starts);
+        encoder.u32s(details.variant_template_ends);
+        encoder.u32s(details.variant_ref_offsets);
+        encoder.u32s(details.variant_alt_offsets);
+        encoder.u32s(details.site_reference_positions);
+        encoder.u32s(details.original_n_template_offsets);
+        encoder.raw(details.variant_sources);
+        encoder.raw(details.variant_kinds);
+        encoder.raw(details.variant_phased_haplotypes);
+        encoder.raw(details.variant_ids);
+        encoder.raw(details.variant_ref_bases);
+        encoder.raw(details.variant_alt_bases);
     }
     encoder.align4();
     if (payload.size() > maximum_frame_payload) {
@@ -1163,11 +1188,11 @@ void Writer::write_prepared_batch(PreparedFragmentBatch &&batch)
             != per_contig_fragment_counts_.size()) {
             throw ProtocolError("prepared batch contig cardinality mismatch");
         }
-        const bool truth_present =
-            (batch.frame_flags_ & truth_columns_present) != 0U;
-        if ((batch.frame_flags_ & ~truth_columns_present) != 0U
-            || truth_present != (header_->truth_columns == TruthMode::full)) {
-            throw ProtocolError("prepared batch truth flags disagree with header");
+        const bool annotation_present =
+            (batch.frame_flags_ & details_present) != 0U;
+        if ((batch.frame_flags_ & ~details_present) != 0U
+            || annotation_present != header_->has_details) {
+            throw ProtocolError("prepared batch details flags disagree with header");
         }
         checked_add(fragment_count_, batch.fragment_count_, "fragment count");
         checked_add(fragment_batch_count_, 1U, "fragment batch count");
@@ -1311,7 +1336,7 @@ std::uint32_t wire_reference_position(std::int64_t position)
 
 std::pair<std::uint32_t, std::uint32_t> event_template_interval(
     const model::Fragment &fragment,
-    const model::VariantEvent &event)
+    const model::Variant &event)
 {
     if (event.kind == model::VariantKind::deletion) {
         for (std::size_t offset = 0; offset < fragment.reference_positions.size();
@@ -1331,9 +1356,9 @@ std::pair<std::uint32_t, std::uint32_t> event_template_interval(
     std::optional<std::size_t> first;
     std::size_t previous = 0U;
     std::size_t count = 0U;
-    for (std::size_t offset = 0; offset < fragment.base_event_ids.size();
+    for (std::size_t offset = 0; offset < fragment.base_variant_indices.size();
          ++offset) {
-        if (fragment.base_event_ids[offset] != event.event_id) {continue;}
+        if (fragment.base_variant_indices[offset] != event.index) {continue;}
         if (!first) {
             first = offset;
         } else if (offset != previous + 1U) {
@@ -1343,7 +1368,7 @@ std::pair<std::uint32_t, std::uint32_t> event_template_interval(
         ++count;
     }
     if (!first || count != event.alt_bases.size()) {
-        fail("event ALT span is incomplete in base_event_ids");
+        fail("event ALT span is incomplete in base_variant_indices");
     }
     return {
         checked_size(*first, "event template begin"),
@@ -1352,7 +1377,7 @@ std::pair<std::uint32_t, std::uint32_t> event_template_interval(
 }
 
 void append_projection_runs(
-    TruthColumns &truth,
+    FragmentDetails &details,
     const model::Fragment &fragment)
 {
     bool run_open = false;
@@ -1362,11 +1387,11 @@ void append_projection_runs(
 
     const auto close_run = [&](std::size_t template_end) {
         if (!run_open) {return;}
-        truth.projection_template_begins.push_back(
+        details.projection_template_starts.push_back(
             checked_size(run_template_begin, "projection template begin"));
-        truth.projection_template_ends.push_back(
+        details.projection_template_ends.push_back(
             checked_size(template_end, "projection template end"));
-        truth.projection_reference_begins.push_back(run_reference_begin);
+        details.projection_reference_starts.push_back(run_reference_begin);
         run_open = false;
     };
 
@@ -1393,77 +1418,85 @@ void append_projection_runs(
     close_run(fragment.reference_positions.size());
 }
 
-void append_events(
-    TruthColumns &truth,
+void append_variants(
+    FragmentDetails &details,
     const model::Fragment &fragment)
 {
-    std::vector<const model::VariantEvent *> events;
-    events.reserve(fragment.variant_events.size());
-    for (const model::VariantEvent &event : fragment.variant_events) {
-        events.push_back(&event);
+    std::vector<const model::Variant *> variants;
+    variants.reserve(fragment.variants.size());
+    for (const model::Variant &variant : fragment.variants) {
+        variants.push_back(&variant);
     }
     std::sort(
-        events.begin(), events.end(),
-        [](const model::VariantEvent *left,
-           const model::VariantEvent *right) {
-            return left->event_id < right->event_id;
+        variants.begin(), variants.end(),
+        [](const model::Variant *left,
+           const model::Variant *right) {
+            return left->index < right->index;
         });
 
     std::optional<std::uint32_t> previous_id;
-    for (const model::VariantEvent *event : events) {
-        if (event->event_id == model::no_variant_event
-            || (previous_id && event->event_id <= *previous_id)) {
-            fail("event ids are not unique u32 values");
+    for (const model::Variant *variant : variants) {
+        if (variant->index == model::no_variant_index
+            || (previous_id && variant->index <= *previous_id)) {
+            fail("variant indices are not unique u32 values");
         }
-        previous_id = event->event_id;
-        const auto interval = event_template_interval(fragment, *event);
-        truth.event_ids.push_back(event->event_id);
-        truth.event_kinds.push_back(static_cast<std::uint8_t>(event->kind));
-        truth.event_phased_haplotypes.push_back(event->phased_haplotype);
-        truth.event_reference_begins.push_back(
-            checked_u32(event->reference_start, "event reference begin"));
-        truth.event_reference_ends.push_back(
-            checked_u32(event->reference_end, "event reference end"));
-        truth.event_template_begins.push_back(interval.first);
-        truth.event_template_ends.push_back(interval.second);
-        truth.event_ref_bases.insert(
-            truth.event_ref_bases.end(),
-            event->ref_bases.begin(), event->ref_bases.end());
-        truth.event_alt_bases.insert(
-            truth.event_alt_bases.end(),
-            event->alt_bases.begin(), event->alt_bases.end());
+        if (variant->id.empty()) {fail("variant ID is empty");}
+        previous_id = variant->index;
+        const auto interval = event_template_interval(fragment, *variant);
+        details.variant_indices.push_back(variant->index);
+        details.variant_ids.insert(
+            details.variant_ids.end(), variant->id.begin(), variant->id.end());
         append_prefix(
-            truth.event_ref_offsets,
-            truth.event_ref_bases.size(), "event REF bases");
+            details.variant_id_offsets,
+            details.variant_ids.size(), "variant IDs");
+        details.variant_sources.push_back(
+            static_cast<std::uint8_t>(variant->source));
+        details.variant_kinds.push_back(static_cast<std::uint8_t>(variant->kind));
+        details.variant_phased_haplotypes.push_back(variant->phased_haplotype);
+        details.variant_reference_starts.push_back(
+            checked_u32(variant->reference_start, "variant reference start"));
+        details.variant_reference_ends.push_back(
+            checked_u32(variant->reference_end, "variant reference end"));
+        details.variant_template_starts.push_back(interval.first);
+        details.variant_template_ends.push_back(interval.second);
+        details.variant_ref_bases.insert(
+            details.variant_ref_bases.end(),
+            variant->ref_bases.begin(), variant->ref_bases.end());
+        details.variant_alt_bases.insert(
+            details.variant_alt_bases.end(),
+            variant->alt_bases.begin(), variant->alt_bases.end());
         append_prefix(
-            truth.event_alt_offsets,
-            truth.event_alt_bases.size(), "event ALT bases");
+            details.variant_ref_offsets,
+            details.variant_ref_bases.size(), "variant REF bases");
+        append_prefix(
+            details.variant_alt_offsets,
+            details.variant_alt_bases.size(), "variant ALT bases");
     }
 }
 
 void validate_fragment_shape(
     const model::Fragment &fragment,
-    bool include_truth)
+    bool include_annotations)
 {
     if (fragment.template_bases.empty()) {
         fail("typed fragment template is empty");
     }
     const bool has_reference_positions = !fragment.reference_positions.empty();
-    const bool has_base_event_ids = !fragment.base_event_ids.empty();
-    if (has_reference_positions != has_base_event_ids
+    const bool has_base_variant_indices = !fragment.base_variant_indices.empty();
+    if (has_reference_positions != has_base_variant_indices
         || (has_reference_positions
             && (fragment.reference_positions.size()
                     != fragment.template_bases.size()
-                || fragment.base_event_ids.size()
+                || fragment.base_variant_indices.size()
                     != fragment.template_bases.size()))) {
         fail("typed fragment arrays have inconsistent lengths");
     }
     if (!has_reference_positions) {
-        if (include_truth) {
-            fail("Full Truth fragment omitted typed projection arrays");
+        if (include_annotations) {
+            fail("Full Details fragment omitted typed projection arrays");
         }
-        if (!fragment.variant_events.empty()) {
-            fail("compact fragment retained unprojectable variant events");
+        if (!fragment.variants.empty()) {
+            fail("compact fragment retained unprojectable variant variants");
         }
     } else {
         std::optional<std::int64_t> previous_position;
@@ -1508,19 +1541,20 @@ FragmentBatch make_fragment_batch(
     batch.mate_offsets.push_back(0U);
     batch.site_offsets.push_back(0U);
 
-    const bool include_truth = header.truth_columns == TruthMode::full;
-    if (include_truth) {
-        batch.truth.emplace();
-        batch.truth->projection_offsets.push_back(0U);
-        batch.truth->event_offsets.push_back(0U);
-        batch.truth->original_n_offsets.push_back(0U);
-        batch.truth->event_ref_offsets.push_back(0U);
-        batch.truth->event_alt_offsets.push_back(0U);
+    const bool include_details = header.has_details;
+    if (include_details) {
+        batch.details.emplace();
+        batch.details->projection_offsets.push_back(0U);
+        batch.details->variant_offsets.push_back(0U);
+        batch.details->original_n_offsets.push_back(0U);
+        batch.details->variant_id_offsets.push_back(0U);
+        batch.details->variant_ref_offsets.push_back(0U);
+        batch.details->variant_alt_offsets.push_back(0U);
     }
 
     for (std::size_t row = 0; row < fragments.size(); ++row) {
         const model::Fragment &fragment = fragments[row];
-        validate_fragment_shape(fragment, include_truth);
+        validate_fragment_shape(fragment, include_details);
         const std::uint64_t expected_ordinal =
             static_cast<std::uint64_t>(batch.first_fragment_ordinal) + row;
         if (fragment.fragment_ordinal != expected_ordinal) {
@@ -1528,7 +1562,7 @@ FragmentBatch make_fragment_batch(
         }
 
         batch.contig_indices.push_back(fragment.contig_index);
-        batch.reference_begins.push_back(
+        batch.reference_starts.push_back(
             checked_u32(fragment.reference_start, "fragment reference begin"));
         batch.reference_ends.push_back(
             checked_u32(fragment.reference_end, "fragment reference end"));
@@ -1546,7 +1580,7 @@ FragmentBatch make_fragment_batch(
             batch.mate_indices.push_back(mate.mate_index);
             batch.mate_reverse_complements.push_back(
                 static_cast<std::uint8_t>(mate.reverse_complement));
-            batch.mate_template_begins.push_back(mate.template_start);
+            batch.mate_template_starts.push_back(mate.template_start);
             batch.mate_template_ends.push_back(mate.template_end);
         }
         append_prefix(batch.mate_offsets, batch.mate_indices.size(), "mates");
@@ -1557,12 +1591,12 @@ FragmentBatch make_fragment_batch(
             batch.site_probabilities.push_back(site.methylation_probability);
             batch.site_contexts.push_back(
                 static_cast<std::uint8_t>(site.context));
-            batch.site_sources.push_back(
-                static_cast<std::uint8_t>(site.source));
+            batch.methylation_sources.push_back(
+                static_cast<std::uint8_t>(site.methylation_source));
             batch.site_alleles.push_back(
                 static_cast<std::uint8_t>(site.allele));
-            if (include_truth) {
-                batch.truth->site_reference_positions.push_back(
+            if (include_details) {
+                batch.details->site_reference_positions.push_back(
                     wire_reference_position(site.reference_pos));
             }
         }
@@ -1570,26 +1604,26 @@ FragmentBatch make_fragment_batch(
             batch.site_offsets,
             batch.site_template_offsets.size(), "methylation sites");
 
-        if (include_truth) {
-            append_projection_runs(*batch.truth, fragment);
+        if (include_details) {
+            append_projection_runs(*batch.details, fragment);
             append_prefix(
-                batch.truth->projection_offsets,
-                batch.truth->projection_template_begins.size(),
+                batch.details->projection_offsets,
+                batch.details->projection_template_starts.size(),
                 "projection runs");
-            append_events(*batch.truth, fragment);
+            append_variants(*batch.details, fragment);
             append_prefix(
-                batch.truth->event_offsets,
-                batch.truth->event_ids.size(), "variant events");
+                batch.details->variant_offsets,
+                batch.details->variant_indices.size(), "variants");
             for (std::size_t offset = 0;
                  offset < fragment.template_bases.size(); ++offset) {
                 if (fragment.template_bases[offset] == 4U) {
-                    batch.truth->original_n_template_offsets.push_back(
+                    batch.details->original_n_template_offsets.push_back(
                         checked_size(offset, "original-N template offset"));
                 }
             }
             append_prefix(
-                batch.truth->original_n_offsets,
-                batch.truth->original_n_template_offsets.size(),
+                batch.details->original_n_offsets,
+                batch.details->original_n_template_offsets.size(),
                 "original-N offsets");
         }
     }

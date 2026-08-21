@@ -21,7 +21,7 @@ using htsim::model::Bases;
 using htsim::model::VariantKind;
 using htsim::reference::Contig;
 using htsim::variant::ContigVariants;
-using htsim::variant::Event;
+using htsim::variant::Variant;
 using htsim::variant::MutationCatalogError;
 using htsim::variant::MutationParameters;
 
@@ -84,10 +84,10 @@ std::string bases_text(const Bases &bases)
     return result.empty() ? "-" : result;
 }
 
-std::string event_summary(const std::vector<Event> &events)
+std::string event_summary(const std::vector<Variant> &events)
 {
     std::ostringstream summary;
-    for (const Event &event : events) {
+    for (const Variant &event : events) {
         const char kind = event.kind == VariantKind::snv
             ? 'S'
             : event.kind == VariantKind::insertion ? 'I' : 'D';
@@ -106,7 +106,7 @@ void test_snv_only_and_unresolved_reference()
     const auto events = htsim::variant::generate_de_novo_events(
         contig, UINT64_C(123), parameters);
     require(events.size() == 8U, "SNV-only run mutated N or missed a base");
-    for (const Event &event : events) {
+    for (const Variant &event : events) {
         require(
             event.kind == VariantKind::snv
                 && event.reference_end == event.reference_start + 1U
@@ -129,7 +129,7 @@ void test_indel_shape_extension_and_canonical_order()
         contig, UINT64_C(9), one_base);
     bool saw_insertion = false;
     bool saw_deletion = false;
-    for (const Event &event : short_events) {
+    for (const Variant &event : short_events) {
         require(event.kind != VariantKind::snv, "indel-only run emitted an SNV");
         saw_insertion = saw_insertion || event.kind == VariantKind::insertion;
         saw_deletion = saw_deletion || event.kind == VariantKind::deletion;
@@ -150,7 +150,7 @@ void test_indel_shape_extension_and_canonical_order()
     const auto long_events = htsim::variant::generate_de_novo_events(
         contig, UINT64_C(9), extended);
     bool saw_full_length = false;
-    for (const Event &event : long_events) {
+    for (const Variant &event : long_events) {
         const std::size_t length = event.kind == VariantKind::insertion
             ? event.alt_bases.size()
             : event.ref_bases.size();
@@ -214,7 +214,7 @@ void test_snv_distribution_sanity()
 
     std::uint32_t mask_counts[3] = {0U, 0U, 0U};
     std::uint32_t alternate_offsets[3] = {0U, 0U, 0U};
-    for (const Event &event : events) {
+    for (const Variant &event : events) {
         require(event.kind == VariantKind::snv,
                 "SNV distribution fixture emitted an indel");
         const std::uint8_t mask =

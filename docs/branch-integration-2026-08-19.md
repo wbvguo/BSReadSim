@@ -55,7 +55,7 @@ representations retained as auditable history.
 | `a24592e` | superseded | The current sequencing-model implementation already samples exact cumulative integer weights with right-biased cumulative search. The incompatible probability-artifact v2 is not silently substituted for the released v1 artifact. |
 | `0aeaa9c`, `a2f9f3f`, `8875b65` | held/rejected | These commits apply to the branch-only packed MethDB record. The current sparse catalog uses a checked 16-byte typed record; narrowing code from the absent representation is not copied. |
 | `f35d916`, `c05a713`, `7c357f5`, `7a22267`, `5d113c0`, `5e2a8a3`, `63e5951` | held/rejected | The complete `uint16_t` haplotype arrays and locality path increased memory and reduced throughput against that branch's sparse baseline. Current typed sparse haplotype projection remains active. |
-| `0c4fdda` | superseded | Current production FASTQ keeps the third line exactly `+`; lossless Truth is versioned JSONL or truth BAM. Inline FASTQ annotations would change the released output contract. |
+| `0c4fdda` | superseded | Current production FASTQ keeps the third line exactly `+`; lossless Details is versioned JSONL or BAM. Inline FASTQ annotations would change the released output contract. |
 | benchmark and conformance commits | held as historical evidence | Their measurements remain tied to exact historical binaries. They are preserved by ancestry but are not current 0.3.x release evidence. |
 
 The paper branch's non-model ownership boundary remains represented in the
@@ -85,7 +85,7 @@ tree. This intentionally replaces topic-merge ancestry with one reviewable
 development delta; no remote branch was rewritten or pushed.
 
 Current one-million-read evidence is retained under `data/benchmarks/` for
-WGBS producer/FASTQ components, production/debug/truth-BAM output policies,
+WGBS producer/FASTQ components, FASTQ and Rich BAM output policies,
 and balanced WGBS/RRBS/TBS synthetic-corpus throughput. Reports bind the
 pre-squash runtime commit, core and native-extension digests, input digests,
 counts, output hashes, individual timings, and limitations. The pre-squash

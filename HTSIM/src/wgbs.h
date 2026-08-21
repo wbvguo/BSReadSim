@@ -91,7 +91,7 @@ std::vector<std::uint32_t> sample_valid_starts(
 namespace htsim::wgbs {
 
 inline constexpr std::string_view wgbs_gc_format = "tsv";
-inline constexpr std::string_view wgbs_gc_version = "wgbs-gc-target-v1";
+inline constexpr std::string_view wgbs_gc_version = "wgbs-gc-target-v2";
 inline constexpr std::uint32_t maximum_attempts_per_fragment = 100000;
 
 class CoverageProfileError : public std::runtime_error {
@@ -169,6 +169,10 @@ WgbsGcTargetCalibration calibrate_gc_target(
     const std::vector<std::vector<std::uint32_t>> &contig_bin_counts,
     UnreachableTargetPolicy unreachable_policy =
         UnreachableTargetPolicy::reject);
+
+WgbsGcTargetCalibration calibrate_haplotype_gc_target(
+    const WgbsGcProfile &profile,
+    const std::vector<std::vector<std::uint32_t>> &contig_category_counts);
 
 // Target-profile WGBS sampling over the same valid-start domain as uniform
 // WGBS. Each output entity repeatedly draws a valid-start rank and an
@@ -384,6 +388,16 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+struct HaplotypeCandidate {
+    std::uint32_t reference_start = 0;
+    std::uint8_t haplotype = 0;
+};
+
+struct HaplotypeGcBatch {
+    std::vector<HaplotypeCandidate> candidates;
+    std::uint64_t skipped_count = 0;
+};
+
 // Compact rank-select index over original-reference starts. Every start owns
 // two HaplotypeMask bits: bit 0 is zero-based haplotype 0 and bit 1 is
 // haplotype 1.
@@ -397,6 +411,8 @@ public:
 
     std::uint32_t possible_start_count() const noexcept;
     std::uint32_t valid_start_count() const noexcept;
+    std::uint32_t physical_candidate_count() const noexcept;
+    HaplotypeCandidate candidate_for_physical_rank(std::uint32_t rank) const;
     bool is_valid_start(std::uint32_t zero_based_start) const noexcept;
     model::HaplotypeMask haplotype_mask(
         std::uint32_t zero_based_start) const;
@@ -421,8 +437,38 @@ private:
     // Two adjacent bits per reference start, 32 starts per uint64 word.
     std::vector<std::uint64_t> haplotype_words_;
     std::vector<std::uint32_t> superblock_prefix_;
+    std::vector<std::uint32_t> physical_superblock_prefix_;
     std::uint32_t possible_start_count_ = 0;
     std::uint32_t valid_start_count_ = 0;
+    std::uint32_t physical_candidate_count_ = 0;
+};
+
+class HaplotypeGcSampler {
+public:
+    HaplotypeGcSampler(
+        const reference::Contig &contig,
+        const variant::ContigVariants &variants,
+        const FixedFragmentShape &shape,
+        const WgbsGcProfile &profile);
+
+    std::uint32_t physical_candidate_count() const noexcept;
+    const std::vector<std::uint32_t> &category_opportunity_counts() const noexcept;
+    HaplotypeGcBatch sample(
+        std::uint32_t contig_index,
+        std::uint64_t master_seed,
+        std::uint64_t first_candidate_ordinal,
+        std::uint32_t output_count,
+        const std::vector<double> &acceptance_probabilities) const;
+
+private:
+    std::uint32_t category(const HaplotypeCandidate &candidate) const;
+
+    FixedFragmentShape shape_;
+    HaplotypeStartIndex starts_;
+    WgbsGcProfile profile_;
+    std::array<std::unique_ptr<haplotype::HaplotypeLayout>, 2> layouts_;
+    std::array<std::unique_ptr<GcRankIndex>, 2> gc_indices_;
+    std::vector<std::uint32_t> category_opportunity_counts_;
 };
 
 } // namespace htsim::wgbs

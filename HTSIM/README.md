@@ -2,8 +2,8 @@
 
 `htsim-core` owns reference loading and biological fragment generation. It
 writes the sole supported binary protocol to stdout; Python owns sequencing
-errors, FASTQ/debug-truth output, truth-alignment formatting, and publication.
-For truth BAM, Python streams SAM records back through the executable's narrow
+errors, FASTQ/debug-details output, details-alignment formatting, and publication.
+For BAM, Python streams SAM records back through the executable's narrow
 HTSlib serializer; HTSIM still does not choose output paths.
 
 ## Source layout

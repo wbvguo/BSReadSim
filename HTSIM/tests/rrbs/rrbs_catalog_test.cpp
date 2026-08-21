@@ -330,7 +330,7 @@ htsim::reference::Contig make_contig(const std::string &sequence)
 void test_diploid_motifs_follow_haplotype_bits()
 {
     const auto contig = make_contig("AACCGGAAACCGGAA");
-    const std::vector<htsim::variant::Event> events = {
+    const std::vector<htsim::variant::Variant> events = {
         {0U, 10U, 11U, htsim::model::VariantKind::snv,
          encode("C"), encode("T"),
          htsim::model::HaplotypeMask::haplotype_1},
@@ -360,7 +360,7 @@ void test_diploid_motifs_follow_haplotype_bits()
 void test_diploid_indel_lengths_are_physical()
 {
     const auto contig = make_contig("AACCGGAAACCGGAA");
-    const std::vector<htsim::variant::Event> events = {
+    const std::vector<htsim::variant::Variant> events = {
         {0U, 6U, 6U, htsim::model::VariantKind::insertion,
          {}, encode("TT"),
          htsim::model::HaplotypeMask::haplotype_1},

@@ -208,7 +208,7 @@ std::uint32_t read_pairs(
     if (!std::isfinite(raw_count)) {
         throw DepthCountError("depth-derived read-pair count is not finite");
     }
-    const double floored = std::floor(raw_count);
+    const double floored = std::ceil(raw_count);
     if (floored < 1.0) {
         throw DepthCountError(
             "depth derives zero read pairs for the effective reference");
@@ -390,9 +390,9 @@ void validate_projected_interval(
         || projection.template_bases.size()
             != projection.reference_positions.size()
         || projection.template_bases.size()
-            != projection.base_event_ids.size()
+            != projection.base_variant_indices.size()
         || projection.template_bases.size() < layout.read_length
-        || projection.variant_events.size()
+        || projection.variants.size()
             > std::numeric_limits<std::uint32_t>::max()) {
         throw FragmentBuilderError("projected fragment shape is invalid");
     }
@@ -404,18 +404,18 @@ void validate_projected_interval(
 
     std::unordered_map<std::uint32_t, std::size_t> event_indices;
     std::vector<std::uint32_t> observed_event_bases(
-        projection.variant_events.size(), 0U);
-    std::vector<std::size_t> last_event_offsets(
-        projection.variant_events.size(),
+        projection.variants.size(), 0U);
+    std::vector<std::size_t> last_variant_offsets(
+        projection.variants.size(),
         std::numeric_limits<std::size_t>::max());
-    for (std::size_t index = 0; index < projection.variant_events.size(); ++index) {
-        const model::VariantEvent &event = projection.variant_events[index];
-        if (event.event_id == model::no_variant_event
-            || !event_indices.emplace(event.event_id, index).second
+    for (std::size_t index = 0; index < projection.variants.size(); ++index) {
+        const model::Variant &event = projection.variants[index];
+        if (event.index == model::no_variant_index
+            || !event_indices.emplace(event.index, index).second
             || (index != 0U
-                && (projection.variant_events[index - 1U].event_id
-                        >= event.event_id
-                    || projection.variant_events[index - 1U].reference_start
+                && (projection.variants[index - 1U].index
+                        >= event.index
+                    || projection.variants[index - 1U].reference_start
                         > event.reference_start))
             || (event.phased_haplotype != 255U
                 && event.phased_haplotype != projection.haplotype)
@@ -461,7 +461,7 @@ void validate_projected_interval(
     for (std::size_t offset = 0; offset < projection.template_bases.size(); ++offset) {
         const std::uint8_t base = projection.template_bases[offset];
         const std::int64_t position = projection.reference_positions[offset];
-        const std::uint32_t event_id = projection.base_event_ids[offset];
+        const std::uint32_t variant_index = projection.base_variant_indices[offset];
         if (base > 4U || position < -1
             || (position >= 0
                 && (static_cast<std::uint64_t>(position)
@@ -478,22 +478,22 @@ void validate_projected_interval(
             }
             previous_mapped_position = position;
         }
-        if (event_id == model::no_variant_event) {
+        if (variant_index == model::no_variant_index) {
             if (position == -1) {
                 throw FragmentBuilderError(
                     "inserted projected base lacks an event id");
             }
             continue;
         }
-        const auto found = event_indices.find(event_id);
+        const auto found = event_indices.find(variant_index);
         if (found == event_indices.end()) {
             throw FragmentBuilderError(
                 "projected base refers to an unknown event");
         }
-        const model::VariantEvent &event =
-            projection.variant_events[found->second];
+        const model::Variant &event =
+            projection.variants[found->second];
         std::uint32_t &observed = observed_event_bases[found->second];
-        std::size_t &last_offset = last_event_offsets[found->second];
+        std::size_t &last_offset = last_variant_offsets[found->second];
         if (event.kind == model::VariantKind::deletion
             || observed >= event.alt_bases.size()
             || base != event.alt_bases[observed]
@@ -514,8 +514,8 @@ void validate_projected_interval(
         last_offset = offset;
         ++observed;
     }
-    for (std::size_t index = 0; index < projection.variant_events.size(); ++index) {
-        const model::VariantEvent &event = projection.variant_events[index];
+    for (std::size_t index = 0; index < projection.variants.size(); ++index) {
+        const model::Variant &event = projection.variants[index];
         const std::uint32_t expected = event.kind == model::VariantKind::deletion
             ? 0U
             : static_cast<std::uint32_t>(event.alt_bases.size());
@@ -526,16 +526,16 @@ void validate_projected_interval(
     }
 }
 
-const model::VariantEvent &insertion_event(
+const model::Variant &insertion_event(
     const model::Fragment &fragment,
-    std::uint32_t event_id)
+    std::uint32_t variant_index)
 {
     const auto event = std::find_if(
-        fragment.variant_events.begin(), fragment.variant_events.end(),
-        [event_id](const model::VariantEvent &candidate) {
-            return candidate.event_id == event_id;
+        fragment.variants.begin(), fragment.variants.end(),
+        [variant_index](const model::Variant &candidate) {
+            return candidate.index == variant_index;
         });
-    if (event == fragment.variant_events.end()
+    if (event == fragment.variants.end()
         || event->kind != model::VariantKind::insertion) {
         throw FragmentBuilderError(
             "insertion-only mate refers to an invalid event");
@@ -572,7 +572,7 @@ model::Mate build_mate(
             continue;
         }
         const auto &event = insertion_event(
-            fragment, fragment.base_event_ids[offset]);
+            fragment, fragment.base_variant_indices[offset]);
         multiple_insertion_anchors = multiple_insertion_anchors
             || (insertion_anchor
                 && *insertion_anchor != event.reference_start);
@@ -652,7 +652,7 @@ std::uint64_t maximum_payload_bytes(
     const std::uint64_t mate_count = layout.paired_end ? 2U : 1U;
     std::uint64_t total = payload_base_bound(
         projection.template_bases.size(), layout.read_length, mate_count);
-    for (const model::VariantEvent &event : projection.variant_events) {
+    for (const model::Variant &event : projection.variants) {
         add_payload_bytes(total, 32U);
         add_payload_bytes(total, event.ref_bases.size());
         add_payload_bytes(total, event.alt_bases.size());
@@ -713,8 +713,8 @@ model::Fragment build_fragment(
     fragment.template_bases.assign(first, last);
     if (detail == FragmentDetail::full) {
         fragment.reference_positions.reserve(layout.insert_length);
-        fragment.base_event_ids.assign(
-            layout.insert_length, model::no_variant_event);
+        fragment.base_variant_indices.assign(
+            layout.insert_length, model::no_variant_index);
         for (std::uint32_t offset = 0; offset < layout.insert_length; ++offset) {
             fragment.reference_positions.push_back(
                 static_cast<std::int64_t>(reference_start) + offset);
@@ -730,7 +730,7 @@ model::Fragment build_fragment(
             site->reference_position - reference_start,
             static_cast<std::int64_t>(site->reference_position),
             site->context,
-            site->source,
+            site->methylation_source,
             model::MethylationAllele::shared,
             site->methylation_probability,
         });
@@ -786,8 +786,8 @@ model::Fragment build_fragment(
     fragment.template_bases = std::move(projection.template_bases);
     if (detail == FragmentDetail::full) {
         fragment.reference_positions = std::move(projection.reference_positions);
-        fragment.base_event_ids = std::move(projection.base_event_ids);
-        fragment.variant_events = std::move(projection.variant_events);
+        fragment.base_variant_indices = std::move(projection.base_variant_indices);
+        fragment.variants = std::move(projection.variants);
     }
 
     const auto template_length = static_cast<std::uint32_t>(

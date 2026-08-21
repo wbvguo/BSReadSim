@@ -30,7 +30,7 @@ using htsim::model::MethylationSource;
 using htsim::model::VariantKind;
 using htsim::reference::Contig;
 using htsim::variant::ContigVariants;
-using htsim::variant::Event;
+using htsim::variant::Variant;
 
 void require(bool condition, const std::string &message)
 {
@@ -91,7 +91,7 @@ const DiploidSite *find(
     return found == sites.end() ? nullptr : &*found;
 }
 
-std::vector<Event> variant_fixture()
+std::vector<Variant> variant_fixture()
 {
     return {
         {0, 3, 4, VariantKind::snv, encode("G"), encode("A"),
@@ -168,7 +168,7 @@ void test_reference_only_parity()
         require(
             diploid_site.origin_id == reference_site.reference_position
                 && diploid_site.context == reference_site.context
-                && diploid_site.source == reference_site.source
+                && diploid_site.methylation_source == reference_site.methylation_source
                 && diploid_site.methylation_probability
                     == reference_site.methylation_probability,
             "event-free CGmap reference/diploid catalogs diverged");
@@ -257,8 +257,8 @@ void test_fragment_boundary_uses_complete_haplotype_context()
         contig, variants, 0U, 2U, 3U);
     const auto haplotype_1 = htsim::haplotype::project_interval(
         contig, variants, 1U, 2U, 3U);
-    require(haplotype_0.variant_events.empty()
-                && haplotype_1.variant_events.empty(),
+    require(haplotype_0.variants.empty()
+                && haplotype_1.variants.empty(),
             "boundary fixture unexpectedly included the neighboring SNV");
     const auto alt_sites = catalog.sites_for_projection(haplotype_0);
     const auto ref_sites = catalog.sites_for_projection(haplotype_1);
@@ -283,7 +283,7 @@ void test_fragment_boundary_uses_complete_haplotype_context()
 void test_deletion_joins_previously_separated_context()
 {
     const Contig contig = make_contig("CAAG");
-    const std::vector<Event> events = {
+    const std::vector<Variant> events = {
         {0, 1, 3, VariantKind::deletion, encode("AA"), {},
          HaplotypeMask::haplotype_1},
     };
@@ -335,9 +335,9 @@ void test_cgmap_overlay_respects_haplotype_equivalence()
     const DiploidSite *reference = find(catalog.haplotype_sites(1), ref2);
     require(
         alternate != nullptr && reference != nullptr
-            && alternate->source == MethylationSource::beta
+            && alternate->methylation_source == MethylationSource::beta
             && alternate->context == MethylationContext::chh_c
-            && reference->source == MethylationSource::cgmap
+            && reference->methylation_source == MethylationSource::cgmap
             && reference->context == MethylationContext::cg_c
             && reference->methylation_probability == 0.875F,
         "CGmap was not restricted to the reference-equivalent haplotype");
@@ -347,7 +347,7 @@ void test_cgmap_overlay_respects_haplotype_equivalence()
         htsim::methdb::reference_origin_id(7U));
     require(
         retained_after_deletion != nullptr
-            && retained_after_deletion->source == MethylationSource::cgmap
+            && retained_after_deletion->methylation_source == MethylationSource::cgmap
             && retained_after_deletion->methylation_probability == 0.625F,
         "CGmap did not overlay the retained reference haplotype");
 
@@ -355,7 +355,7 @@ void test_cgmap_overlay_respects_haplotype_equivalence()
         catalog.shared_sites(),
         htsim::methdb::insertion_origin_id(1U, 0U));
     require(
-        inserted != nullptr && inserted->source == MethylationSource::beta,
+        inserted != nullptr && inserted->methylation_source == MethylationSource::beta,
         "CGmap leaked onto a variant-created methylation site");
 
     const auto projection = htsim::haplotype::project_interval(
@@ -370,7 +370,7 @@ void test_cgmap_overlay_respects_haplotype_equivalence()
         [](const auto &site) {return site.reference_pos == 2;});
     require(
         projected_reference != projected.end()
-            && projected_reference->source == MethylationSource::cgmap
+            && projected_reference->methylation_source == MethylationSource::cgmap
             && projected_reference->methylation_probability == 0.875F,
         "protocol projection lost CGmap provenance");
 }
@@ -403,9 +403,9 @@ void test_cgmap_pool_uses_typed_variant_entities()
     require(
         alternate != nullptr && reference != nullptr
             && alternate->context == MethylationContext::chh_c
-            && alternate->source == MethylationSource::beta
+            && alternate->methylation_source == MethylationSource::beta
             && reference->context == MethylationContext::cg_c
-            && reference->source == MethylationSource::pooled_cgmap,
+            && reference->methylation_source == MethylationSource::pooled_cgmap,
         "CGmap pool ignored the typed context on a split haplotype site");
     const auto expected_reference = pool.sample(
         reference->context,
@@ -424,7 +424,7 @@ void test_cgmap_pool_uses_typed_variant_entities()
         const auto entity = htsim::methdb::insertion_site_entity(
             1U, offset, HaplotypeMask::both, 0U);
         require(inserted != nullptr
-                    && inserted->source == MethylationSource::pooled_cgmap,
+                    && inserted->methylation_source == MethylationSource::pooled_cgmap,
                 "variant-created CpG did not use the typed context pool");
         const auto expected = pool.sample(
             inserted->context, seed, contig.index, entity);
@@ -437,7 +437,7 @@ void test_cgmap_pool_uses_typed_variant_entities()
 void test_asm_overlay_uses_typed_haplotype_mask()
 {
     const Contig contig = make_contig("AACGTAACGTT");
-    const std::vector<Event> events = {
+    const std::vector<Variant> events = {
         {0U, 9U, 10U, VariantKind::snv, encode("T"), encode("A"),
          HaplotypeMask::haplotype_1},
     };
@@ -459,11 +459,11 @@ void test_asm_overlay_uses_typed_haplotype_mask()
     const DiploidSite *reference = find(catalog.haplotype_sites(1U), origin);
     require(
         alternate != nullptr && reference != nullptr
-            && alternate->source == MethylationSource::asm_source
+            && alternate->methylation_source == MethylationSource::asm_source
             && alternate->allele
                 == MethylationAllele::alternate_haplotype
             && alternate->methylation_probability == 0.8F
-            && reference->source == MethylationSource::asm_source
+            && reference->methylation_source == MethylationSource::asm_source
             && reference->allele
                 == MethylationAllele::reference_haplotype
             && reference->methylation_probability == 0.2F,
@@ -482,13 +482,13 @@ void test_asm_overlay_uses_typed_haplotype_mask()
             [](const auto &site) {return site.reference_pos == 2;});
         require(
             target != sites.end()
-                && target->source == MethylationSource::asm_source
+                && target->methylation_source == MethylationSource::asm_source
                 && target->methylation_probability
                     == (haplotype == 0U ? 0.8F : 0.2F),
             "protocol projection lost ASM allele ownership");
     }
 
-    const std::vector<Event> reversed_events = {
+    const std::vector<Variant> reversed_events = {
         {0U, 9U, 10U, VariantKind::snv, encode("T"), encode("A"),
          HaplotypeMask::haplotype_2},
     };
@@ -528,9 +528,9 @@ void test_asm_overlay_uses_typed_haplotype_mask()
         find(pooled.haplotype_sites(1U), origin);
     require(
         pooled_alternate != nullptr && pooled_reference != nullptr
-            && pooled_alternate->source == MethylationSource::asm_source
+            && pooled_alternate->methylation_source == MethylationSource::asm_source
             && pooled_alternate->methylation_probability == 0.8F
-            && pooled_reference->source == MethylationSource::asm_source
+            && pooled_reference->methylation_source == MethylationSource::asm_source
             && pooled_reference->methylation_probability == 0.2F,
         "ASM did not retain precedence over the typed CGmap pool");
 }
@@ -549,7 +549,7 @@ void test_asm_links_fail_closed()
         },
         "ASM row without a linked VCF event was accepted");
 
-    const std::vector<Event> homozygous_events = {
+    const std::vector<Variant> homozygous_events = {
         {0U, 9U, 10U, VariantKind::snv, encode("T"), encode("A"),
          HaplotypeMask::both},
     };
@@ -562,7 +562,7 @@ void test_asm_links_fail_closed()
         },
         "ASM row linked to a homozygous ALT event was accepted");
 
-    const std::vector<Event> heterozygous_events = {
+    const std::vector<Variant> heterozygous_events = {
         {0U, 9U, 10U, VariantKind::snv, encode("T"), encode("A"),
          HaplotypeMask::haplotype_1},
     };
@@ -584,7 +584,7 @@ void test_asm_links_fail_closed()
         "ASM row with mismatched linked ALT was accepted");
 
     const Contig context_contig = make_contig("AACGTAACGTT");
-    const std::vector<Event> context_events = {
+    const std::vector<Variant> context_events = {
         {0U, 3U, 4U, VariantKind::snv, encode("G"), encode("A"),
          HaplotypeMask::haplotype_1},
     };
@@ -620,7 +620,7 @@ void test_invalid_inputs_fail_closed()
     require_error(
         [] {
             (void)htsim::methdb::insertion_origin_id(
-                htsim::model::no_variant_event, 0U);
+                htsim::model::no_variant_index, 0U);
         },
         "no-event insertion origin was accepted");
     require_error(

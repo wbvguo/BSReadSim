@@ -26,7 +26,7 @@ Each sampling attempt uses one per-contig `uint64 candidate_ordinal`:
 For target-GC coverage, a valid proposal's complete actual insert is assigned a
 GC bin and `fragment/local_index=2` supplies its calibrated acceptance draw.
 The acceptance vector comes from the deterministic `insert_mean` proxy defined
-in [coverage-profile-target-v1.md](coverage-profile-target-v1.md); therefore the
+in [coverage-profile-target-v2.md](coverage-profile-target-v2.md); therefore the
 target guarantee is approximate, while insert length and start still use the
 same proposal contract as uniform coverage.
 

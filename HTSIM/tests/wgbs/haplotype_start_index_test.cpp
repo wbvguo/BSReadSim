@@ -25,7 +25,7 @@ using htsim::wgbs::HaplotypeStartIndex;
 using htsim::wgbs::ValidStartIndex;
 using htsim::wgbs::VariantStartIndexError;
 using htsim::variant::ContigVariants;
-using htsim::variant::Event;
+using htsim::variant::Variant;
 
 void require(bool condition, const std::string &message)
 {
@@ -101,7 +101,7 @@ void test_reference_only_exact_parity()
 void test_insertion_can_rescue_reference_n_windows()
 {
     const Contig contig = make_contig("AANAA");
-    const std::vector<Event> events = {
+    const std::vector<Variant> events = {
         {0U, 2U, 2U, VariantKind::insertion, {}, encode("CCC"),
          HaplotypeMask::haplotype_1},
     };
@@ -120,7 +120,7 @@ void test_insertion_can_rescue_reference_n_windows()
 void test_deletion_boundaries_length_and_n_shift()
 {
     const Contig contig = make_contig("AAAANAAA");
-    const std::vector<Event> events = {
+    const std::vector<Variant> events = {
         {0U, 1U, 3U, VariantKind::deletion, encode("AA"), {},
          HaplotypeMask::haplotype_1},
     };
@@ -143,7 +143,7 @@ void test_deletion_boundaries_length_and_n_shift()
 void test_terminal_insertion_after_complete_deletion()
 {
     const Contig contig = make_contig("A");
-    const std::vector<Event> events = {
+    const std::vector<Variant> events = {
         {0U, 0U, 1U, VariantKind::deletion, encode("A"), {},
          HaplotypeMask::both},
         {0U, 1U, 1U, VariantKind::insertion, {}, encode("C"),
@@ -199,7 +199,7 @@ std::uint8_t projected_expected_mask(
 void test_exhaustive_small_projection_parity()
 {
     const Contig contig = make_contig("ANCGTNAACGTN");
-    const std::vector<Event> events = {
+    const std::vector<Variant> events = {
         {0U, 0U, 0U, VariantKind::insertion, {}, encode("T"),
          HaplotypeMask::haplotype_1},
         {0U, 2U, 3U, VariantKind::snv, encode("C"), encode("A"),

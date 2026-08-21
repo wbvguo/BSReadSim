@@ -12,7 +12,6 @@ namespace {
 using htsim::core::CoreConfigError;
 using htsim::core::CoverageMode;
 using htsim::core::Technology;
-using htsim::core::TruthColumnsMode;
 using htsim::core::parse_core_config;
 using htsim::core::validate_core_config;
 
@@ -95,8 +94,8 @@ void remove_option(
 void test_valid_wgbs_projection()
 {
     const auto config = parse_core_config(base_arguments());
-    require(config.truth_columns == TruthColumnsMode::none,
-            "direct invocation did not default to no-Truth");
+    require(!config.emit_details,
+            "direct invocation did not default to no-Details");
     require(config.technology == Technology::wgbs, "WGBS technology changed");
     require(config.master_seed == 0, "seed zero was not preserved");
     require(config.paired_end && config.read_length_2 == 100,
@@ -118,10 +117,10 @@ void test_output_controls()
     auto arguments = base_arguments();
     arguments.insert(
         arguments.begin(),
-        {"--truth-columns", "full", "--protocol-batch-fragments", "7"});
+        {"--emit-details", "true", "--protocol-batch-fragments", "7"});
     const auto config = parse_core_config(arguments);
-    require(config.truth_columns == TruthColumnsMode::full,
-            "Full Truth selection was not parsed");
+    require(config.emit_details,
+            "Full Details selection was not parsed");
     require(config.protocol_batch_fragments == 7,
             "protocol batch bound was not parsed");
 
@@ -132,12 +131,12 @@ void test_output_controls()
         [&] {parse_core_config(retired_selection);},
         "retired protocol selector was accepted");
 
-    for (const std::string value : {"", "FULL", "truth"}) {
+    for (const std::string value : {"", "TRUE", "details"}) {
         auto invalid = arguments;
-        replace_value(invalid, "--truth-columns", value);
+        replace_value(invalid, "--emit-details", value);
         require_error(
             [&] {parse_core_config(invalid);},
-            "invalid Truth-column mode was accepted: " + value);
+            "invalid Details-column mode was accepted: " + value);
     }
     for (const std::string value : {"0", "65", "-1"}) {
         auto invalid = arguments;
@@ -265,13 +264,13 @@ void test_valid_rrbs_tbs_and_profile_projection()
         profile_arguments.end(),
         {"--coverage-profile", "/data/coverage.tsv",
          "--coverage-profile-format", "tsv",
-         "--coverage-profile-version", "wgbs-gc-target-v1",
+         "--coverage-profile-version", "wgbs-gc-target-v2",
          "--coverage-profile-sha256", std::string(64, '4')});
     const auto profile = parse_core_config(profile_arguments);
     require(profile.coverage_profile_path == "/data/coverage.tsv",
             "coverage profile path was lost");
     require(profile.coverage_profile_format == "tsv"
-                && profile.coverage_profile_version == "wgbs-gc-target-v1"
+                && profile.coverage_profile_version == "wgbs-gc-target-v2"
                 && profile.coverage_profile_sha256->front() == 0x44,
             "coverage profile metadata was lost");
     require(profile.insert_min == 100U

@@ -1,7 +1,7 @@
 include CMakeLists.txt
 include .gitmodules
-include docs/truth-bam-v1.md
-include docs/read-name-v1.md
+include docs/bam-v2.md
+include docs/read-name-v2.md
 recursive-include HTSIM/src *.cpp *.h
 graft HTSLIB
 exclude HTSLIB/.git

@@ -17,11 +17,11 @@ preserving these scientific rules:
 - Python then performs bisulfite conversion, quality generation, sequencing
   error, and output in that order.
 - WGBS, RRBS, and TBS use the same wire schema. Variants and indels add data to
-  optional truth columns; they do not select a different protocol.
+  optional details columns; they do not select a different protocol.
 
 The goals are:
 
-1. preserve the logical `Fragment`, `Mate`, `MethylationSite`, and truth
+1. preserve the logical `Fragment`, `Mate`, `MethylationSite`, and details
    contracts;
 2. let Python expose authenticated read-only array views without first building
    a large graph of Python objects;
@@ -53,7 +53,7 @@ flowchart LR
     S --> C["Python: bisulfite conversion"]
     C --> Q["Python: quality"]
     Q --> E["Python: sequencing error"]
-    E --> O["Python: FASTQ + optional Truth"]
+    E --> O["Python: FASTQ + optional Details"]
 ```
 
 The normative order is:
@@ -64,7 +64,7 @@ The normative order is:
    `Beta -> CGmap/bedMethyl -> ASM/ASM BED` precedence.
 4. Let the selected technology provider sample a physical fragment.
 5. Materialize that fragment from haplotype 0 or 1, including its unique
-   methylation sites and optional sparse truth.
+   methylation sites and optional sparse details.
 6. Emit consecutive fragments in a columnar batch.
 7. In Python, sample site states before any mate-specific processing.
 8. Project the shared states into oriented mates, perform conversion, generate
@@ -90,7 +90,7 @@ needed by conversion, quality, error, FASTQ, or the site-state model.
 
 Example: if haplotype 0 contains `ACGTACGT` and haplotype 1 contains
 `ACATATCGT`, a row with `haplotype=1` and
-`template_bases=ACATATCGT` is unambiguous. Full Truth additionally carries the
+`template_bases=ACATATCGT` is unambiguous. Full Details additionally carries the
 SNV and insertion events that explain the difference from the reference.
 
 ## 3. Width, coordinate, and base contracts
@@ -159,7 +159,7 @@ records one ambiguity policy:
 
 `RESOLVE_ONCE` may be enabled only with a separately frozen RNG contract for
 that operation. The current implementation remains `PRESERVE_N`. When Full
-Truth is enabled, `original_n_template_offsets` retains N provenance under
+Details is enabled, `original_n_template_offsets` retains N provenance under
 either policy.
 
 ## 4. Primitive binary encoding
@@ -263,7 +263,7 @@ Header frame flags MUST be zero. Its fields appear in this order:
 | master_seed | `u64` | Actual seed |
 | normalized_config_sha256 | `bytes32` | Digest of canonical normalized config |
 | technology | `u8` | `1` WGBS, `2` RRBS, `3` TBS |
-| truth_columns | `u8` | `0` NONE, `1` FULL |
+| has_details | `u8` | `0` NONE, `1` FULL |
 | mates_per_fragment | `u8` | `1` SE or `2` PE |
 | base_encoding | `u8` | `1` ACGTN_U8 |
 | ambiguity_policy | `u8` | `0` PRESERVE_N, `1` RESOLVE_ONCE |
@@ -291,12 +291,12 @@ Example diagnostic form:
 ```yaml
 run_id: "72d5658e-d074-4e7d-bd8c-1b1ce83cfe92"
 core_version: "2.0.0"
-config_schema_version: "1.0"
+config_schema_version: "1.1"
 rng_contract: "philox4x32-10+philox-domain-v2"
 master_seed: 42
 normalized_config_sha256: "9f1c...e8a2"   # abbreviated only in this example
 technology: WGBS
-truth_columns: FULL
+has_details: FULL
 mates_per_fragment: 2
 read_length_r1: 4
 read_length_r2: 4
@@ -310,8 +310,8 @@ contigs:
 
 Real digest fields always contain all 32 bytes.
 
-`truth_columns` is a transfer requirement derived from output policy. It MUST
-be `FULL` for debug JSON Truth or truth BAM, and `NONE` only when neither
+`has_details` is a transfer requirement derived from output policy. It MUST
+be `FULL` for debug JSON Details or BAM, and `NONE` only when neither
 artifact needs the sparse projection. It is not a second protocol and cannot
 be set directly in user configuration.
 
@@ -321,11 +321,11 @@ Frame type 2 contains one or more consecutive fragments. It uses one flag:
 
 | Bit | Name | Meaning |
 |---:|---|---|
-| 0 | `TRUTH_COLUMNS_PRESENT` | The complete sparse truth section is appended |
+| 0 | `DETAILS_PRESENT` | The complete sparse details section is appended |
 | 1--7 | reserved | MUST be zero |
 
-If the header says `truth_columns=FULL`, every batch MUST set bit 0. If it says
-`NONE`, every batch MUST clear it. The flag means that truth **columns are
+If the header says `has_details=FULL`, every batch MUST set bit 0. If it says
+`NONE`, every batch MUST clear it. The flag means that details **columns are
 present**; it does not claim that a fragment contains a mutation.
 
 ### 7.1 Batch header
@@ -360,12 +360,12 @@ After the batch header, columns occur in this exact order:
 | Column | Element type | Elements |
 |---|---:|---:|
 | contig_indices | `u32` | `F` |
-| reference_begins | `u32` | `F` |
+| reference_starts | `u32` | `F` |
 | reference_ends | `u32` | `F` |
 | template_offsets | `u32` | `F+1` |
 | mate_offsets | `u32` | `F+1` |
 | site_offsets | `u32` | `F+1` |
-| mate_template_begins | `u32` | `M` |
+| mate_template_starts | `u32` | `M` |
 | mate_template_ends | `u32` | `M` |
 | site_template_offsets | `u32` | `S` |
 | site_probabilities | binary32 | `S` |
@@ -374,7 +374,7 @@ After the batch header, columns occur in this exact order:
 | mate_indices | `u8` | `M` |
 | mate_reverse_complements | `u8` | `M` |
 | site_contexts | `u8` | `S` |
-| site_sources | `u8` | `S` |
+| methylation_sources | `u8` | `S` |
 | site_alleles | `u8` | `S` |
 | template_bases | `u8` | `B` |
 
@@ -393,7 +393,7 @@ A logical fragment row is reconstructed from:
 ```text
 ordinal          = first_fragment_ordinal + row
 contig           = contig_indices[row]
-reference        = [reference_begins[row], reference_ends[row])
+reference        = [reference_starts[row], reference_ends[row])
 haplotype        = haplotypes[row]
 capture_strand   = capture_strands[row]
 template         = template_bases[
@@ -418,7 +418,7 @@ Its fragment columns are:
 
 ```text
 contig_indices  = [0, 0]
-reference_begins= [100, 200]
+reference_starts= [100, 200]
 reference_ends  = [108, 205]
 haplotypes      = [0, 1]
 capture_strands = [0, 0]
@@ -462,7 +462,7 @@ For the two-row example:
 mate_offsets             = [0, 2, 4]
 mate_indices             = [0, 1, 0, 1]
 mate_reverse_complements = [0, 1, 0, 1]
-mate_template_begins     = [0, 4, 0, 2]
+mate_template_starts     = [0, 4, 0, 2]
 mate_template_ends       = [4, 8, 4, 6]
 ```
 
@@ -508,7 +508,7 @@ site_offsets          = [0, 4, 7]
 site_template_offsets = [1, 2, 4, 6,  2, 3, 4]
 site_probabilities    = [.80,.75,.30,.35, .20,.90,.85]
 site_contexts         = [1, 9, 3,11,  3, 1, 9]
-site_sources          = [3, 3, 3, 3,  3, 3, 3]
+methylation_sources          = [3, 3, 3, 3,  3, 3, 3]
 site_alleles          = [0, 0, 0, 0,  0, 0, 2]
 ```
 
@@ -520,22 +520,22 @@ The complete contig MethDB owns these probabilities. Overlapping fragments
 copy the same stored probability; neither C++ nor Python redraws a methylation
 level per fragment.
 
-## 8. Optional sparse Full-Truth section
+## 8. Optional sparse Full-Details section
 
-When `TRUTH_COLUMNS_PRESENT` is set, zero padding aligns the current cursor to
-four bytes and a truth section follows. It reconstructs the logical
-`reference_positions`, `base_event_ids`, variant events, site reference
+When `DETAILS_PRESENT` is set, zero padding aligns the current cursor to
+four bytes and a details section follows. It reconstructs the logical
+`reference_positions`, `base_variant_indices`, variant events, site reference
 positions, and original-N provenance without storing three dense arrays in
 every fragment.
 
-### 8.1 Truth header
+### 8.1 Details header
 
 Five `u32` counts appear first:
 
 | Field | Symbol |
 |---|---|
 | projection_run_count | `P` |
-| variant_event_count | `V` |
+| variant_count | `V` |
 | event_ref_base_count | `RB` |
 | event_alt_base_count | `AB` |
 | original_n_count | `N` |
@@ -546,37 +546,37 @@ Example for the two fragments above:
 P=3, V=1, RB=0, AB=1, N=0
 ```
 
-### 8.2 Truth column layout
+### 8.2 Details column layout
 
 Columns then occur in this exact order:
 
 | Column | Type | Elements |
 |---|---:|---:|
 | projection_offsets | `u32` | `F+1` |
-| event_offsets | `u32` | `F+1` |
+| variant_offsets | `u32` | `F+1` |
 | original_n_offsets | `u32` | `F+1` |
-| projection_template_begins | `u32` | `P` |
+| projection_template_starts | `u32` | `P` |
 | projection_template_ends | `u32` | `P` |
-| projection_reference_begins | `u32` | `P` |
-| event_ids | `u32` | `V` |
-| event_reference_begins | `u32` | `V` |
-| event_reference_ends | `u32` | `V` |
-| event_template_begins | `u32` | `V` |
-| event_template_ends | `u32` | `V` |
-| event_ref_offsets | `u32` | `V+1` |
-| event_alt_offsets | `u32` | `V+1` |
+| projection_reference_starts | `u32` | `P` |
+| variant_indices | `u32` | `V` |
+| variant_reference_starts | `u32` | `V` |
+| variant_reference_ends | `u32` | `V` |
+| variant_template_starts | `u32` | `V` |
+| variant_template_ends | `u32` | `V` |
+| variant_ref_offsets | `u32` | `V+1` |
+| variant_alt_offsets | `u32` | `V+1` |
 | site_reference_positions | `u32` | `S` |
 | original_n_template_offsets | `u32` | `N` |
-| event_kinds | `u8` | `V` |
-| event_phased_haplotypes | `u8` | `V` |
-| event_ref_bases | `u8` | `RB` |
-| event_alt_bases | `u8` | `AB` |
+| variant_kinds | `u8` | `V` |
+| variant_phased_haplotypes | `u8` | `V` |
+| variant_ref_bases | `u8` | `RB` |
+| variant_alt_bases | `u8` | `AB` |
 | padding | bytes | 0--3 zero bytes |
 
 `site_reference_positions` uses `0xffffffff` for an inserted site. That
 sentinel is valid because a contig is constrained to at most `UINT32_MAX`
 bases, so valid positions end at `UINT32_MAX-1`. The wire view retains the
-`u32` sentinel; the per-base Truth projection exposes it as signed `-1`.
+`u32` sentinel; the per-base Details projection exposes it as signed `-1`.
 
 ### 8.3 Projection run
 
@@ -611,9 +611,9 @@ Example:
 
 ```text
 projection_offsets          = [0, 1, 3]
-projection_template_begins  = [0, 0, 5]
+projection_template_starts  = [0, 0, 5]
 projection_template_ends    = [8, 4, 6]
-projection_reference_begins = [100, 200, 204]
+projection_reference_starts = [100, 200, 204]
 ```
 
 Fragment 42 is one linear run. Fragment 43 maps offsets 0--3 to references
@@ -631,8 +631,8 @@ fragment 43: [200, 201, 202, 203, -1, 204]
 A logical event row is:
 
 ```text
-VariantEvent {
-    event_id: u32
+Variant {
+    variant_index: u32
     kind: u8                    # 1 SNV, 2 insertion, 3 deletion
     phased_haplotype: u8        # 0, 1, or 255
     reference: [u32, u32)
@@ -642,27 +642,27 @@ VariantEvent {
 }
 ```
 
-Event rows are grouped by `event_offsets`. Event IDs are stable per-contig typed
+Event rows are grouped by `variant_offsets`. Event IDs are stable per-contig typed
 event ordinals, strictly increasing within each fragment, and unique within a
 fragment.  A phased haplotype is either `255` or the fragment's selected
-haplotype. `event_ref_offsets` and `event_alt_offsets` are ordinary prefix
+haplotype. `variant_ref_offsets` and `variant_alt_offsets` are ordinary prefix
 arrays into the two flat base blobs.
 
 Example insertion in fragment 43:
 
 ```text
-event_offsets             = [0, 0, 1]
-event_ids                 = [7]
-event_kinds               = [2]          # insertion
-event_phased_haplotypes   = [1]
-event_reference_begins    = [204]
-event_reference_ends      = [204]
-event_template_begins     = [4]
-event_template_ends       = [5]
-event_ref_offsets         = [0, 0]
-event_alt_offsets         = [0, 1]
-event_ref_bases           = []
-event_alt_bases           = [2]          # G
+variant_offsets             = [0, 0, 1]
+variant_indices                 = [7]
+variant_kinds               = [2]          # insertion
+variant_phased_haplotypes   = [1]
+variant_reference_starts    = [204]
+variant_reference_ends      = [204]
+variant_template_starts     = [4]
+variant_template_ends       = [5]
+variant_ref_offsets         = [0, 0]
+variant_alt_offsets         = [0, 1]
+variant_ref_bases           = []
+variant_alt_bases           = [2]          # G
 ```
 
 An SNV has equal non-zero reference and template spans. An insertion has an
@@ -673,9 +673,9 @@ every template boundary is in `[0, template_length]`.  For every event,
 `len(ref_bases)` equals its reference span and `len(alt_bases)` equals its
 template span.  Event bases use only A/C/G/T codes `0..3`.  Non-empty event
 template spans MUST NOT overlap each other, so every reconstructed dense
-`base_event_ids` element has at most one value.
+`base_variant_indices` element has at most one value.
 
-The dense `base_event_ids` Truth field is reconstructed by assigning an event ID
+The dense `base_variant_indices` Details field is reconstructed by assigning an event ID
 to its non-empty template span. Every other template base gets
 `0xffffffff`. A deletion remains represented even though it has no emitted
 base.
@@ -718,7 +718,7 @@ This says template offset 2 was originally N even though `RESOLVE_ONCE` fixed
 it to G. Under `PRESERVE_N`, the same template element would be base code 4.
 Later fragment materialization and Python MUST NOT resolve it again.
 
-### 8.7 Sparse-truth completeness
+### 8.7 Sparse-details completeness
 
 For every fragment, the union of:
 
@@ -728,7 +728,7 @@ For every fragment, the union of:
 MUST cover every template offset exactly once. SNV event spans overlap mapped
 projection runs because they add event provenance without changing coordinate
 mapping. Deletion events have empty template spans. These rules let a strict
-decoder reconstruct every per-base Truth annotation.
+decoder reconstruct every per-base Details annotation.
 
 ## 9. Trailer frame
 
@@ -801,7 +801,7 @@ For each fragment row, Python:
 6. generates quality;
 7. samples the quality-conditioned sequencing-error category using the
    released cumulative-probability/search contract; and
-8. formats FASTQ and, if requested, reconstructs full per-base truth from the
+8. formats FASTQ and, if requested, reconstructs full per-base details from the
    sparse projection.
 
 Example site-model input for fragment 42:
@@ -833,7 +833,7 @@ Python MUST reject:
   the header;
 - non-increasing fragment-local site offsets or a site centered on a base
   incompatible with its C/G-oriented context;
-- a truth flag inconsistent with the header policy;
+- a details flag inconsistent with the header policy;
 - a malformed projection/event cover, inserted position without an insertion
   event, event bases inconsistent with its kind, or non-zero padding;
 - any count disagreement among headers, prefix arrays, observed rows, and the

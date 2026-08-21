@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import csv
 from dataclasses import dataclass
 import gzip
 import hashlib
@@ -22,7 +23,8 @@ from pathlib import Path
 import re
 import sys
 import time
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 import numpy as np
 
@@ -32,15 +34,15 @@ SOURCE_ROOT = REPOSITORY_ROOT / "src"
 if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
 
-from bsreadsim.config import normalize_run_config  # noqa: E402
-from bsreadsim.core_argv import build_core_argv  # noqa: E402
-from bsreadsim.core_process import CoreProcess  # noqa: E402
-from bsreadsim.manifest import (  # noqa: E402
+from bsreadsim.run.config import normalize_run_config  # noqa: E402
+from bsreadsim.native.launch import build_core_argv  # noqa: E402
+from bsreadsim.native.subprocess import CoreProcess  # noqa: E402
+from bsreadsim.run.manifest import (  # noqa: E402
     validate_header_projection,
     verify_complete_manifest,
 )
-from bsreadsim.preparation import PreparedRun, prepare_run  # noqa: E402
-from bsreadsim.runtime import resolve_core_executable  # noqa: E402
+from bsreadsim.run.prepare import PreparedRun, prepare_run  # noqa: E402
+from bsreadsim.native.launch import resolve_core_executable  # noqa: E402
 
 
 _NUMBER = re.compile(
@@ -72,7 +74,7 @@ def _mapping(value: object, name: str) -> Mapping[str, Any]:
     return value
 
 
-def _load_manifest(path: Path) -> Dict[str, Any]:
+def _load_manifest(path: Path) -> dict[str, Any]:
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
@@ -90,7 +92,7 @@ def _prepare_manifest_run(manifest: Mapping[str, Any]) -> PreparedRun:
     if not isinstance(output, dict) or output.get("truth") != "none":
         raise AuditError("the audit requires a completed production run")
     output.pop("truth")
-    loaded = normalize_run_config(normalized, Path("/"), mode="production")
+    loaded = normalize_run_config(normalized, Path("/"))
     if loaded.sha256 != config_section.get("sha256"):
         raise AuditError("reconstructed normalized config SHA-256 changed")
     prepared = prepare_run(loaded)
@@ -119,7 +121,7 @@ def _prepare_manifest_run(manifest: Mapping[str, Any]) -> PreparedRun:
     return prepared
 
 
-def _decoded_bytes(path: Path) -> Tuple[bytes, bytes]:
+def _decoded_bytes(path: Path) -> tuple[bytes, bytes]:
     try:
         raw = path.read_bytes()
         decoded = gzip.decompress(raw) if raw.startswith(b"\x1f\x8b") else raw
@@ -156,10 +158,10 @@ def _load_profile(path: Path, expected_sha256: str) -> np.ndarray:
     return probabilities
 
 
-def _load_single_fasta(path: Path) -> Tuple[str, bytes]:
+def _load_single_fasta(path: Path) -> tuple[str, bytes]:
     _, decoded = _decoded_bytes(path)
     name = None
-    sequence_parts = []  # type: List[bytes]
+    sequence_parts = []  # type: list[bytes]
     for line_number, line in enumerate(decoded.splitlines(), 1):
         if line.startswith(b">"):
             if name is not None:
@@ -282,7 +284,7 @@ def _replay_core_histogram(
     core: Path,
     candidates: CandidateSpace,
     bin_count: int,
-) -> Tuple[np.ndarray, np.ndarray, Mapping[str, Any]]:
+) -> tuple[np.ndarray, np.ndarray, Mapping[str, Any]]:
     config = prepared.config.normalized
     fragments = _mapping(config["fragments"], "config.fragments")
     execution = _mapping(config["execution"], "config.execution")
@@ -404,10 +406,10 @@ def _distribution_rows(
     probabilities: np.ndarray,
     candidates: np.ndarray,
     observed: np.ndarray,
-    uniform_observed: Optional[np.ndarray] = None,
+    uniform_observed: np.ndarray | None = None,
     *,
     project_unreachable: bool = False,
-) -> Tuple[List[Dict[str, Any]], Dict[str, float]]:
+) -> tuple[list[dict[str, Any]], dict[str, float]]:
     candidate_total = int(candidates.sum())
     observed_total = int(observed.sum())
     candidate_distribution = candidates.astype(np.float64) / candidate_total
@@ -444,7 +446,7 @@ def _distribution_rows(
         uniform_distribution = None
     overall_coverage = observed_total / candidate_total
 
-    rows = []  # type: List[Dict[str, Any]]
+    rows = []  # type: list[dict[str, Any]]
     last_bin = len(probabilities) - 1
     for index in range(len(probabilities)):
         candidate_count = int(candidates[index])
@@ -528,7 +530,7 @@ def _insert_metrics(
     insert_min: int,
     profile_counts: np.ndarray,
     uniform_counts: np.ndarray,
-) -> Tuple[List[Dict[str, Any]], Dict[str, float]]:
+) -> tuple[list[dict[str, Any]], dict[str, float]]:
     profile_total = int(profile_counts.sum())
     uniform_total = int(uniform_counts.sum())
     if profile_total == 0 or uniform_total == 0:
@@ -576,21 +578,32 @@ def _insert_metrics(
     }
 
 
-def _write_tsv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
+def _write_tsv(
+    path: Path,
+    rows: Sequence[Mapping[str, Any]],
+) -> None:
     fields = tuple(rows[0])
     with path.open("w", encoding="utf-8", newline="") as output:
-        output.write("\t".join(fields) + "\n")
+        writer = csv.DictWriter(
+            output,
+            fieldnames=fields,
+            delimiter="\t",
+            lineterminator="\n",
+        )
+        writer.writeheader()
         for row in rows:
-            values = []
-            for field in fields:
-                value = row[field]
-                if value is None:
-                    values.append("NA")
-                elif isinstance(value, float):
-                    values.append("{:.12g}".format(value))
-                else:
-                    values.append(str(value))
-            output.write("\t".join(values) + "\n")
+            writer.writerow(
+                {
+                    field: (
+                        "NA"
+                        if row[field] is None
+                        else "{:.12g}".format(row[field])
+                        if isinstance(row[field], float)
+                        else row[field]
+                    )
+                    for field in fields
+                }
+            )
 
 
 def _write_plot(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
@@ -657,7 +670,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     if arguments.candidate_chunk_starts <= 0:
         raise AuditError("--candidate-chunk-starts must be positive")

@@ -12,7 +12,7 @@ import tempfile
 from types import SimpleNamespace
 
 from bsreadsim.cli import main as cli_main
-from bsreadsim.manifest import verify_complete_manifest
+from bsreadsim.run.manifest import verify_complete_manifest
 
 
 def quality_model() -> bytes:
@@ -22,7 +22,7 @@ def quality_model() -> bytes:
     }
     return json.dumps(
         {
-            "schema": "bsreadsim-quality-markov-v1",
+            "schema": "quality-markov-v1",
             "quality_scores": [10, 30],
             "mates": [mate, mate],
         },
@@ -41,7 +41,7 @@ def error_model() -> bytes:
     mate = {"base_transition_counts": [rotate, rotate]}
     return json.dumps(
         {
-            "schema": "bsreadsim-quality-confusion-v1",
+            "schema": "quality-confusion-v1",
             "quality_scores": [10, 30],
             "mates": [mate, mate],
         },
@@ -64,7 +64,6 @@ def _run_cli(
     name: str,
     *,
     workers: int,
-    truth: str,
     advanced: bool = False,
 ):
     arguments = [
@@ -90,7 +89,6 @@ def _run_cli(
         "--max-in-flight-fragments", "2",
         "--prefix", "sample",
         "--compression", "none",
-        "--mode", "debug" if truth == "full" else "production",
         "--core", str(core),
     ]
     if advanced:
@@ -111,7 +109,7 @@ def _run_cli(
     manifest_path = Path(stdout.getvalue().strip()).resolve(strict=True)
     document = json.loads(manifest_path.read_text(encoding="utf-8"))
     verify_complete_manifest(document)
-    if document["versions"]["protocol"] != "2.0":
+    if document["versions"]["protocol"] != "2.1":
         raise SystemExit("manifest recorded the wrong observed protocol")
     counts = document["counts"]["python"]
     if counts["fragment_count"] != 7 or counts["mate_count"] != 14:
@@ -119,8 +117,8 @@ def _run_cli(
     return SimpleNamespace(manifest_path=manifest_path)
 
 
-def run(core: Path, root: Path, name: str, *, workers: int, truth: str):
-    return _run_cli(core, root, name, workers=workers, truth=truth)
+def run(core: Path, root: Path, name: str, *, workers: int):
+    return _run_cli(core, root, name, workers=workers)
 
 
 def run_advanced(core: Path, root: Path, name: str, *, workers: int):
@@ -129,7 +127,6 @@ def run_advanced(core: Path, root: Path, name: str, *, workers: int):
         root,
         name,
         workers=workers,
-        truth="none",
         advanced=True,
     )
 
@@ -200,23 +197,13 @@ def main() -> None:
 
         run_direct_profile_cli(core, root)
 
-        run(core, root, "truth-inline", workers=1, truth="full")
-        run(core, root, "truth-pool", workers=2, truth="full")
-        expected_truth = data_files(root / "truth-inline")
-        if expected_truth != data_files(root / "truth-pool"):
-            raise SystemExit("worker count changed ordered FASTQ/Truth bytes")
-
-        run(core, root, "fastq-inline", workers=1, truth="none")
-        run(core, root, "fastq-pool", workers=2, truth="none")
-        expected_fastq = data_files(root / "fastq-inline")
-        if expected_fastq != data_files(root / "fastq-pool"):
+        run(core, root, "fastq-inline", workers=1)
+        run(core, root, "fastq-pool", workers=2)
+        if data_files(root / "fastq-inline") != data_files(root / "fastq-pool"):
             raise SystemExit("worker count changed ordered FASTQ bytes")
-        for role in ("sample.R1.fastq", "sample.R2.fastq"):
-            if expected_fastq[role] != expected_truth[role]:
-                raise SystemExit("Truth policy changed FASTQ bytes")
 
-        # Non-uniform sequencing policies use the compact typed fallback when
-        # truth is disabled; worker count must still preserve exact bytes.
+        # Non-uniform sequencing policies use the general typed path, whose
+        # worker count must still preserve exact bytes.
         inline_advanced = run_advanced(
             core, root, "advanced-inline", workers=1
         )
@@ -228,10 +215,10 @@ def main() -> None:
                 result.manifest_path.read_text(encoding="utf-8")
             )
             verify_complete_manifest(document)
-            if document["versions"]["protocol"] != "2.0":
+            if document["versions"]["protocol"] != "2.1":
                 raise SystemExit("advanced manifest protocol is wrong")
         if data_files(root / "advanced-inline") != data_files(root / "advanced-pool"):
-            raise SystemExit("compact typed fallback changed advanced FASTQ bytes")
+            raise SystemExit("general typed path changed advanced FASTQ bytes")
 
 
 if __name__ == "__main__":

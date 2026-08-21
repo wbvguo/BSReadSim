@@ -23,25 +23,23 @@ def _load_driver():
 
 
 class BenchmarkDriverTests(unittest.TestCase):
-    def test_expected_roles_cover_modes_truth_bam_and_single_end(self) -> None:
+    def test_expected_roles_cover_bam_and_single_end(self) -> None:
         driver = _load_driver()
         paired = {
             "fragments": {"paired_end": True},
-            "output": {"truth_bam": False},
+            "output": {"bam": False},
         }
-        self.assertEqual(driver._expected_output_roles(paired, "production"), {"read1", "read2"})
-        self.assertEqual(driver._expected_output_roles(paired, "debug"), {"read1", "read2", "truth"})
-        paired["output"]["truth_bam"] = True
-        self.assertEqual(driver._expected_output_roles(paired, "production"), {"read1", "read2", "truth_bam"})
-        self.assertEqual(driver._expected_output_roles(paired, "debug"), {"read1", "read2", "truth", "truth_bam"})
-        single = {"fragments": {"paired_end": False}, "output": {"truth_bam": False}}
-        self.assertEqual(driver._expected_output_roles(single, "production"), {"read1"})
+        self.assertEqual(driver._expected_output_roles(paired), {"read1", "read2"})
+        paired["output"]["bam"] = True
+        self.assertEqual(driver._expected_output_roles(paired), {"bam"})
+        single = {"fragments": {"paired_end": False}, "output": {"bam": False}}
+        self.assertEqual(driver._expected_output_roles(single), {"read1"})
 
     def test_reduced_warmup_changes_only_the_copied_read_pair_count(self) -> None:
         driver = _load_driver()
         template = {
             "fragments": {"paired_end": True, "read_pairs": 500000},
-            "output": {"directory": "original", "truth_bam": False},
+            "output": {"directory": "original", "bam": False},
         }
         observed = driver._document_for_warmup(template, Path("/tmp/warmup"), 50000)
         self.assertEqual(observed["fragments"]["read_pairs"], 50000)
@@ -51,7 +49,7 @@ class BenchmarkDriverTests(unittest.TestCase):
 
         depth_template = {
             "fragments": {"paired_end": True, "depth": 30},
-            "output": {"directory": "original", "truth_bam": False},
+            "output": {"directory": "original", "bam": False},
         }
         with self.assertRaisesRegex(ValueError, "--read-pairs"):
             driver._document_for_warmup(depth_template, Path("/tmp/warmup"), 50000)

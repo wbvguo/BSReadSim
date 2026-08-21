@@ -7,17 +7,9 @@ state, so scheduling and chunking cannot change a result.
 
 from enum import IntEnum
 import math
-from typing import Tuple
 
-try:
-    from ._native import bernoulli as _native_bernoulli
-    from ._native import u64 as _native_u64
-except ImportError:
-    _native_bernoulli = None
-    _native_u64 = None
-
-
-NATIVE_RNG_AVAILABLE = _native_bernoulli is not None
+from ._native import bernoulli as _native_bernoulli
+from ._native import u64 as _native_u64
 
 RNG_CONTRACT = "philox4x32-10+philox-domain-v2"
 
@@ -85,7 +77,7 @@ def derive_key(master_seed: int, stage: RNGStage, contig_index: int) -> int:
 
 def philox4x32_10(
     key: int, entity_ordinal: int, local_index: int
-) -> Tuple[int, int, int, int]:
+) -> tuple[int, int, int, int]:
     """Return one Philox4x32-10 block for the explicit contract counter.
 
     ``entity_ordinal`` and ``local_index`` are each encoded as little-endian
@@ -101,7 +93,7 @@ def philox4x32_10(
 
 def _philox4x32_10_unchecked(
     key: int, entity_ordinal: int, local_index: int
-) -> Tuple[int, int, int, int]:
+) -> tuple[int, int, int, int]:
     """Return a Philox block for already validated internal arguments."""
 
     counter_0 = entity_ordinal & _UINT32_MASK
@@ -149,11 +141,7 @@ def _u64_unchecked(
     key: int, entity_ordinal: int, local_index: int, pair: int = 0
 ) -> int:
     """Return a Philox u64 for already validated internal arguments."""
-    if _native_u64 is not None:
-        return _native_u64(key, entity_ordinal, local_index, pair)
-    block = _philox4x32_10_unchecked(key, entity_ordinal, local_index)
-    offset = pair * 2
-    return block[offset] | (block[offset + 1] << 32)
+    return _native_u64(key, entity_ordinal, local_index, pair)
 
 
 def uniform01(
@@ -184,6 +172,8 @@ def bernoulli(
     return uniform01(key, entity_ordinal, local_index, pair=pair) < probability_value
 
 
+
+
 def _bernoulli_unchecked(
     key: int,
     entity_ordinal: int,
@@ -196,16 +186,13 @@ def _bernoulli_unchecked(
         return False
     if probability == 1.0:
         return True
-    if _native_bernoulli is not None:
-        return _native_bernoulli(
-            key,
-            entity_ordinal,
-            local_index,
-            probability,
-            pair,
-        )
-    random_bits = _u64_unchecked(key, entity_ordinal, local_index, pair) >> 11
-    return math.ldexp(float(random_bits), -53) < probability
+    return _native_bernoulli(
+        key,
+        entity_ordinal,
+        local_index,
+        probability,
+        pair,
+    )
 
 
 def bounded_integer(
@@ -242,11 +229,6 @@ def bounded_integer(
     )
     offset = (random_128 * width) // _UINT128_SCALE
     return lower + offset
-
-
-def _multiply_high_low(left: int, right: int) -> Tuple[int, int]:
-    product = left * right
-    return (product >> 32) & _UINT32_MASK, product & _UINT32_MASK
 
 
 def _require_u64(name: str, value: int) -> None:

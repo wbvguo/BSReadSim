@@ -7,12 +7,13 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
-from typing import Sequence
+from collections.abc import Sequence
 
-from bsreadsim.core_process import CoreProcess
-from bsreadsim.model import VariantKind
-from bsreadsim.protocol import ProtocolStream, TruthMode, read_stream
-from bsreadsim.protocol_adapter import decode_fragments
+from bsreadsim.native.subprocess import CoreProcess
+from bsreadsim.process.batch import VariantKind
+from bsreadsim.native.protocol import ProtocolStream
+from stream_support import read_stream
+from bsreadsim.process.fragment import decode_fragments
 
 
 def _arguments(core: Path, reference: Path, vcf: Path) -> list[str]:
@@ -78,8 +79,8 @@ def _replace(arguments: Sequence[str], option: str, value: str) -> list[str]:
     return changed
 
 
-def _with_truth(arguments: Sequence[str], truth: str) -> list[str]:
-    return list(arguments) + ["--truth-columns", truth]
+def _with_details(arguments: Sequence[str], enabled: bool) -> list[str]:
+    return list(arguments) + ["--emit-details", str(enabled).lower()]
 
 
 def _common_signature(stream: ProtocolStream) -> tuple:
@@ -87,12 +88,12 @@ def _common_signature(stream: ProtocolStream) -> tuple:
         (
             batch.first_fragment_ordinal,
             tuple(batch.contig_indices),
-            tuple(batch.reference_begins),
+            tuple(batch.reference_starts),
             tuple(batch.reference_ends),
             tuple(batch.template_offsets),
             tuple(batch.mate_offsets),
             tuple(batch.site_offsets),
-            tuple(batch.mate_template_begins),
+            tuple(batch.mate_template_starts),
             tuple(batch.mate_template_ends),
             tuple(batch.site_template_offsets),
             tuple(batch.site_probabilities),
@@ -101,7 +102,7 @@ def _common_signature(stream: ProtocolStream) -> tuple:
             tuple(batch.mate_indices),
             tuple(batch.mate_reverse_complements),
             tuple(batch.site_contexts),
-            tuple(batch.site_sources),
+            tuple(batch.methylation_sources),
             tuple(batch.site_alleles),
             bytes(batch.template_bases),
         )
@@ -143,36 +144,36 @@ def main(argv: list[str]) -> int:
         arguments = _arguments(core, reference, vcf)
 
         default_bytes = _require_success(_run(arguments), "default invocation")
-        no_truth_bytes = _require_success(
-            _run(_with_truth(arguments, "none")), "explicit no-Truth invocation"
+        without_annotations_bytes = _require_success(
+            _run(_with_details(arguments, False)), "explicit no-Details invocation"
         )
-        if default_bytes != no_truth_bytes:
-            raise SystemExit("explicit no-Truth changed default protocol bytes")
-        no_truth = read_stream(no_truth_bytes, core_exit_status=0)
-        if no_truth.header.truth_columns is not TruthMode.NONE:
-            raise SystemExit("default core invocation did not select no-Truth")
-        if any(batch.truth is not None for batch in no_truth.batches):
-            raise SystemExit("no-Truth stream emitted provenance columns")
+        if default_bytes != without_annotations_bytes:
+            raise SystemExit("explicit no-Details changed default protocol bytes")
+        without_details = read_stream(without_annotations_bytes, core_exit_status=0)
+        if without_details.header.has_details:
+            raise SystemExit("default core invocation did not select no-Details")
+        if any(batch.details is not None for batch in without_details.batches):
+            raise SystemExit("no-Details stream emitted provenance columns")
 
-        full_arguments = _with_truth(arguments, "full")
-        full_bytes = _require_success(_run(full_arguments), "Full-Truth invocation")
+        full_arguments = _with_details(arguments, True)
+        full_bytes = _require_success(_run(full_arguments), "Full-Details invocation")
         full = read_stream(full_bytes, core_exit_status=0)
         if [batch.fragment_count for batch in full.batches] != [64, 64, 64, 64, 1]:
             raise SystemExit("canonical protocol batch boundaries changed")
-        if _common_signature(no_truth) != _common_signature(full):
-            raise SystemExit("Truth selection changed common simulation columns")
-        if _counts(no_truth) != _counts(full):
-            raise SystemExit("Truth selection changed simulation counts")
-        if len(no_truth_bytes) >= len(full_bytes):
-            raise SystemExit("no-Truth stream did not remove provenance bytes")
+        if _common_signature(without_details) != _common_signature(full):
+            raise SystemExit("Details selection changed common simulation columns")
+        if _counts(without_details) != _counts(full):
+            raise SystemExit("Details selection changed simulation counts")
+        if len(without_annotations_bytes) >= len(full_bytes):
+            raise SystemExit("no-Details stream did not remove provenance bytes")
 
-        event_kinds = {
+        variant_kinds = {
             int(event.kind)
             for batch in full.batches
             for fragment in decode_fragments(batch, full.header)
-            for event in fragment.variant_events
+            for event in fragment.variants
         }
-        if event_kinds != {
+        if variant_kinds != {
             int(VariantKind.SNV),
             int(VariantKind.INSERTION),
             int(VariantKind.DELETION),

@@ -29,7 +29,7 @@ using htsim::wgbs::VariableHaplotypeSampler;
 using htsim::wgbs::VariableHaplotypeSamplingError;
 using htsim::wgbs::VariableWgbsSampler;
 using htsim::variant::ContigVariants;
-using htsim::variant::Event;
+using htsim::variant::Variant;
 
 void require(bool condition, const std::string &message)
 {
@@ -206,7 +206,7 @@ void test_indels_change_only_the_two_bit_eligibility_mask()
 void test_exhaustive_interval_masks_match_projection()
 {
     const Contig contig = make_contig("ANCGTNAACGTN");
-    const std::vector<Event> events = {
+    const std::vector<Variant> events = {
         {0U, 0U, 0U, VariantKind::insertion, {}, encode("T"),
          HaplotypeMask::haplotype_1},
         {0U, 2U, 3U, VariantKind::snv, encode("C"), encode("A"),

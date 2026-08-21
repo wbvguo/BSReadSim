@@ -18,7 +18,8 @@ TARGETS_SHA256 = "826f87e42598a6428b52cc1490a8c8902d196c43ac9dfafd5cf68eebf66d8e
 
 
 def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    with path.open("rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()
 
 
 def main() -> int:

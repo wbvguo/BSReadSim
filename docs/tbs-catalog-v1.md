@@ -1,7 +1,7 @@
 # TBS target catalog v1
 
 This document freezes the initial targeted-bisulfite fragment boundary between
-the C++ generator and Python postprocessor.  C++ exclusively owns BED parsing,
+the C++ generator and Python processor.  C++ exclusively owns BED parsing,
 target validation, fragment placement, sampling, and the protocol
 `capture_strand`.  Python never reparses BED coordinates.
 
@@ -85,7 +85,7 @@ novo events, the diploid catalog computes the two-bit eligibility mask, selects
 conditionally within it, and emits a physical candidate carrying exactly mask
 bit 1 or 2. A center deleted from one haplotype therefore changes only the
 conditional haplotype choice, not the BED target's sampling mass. Complete
-indels are projected back into typed reference truth; a physical boundary
+indels are projected back into typed reference details; a physical boundary
 inside inserted ALT bases is retried or omitted rather than truncating its
 event.
 

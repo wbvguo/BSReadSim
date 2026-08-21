@@ -21,7 +21,7 @@ event ordinal. Master seeds, RNG entity ordinals, and aggregate counts are
 
 ## Addressed sampling
 
-The key is `derive_key(master_seed, Stage::mutation, contig_index)`. The entity is
+The key is `derive_key(catalog_seed, Stage::mutation, contig_index)`. The entity is
 the zero-based `uint32` reference position widened to `uint64`. Local indices
 are frozen as follows:
 
@@ -63,6 +63,5 @@ strictly ordered, non-overlapping, and accepted directly by `ContigVariants`.
 
 WGBS consumes the generated typed catalog with fixed or variable inserts and
 uniform coverage, using the two-bit eligibility boundary in
-[variable-haplotype-wgbs-v1.md](variable-haplotype-wgbs-v1.md). Target-GC
-coverage is reference-only and rejects de novo mutation before generation.
+[variable-haplotype-wgbs-v1.md](variable-haplotype-wgbs-v1.md). Fixed-insert target-GC is calibrated after haplotype construction; variable target-GC with variants remains gated.
 RRBS and TBS remain gated until their fragment catalogs become haplotype-aware.

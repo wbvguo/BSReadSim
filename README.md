@@ -6,12 +6,12 @@ state, using one supported architecture:
 - `htsim-core` (C++17) generates haplotypes, methylation metadata, and raw
   fragment templates;
 - `bsreadsim` (Python) validates the core stream, applies bisulfite conversion,
-  quality and sequencing-error models, and publishes FASTQ, optional truth
+  quality and sequencing-error models, and publishes FASTQ, optional details
   artifacts, and a reproducibility manifest atomically.
 
 The two components communicate only through the current binary protocol,
 documented in [docs/protocol.md](docs/protocol.md). Protocol v1 compatibility
-and the 0.1.0 implementation remain in Git history, not in the 0.3.0 runtime.
+and the 0.1.0 implementation remain in Git history, not in the 0.4.0 runtime.
 The complete ownership and stage order is in
 [docs/architecture.md](docs/architecture.md).
 
@@ -80,16 +80,21 @@ in the corresponding FASTA header.
 | Predefined variants | `--vcf` | Strict one-sample VCF 4.2/4.3, plain or gzip. `--mutation-rate` must be zero (selected automatically when omitted); REF alleles are checked against FASTA. Use an explicit `--seed` when a run must be repeated or matched to an RRBS catalog. |
 | Site methylation | `--cgmap` | Eight-column CGmap: `CHR NUC POS CONTEXT DINUC METH MC NC`. `POS` is one-based and `METH` is `[0,1]` or `na`. |
 | Site methylation in BED | `--bed-methyl` | UCSC/ENCODE bedMethyl BED9+2 or BED9+9, plain or gzip. Intervals are zero-based, half-open, and exactly one base; `percentModified` is `[0,100]`. |
+| Fixed MethDB | `--methdb` | BSReadSim binary snapshot containing exact normalized site probabilities, source, context, and allele. It is SHA-256 and reference/catalog-identity checked. |
 | Allele-specific methylation | `--asm` | Fourteen-column HTSIM ASM profile with one-based target and linked-SNV positions. This is not raw CGmapTools `asm` output. |
 | Allele-specific methylation in BED | `--asm-bed` | Project-defined BED6+6, plain or gzip. It carries a one-base target, a one-base linked VCF SNV, REF/ALT, `REF_METH`, and `ALT_METH`. It is not a generic BED3 file. |
 | TBS targets | `--targets` | Strict BED6 used with `--technology TBS`; zero-based half-open intervals and strand `+`, `-`, or `.`. |
-| WGBS target GC distribution | `--coverage-profile` | Strict TSV containing one probability per line. It is available only for fixed-insert, reference-only WGBS. |
+| WGBS target GC distribution | `--coverage-profile` | Strict TSV containing one probability per line. Fixed inserts are calibrated on post-haplotype opportunities and support VCF, de novo mutation, and ASM; variable insert plus variants remains fail-closed. |
 | RRBS candidate scores | `--rrbs-candidates` | Ten-column BED generated first by `bsreadsim catalog rrbs`; it is validated against a regenerated native catalog and is not a general fragment BED. |
 
 `--cgmap` and `--bed-methyl` are alternatives and cannot be supplied together.
 With neither option, MethDB uses the configured context-specific Beta
 distributions. `--cgmap-pool` accepts either representation and changes the
 input from a position-specific overlay into a context-class sampling pool.
+`--methdb-seed` fixes probability-catalog and variant-phasing randomness;
+`--seed` independently controls fragment selection and downstream realization.
+Use `--save-methdb fixed.methdb` to export and immediately run against that
+snapshot, or `--methdb fixed.methdb` to load it later.
 
 `--asm` and `--asm-bed` are also alternatives. Either form requires `--vcf`,
 and every ASM row must resolve to one exact heterozygous VCF SNV. A site-level
@@ -129,18 +134,17 @@ Full column and validation rules are in
 [TBS target catalog v1](docs/tbs-catalog-v1.md), and
 [RRBS candidate BED v1](docs/rrbs-candidate-bed-v1.md). The WGBS profile is
 specified separately in
-[WGBS target GC distribution v1](docs/coverage-profile-target-v1.md).
+[WGBS target GC distribution v1](docs/coverage-profile-target-v2.md).
 
 ## Run
 
 Run directly from command-line parameters; no input JSON file is required.
-Production is the default and emits FASTQ plus the reproducibility manifest
-without constructing or writing Full Truth. `-n` counts biological fragments:
-in paired-end mode each fragment produces one R1 and one R2 record.
-FASTQ identifiers follow
-`@<chr_id>:<c1>-<c4>:<read_num>/<pair_num>`; see the
-[read-name v1 contract](docs/read-name-v1.md). The output prefix controls file
-names, not read identifiers.
+Without `--bam`, a run emits FASTQ plus the reproducibility manifest
+without constructing Full Details. `-n` counts biological fragments: in
+paired-end mode each fragment produces one R1 and one R2 record. FASTQ
+identifiers use a variable-width lowercase hexadecimal fragment ordinal; see
+the [read-name v2 contract](docs/read-name-v2.md). The output prefix controls
+file names, not read identifiers.
 
 ```sh
 bsreadsim run \
@@ -161,12 +165,9 @@ bsreadsim run \
   --coverage-profile data/experiments/wgbs-gc-target-mock.tsv \
   --seed 42
 
-# Full Truth for development and scientific inspection:
-bsreadsim run -r GRCh38.fa -o runs/debug -n 1000 --mode debug
-
-# FASTQ plus a downstream-compatible, unsorted truth-aligned BAM:
-bsreadsim run -r GRCh38.fa -o runs/truth-bam -n 1000 \
-  --seed 42 --truth-bam
+# Downstream-compatible annotated BAM (replaces FASTQ sidecars):
+bsreadsim run -r GRCh38.fa -o runs/bam -n 1000 \
+  --seed 42 --bam
 
 # An eight-column CGmap profile supplies position-specific levels:
 bsreadsim run -r GRCh38.fa -o runs/cgmap -n 100000 \
@@ -175,6 +176,12 @@ bsreadsim run -r GRCh38.fa -o runs/cgmap -n 100000 \
 # A standard bedMethyl profile is an explicit alternative to --cgmap:
 bsreadsim run -r GRCh38.fa -o runs/bedmethyl -n 100000 \
   --bed-methyl sample.bedmethyl.gz --seed 42
+
+# Freeze the normalized probability catalog, then reuse it with new run seeds:
+bsreadsim run -r GRCh38.fa -o runs/freeze -n 100000 \
+  --methdb-seed 7 --save-methdb fixed.methdb --seed 42
+bsreadsim run -r GRCh38.fa -o runs/replay -n 100000 \
+  --methdb-seed 7 --methdb fixed.methdb --seed 99
 
 # Allele-specific BED6+6 retains an exact typed VCF SNV link:
 bsreadsim run -r GRCh38.fa -o runs/asm-bed -n 100000 \
@@ -216,23 +223,25 @@ before launch; the deliberately mutable RRBS candidate-score exchange is
 instead checked by exact regenerated-row matching. Successful data files become
 visible only when a complete manifest can be committed.
 
-The command-line mode contract is documented in
-[docs/output-modes.md](docs/output-modes.md). `--mode production`
-(default) selects `output.truth=none`; `--mode debug` selects
-`output.truth=full`. This skips truth-only materialization, serialization,
-shared-memory transfer, and disk I/O in production while preserving the FASTQ
-bytes for the same biological model and seed. Truth is selected only by mode;
-there is no separate user-facing Truth argument.
+The output contract is documented in
+[docs/output-policy.md](docs/output-policy.md). A normal run emits R1, optional
+R2, and the reproducibility manifest. There is no production/debug selector
+and no per-fragment Details JSONL artifact.
 
-`--truth-bam` is a separate opt-in output and creates
-`<prefix>.truth.bam`. It carries valid mapped SAM/BAM 1.6 records with source
-coordinates, indel-aware CIGAR, paired flags/mate fields, qualities, and
-RG/PG/MC tags. The stream is unsorted so it can be generated transactionally;
-coordinate-indexed consumers should run `samtools sort` and then
-`samtools index`. Enabling it retains Full Truth projection columns internally
-even in production, but does not enable JSON Truth. The exact interoperability
-contract and limitations are in
-[docs/truth-bam-v1.md](docs/truth-bam-v1.md).
+`--bam` switches the data product to `<prefix>.bam` plus the
+manifest; FASTQ sidecars are not emitted because `samtools fastq` can recover
+the reads and qualities. The unsorted SAM/BAM 1.6 records retain source
+coordinates, indel-aware CIGAR, paired flags/mate fields, qualities, fixed
+`zt` and `zr` tags, optional `zf` summaries selected by
+`--fragment-summary`, and optional complete-fragment `zx` realizations selected
+by `--fragment-realization`. The latter implies BAM and `zf`.
+Coordinate-indexed consumers should run
+`samtools sort` and then `samtools index`. The exact contract is in
+[docs/bam-v3.md](docs/bam-v3.md).
+
+`--methylation-model bilstm` currently emits a warning and records an effective
+fallback to the built-in Bernoulli model. The stable model interface is ready
+for a future correlated plugin; this release does not claim BiLSTM behavior.
 
 For storage/speed tuning, `output.gzip_level` accepts `0` through `9` and
 defaults to `6`. A lower value such as `1` is an explicit, manifest-visible
@@ -258,7 +267,7 @@ spawned processes and shared-memory slots. There is no one-to-one assignment
 between C++ and Python workers, and the defaults remain one each for
 conservative, low-process-count runs. The example is the measured optimum
 for the native, uniform-policy, FASTQ-only benchmark on one host; model cost,
-Truth output, compression, CPU topology, and memory budget can change the best
+Details output, compression, CPU topology, and memory budget can change the best
 ratio.
 
 Experiment drivers, benchmark harnesses, and all generated research data belong

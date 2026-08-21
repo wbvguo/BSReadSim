@@ -258,6 +258,35 @@ if(BUILD_TESTING)
 
     find_package(Python3 COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND)
+        set(
+            BSREADSIM_PYTHON_TEST_ROOT
+            "${CMAKE_CURRENT_BINARY_DIR}/python-test"
+        )
+        set(
+            BSREADSIM_PYTHON_TEST_SOURCE
+            "${BSREADSIM_PYTHON_TEST_ROOT}/src"
+        )
+        add_custom_target(
+            bsreadsim_python_test_package ALL
+            COMMAND
+                "${CMAKE_COMMAND}" -E rm -rf
+                "${BSREADSIM_PYTHON_TEST_ROOT}"
+            COMMAND
+                "${CMAKE_COMMAND}" -E make_directory
+                "${BSREADSIM_PYTHON_TEST_SOURCE}"
+            COMMAND
+                "${CMAKE_COMMAND}" -E copy_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/src/bsreadsim"
+                "${BSREADSIM_PYTHON_TEST_SOURCE}/bsreadsim"
+            COMMAND
+                "${Python3_EXECUTABLE}" setup.py build_ext
+                --build-lib "${BSREADSIM_PYTHON_TEST_SOURCE}"
+                --build-temp "${BSREADSIM_PYTHON_TEST_ROOT}/build"
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            COMMENT "Staging the Python package and required native extension"
+            VERBATIM
+        )
+
         function(htsim_add_python_test test_name script_name)
             add_test(
                 NAME "${test_name}"
@@ -269,7 +298,8 @@ if(BUILD_TESTING)
             set_tests_properties(
                 "${test_name}"
                 PROPERTIES
-                    ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/src"
+                    ENVIRONMENT
+                        "PYTHONPATH=${BSREADSIM_PYTHON_TEST_SOURCE}"
             )
         endfunction()
 
@@ -285,7 +315,7 @@ if(BUILD_TESTING)
         set_tests_properties(
             protocol_cross_language
             PROPERTIES
-                ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/src"
+                ENVIRONMENT "PYTHONPATH=${BSREADSIM_PYTHON_TEST_SOURCE}"
         )
 
         htsim_add_python_test(core_cross_language check_core_stream.py)
@@ -293,17 +323,13 @@ if(BUILD_TESTING)
             pipeline_cross_language check_pipeline_e2e.py
         )
         htsim_add_python_test(
-            output_modes_cross_language check_output_modes.py
+            bam_cross_language check_bam.py
         )
         htsim_add_python_test(
-            truth_bam_cross_language check_truth_bam.py
+            methdb_cross_language check_methdb.py
         )
         htsim_add_python_test(
-            protocol_scientific_parity_cross_language
-            check_protocol_scientific_parity.py
-        )
-        htsim_add_python_test(
-            technology_examples_cross_language check_technology_examples.py
+            technology_outputs_cross_language check_technology_outputs.py
         )
     endif()
 endif()

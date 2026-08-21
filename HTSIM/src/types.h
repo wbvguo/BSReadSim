@@ -2,6 +2,7 @@
 #define HTSIM_TYPES_H
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace htsim::model {
@@ -30,7 +31,7 @@ inline constexpr bool mask_contains(
             & static_cast<std::uint8_t>(1U << zero_based_haplotype)) != 0;
 }
 
-inline constexpr std::uint32_t no_variant_event = UINT32_C(0xffffffff);
+inline constexpr std::uint32_t no_variant_index = UINT32_C(0xffffffff);
 
 enum class CaptureStrand : std::uint8_t {
     unknown = 0,
@@ -42,6 +43,11 @@ enum class VariantKind : std::uint8_t {
     snv = 1,
     insertion = 2,
     deletion = 3,
+};
+
+enum class VariantSource : std::uint8_t {
+    vcf = 1,
+    de_novo = 2,
 };
 
 enum class MethylationContext : std::uint8_t {
@@ -66,8 +72,10 @@ enum class MethylationAllele : std::uint8_t {
     alternate_haplotype = 2,
 };
 
-struct VariantEvent {
-    std::uint32_t event_id = 0;
+struct Variant {
+    std::uint32_t index = 0;
+    std::string id;
+    VariantSource source = VariantSource::vcf;
     VariantKind kind = VariantKind::snv;
     std::uint8_t phased_haplotype = 255;
     std::uint64_t reference_start = 0;
@@ -81,7 +89,7 @@ struct MethylationSite {
     std::uint32_t template_offset = 0;
     std::int64_t reference_pos = 0;
     MethylationContext context = MethylationContext::cg_c;
-    MethylationSource source = MethylationSource::cgmap;
+    MethylationSource methylation_source = MethylationSource::cgmap;
     MethylationAllele allele = MethylationAllele::shared;
     float methylation_probability = 0.0F;
 };
@@ -110,8 +118,8 @@ struct Fragment {
     std::uint64_t reference_end = 0;
     Bases template_bases;
     std::vector<std::int64_t> reference_positions;
-    std::vector<std::uint32_t> base_event_ids;
-    std::vector<VariantEvent> variant_events;
+    std::vector<std::uint32_t> base_variant_indices;
+    std::vector<Variant> variants;
     std::vector<MethylationSite> methylation_sites;
     std::vector<Mate> mates;
 };

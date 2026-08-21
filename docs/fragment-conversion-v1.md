@@ -37,7 +37,7 @@ mate observes its reverse-complemented base and the opposite visible conversion
 mode. Worker count, chunk size, mate order, and overlap length cannot duplicate
 or move the draw.
 
-Per-base truth records both the original oriented base and the oriented
+Per-base details records both the original oriented base and the oriented
 post-conversion base. Conversion flags are physical fragment events projected
 into each observing mate, while sequencing-error flags remain independent read
 observations.

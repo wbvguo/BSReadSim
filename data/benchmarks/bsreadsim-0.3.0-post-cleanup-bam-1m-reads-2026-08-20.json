@@ -1,0 +1,225 @@
+{
+  "artifact_identity": {
+    "path": "/tmp/bsreadsim-benchmark-formal-chr21/formal.bam",
+    "record_count": 1000000,
+    "role": "bam",
+    "sha256": "cdc8abbbd414e29d60e2802514876ee0fb53332481ea7c7afa75b72bbaee4e18",
+    "size_bytes": 151074270
+  },
+  "baseline": {
+    "peak_pss_kib": 317252,
+    "reads_per_second": 21105.379670500843,
+    "report": "bsreadsim-0.3.0-post-refactor-bam-1m-reads-2026-08-20.json",
+    "wall_seconds": 47.38128456403501
+  },
+  "comparison_to_baseline": {
+    "peak_pss_change_percent": -0.9106325570839569,
+    "throughput_change_percent": 24.8212289870124,
+    "wall_seconds_change_percent": -19.88542268686927
+  },
+  "components": {
+    "formal_process_boundaries": {
+      "bam_encoder": {
+        "active_wall_seconds_sampled": 32.495400501973926,
+        "cpu_seconds_sampled": 3.87,
+        "effective_reads_per_active_second": 30773.585939931876,
+        "effective_reads_per_cpu_second": 258397.93281653745,
+        "peak_pss_kib": 1218,
+        "peak_rss_kib": 4820,
+        "process_count": 1
+      },
+      "core_producer": {
+        "active_wall_seconds_sampled": 37.66363613002468,
+        "cpu_seconds_sampled": 16.33,
+        "effective_reads_per_active_second": 26550.80875749064,
+        "effective_reads_per_cpu_second": 61236.987140232704,
+        "peak_pss_kib": 240880,
+        "peak_rss_kib": 244644,
+        "process_count": 1
+      },
+      "orchestration_and_output": {
+        "active_wall_seconds_sampled": 37.98234316401649,
+        "cpu_seconds_sampled": 17.59,
+        "effective_reads_per_active_second": 26328.02288373232,
+        "effective_reads_per_cpu_second": 56850.48322910745,
+        "peak_pss_kib": 72305,
+        "peak_rss_kib": 83776,
+        "process_count": 1
+      },
+      "python_worker": {
+        "active_wall_seconds_sampled": 0.025,
+        "cpu_seconds_sampled": 3.87,
+        "effective_reads_per_active_second": 40000000.0,
+        "effective_reads_per_cpu_second": 258397.93281653745,
+        "peak_pss_kib": 0,
+        "peak_rss_kib": 0,
+        "process_count": 1
+      }
+    },
+    "full_truth_core_producer_standalone": {
+      "components": {
+        "core_producer": {
+          "active_wall_seconds_sampled": 15.83576074403245,
+          "cpu_seconds_sampled": 15.77,
+          "effective_reads_per_active_second": 63148.21347479881,
+          "effective_reads_per_cpu_second": 63411.540900443884,
+          "peak_pss_kib": 241047,
+          "peak_rss_kib": 244564,
+          "process_count": 1
+        }
+      },
+      "peak_process_tree_pss_kib": 241047,
+      "peak_process_tree_rss_kib": 244564,
+      "reads_per_second": 63240.146580862674,
+      "returncode": 0,
+      "sample_interval_ms": 25,
+      "wall_seconds": 15.812740072025917
+    },
+    "bam_end_to_end": {
+      "components": {
+        "bam_encoder": {
+          "active_wall_seconds_sampled": 32.495400501973926,
+          "cpu_seconds_sampled": 3.87,
+          "effective_reads_per_active_second": 30773.585939931876,
+          "effective_reads_per_cpu_second": 258397.93281653745,
+          "peak_pss_kib": 1218,
+          "peak_rss_kib": 4820,
+          "process_count": 1
+        },
+        "core_producer": {
+          "active_wall_seconds_sampled": 37.66363613002468,
+          "cpu_seconds_sampled": 16.33,
+          "effective_reads_per_active_second": 26550.80875749064,
+          "effective_reads_per_cpu_second": 61236.987140232704,
+          "peak_pss_kib": 240880,
+          "peak_rss_kib": 244644,
+          "process_count": 1
+        },
+        "orchestration_and_output": {
+          "active_wall_seconds_sampled": 37.98234316401649,
+          "cpu_seconds_sampled": 17.59,
+          "effective_reads_per_active_second": 26328.02288373232,
+          "effective_reads_per_cpu_second": 56850.48322910745,
+          "peak_pss_kib": 72305,
+          "peak_rss_kib": 83776,
+          "process_count": 1
+        },
+        "python_worker": {
+          "active_wall_seconds_sampled": 0.025,
+          "cpu_seconds_sampled": 3.87,
+          "effective_reads_per_active_second": 40000000.0,
+          "effective_reads_per_cpu_second": 258397.93281653745,
+          "peak_pss_kib": 0,
+          "peak_rss_kib": 0,
+          "process_count": 1
+        }
+      },
+      "peak_process_tree_pss_kib": 314363,
+      "peak_process_tree_rss_kib": 333200,
+      "reads_per_second": 26343.99428709422,
+      "returncode": 0,
+      "sample_interval_ms": 25,
+      "wall_seconds": 37.95931585400831
+    }
+  },
+  "created_at_utc": "2026-08-20T11:53:40.784614+00:00",
+  "environment": {
+    "bsreadsim_version": "0.3.0",
+    "core": {
+      "path": "/tmp/bsreadsim-venv-R54inc/lib/python3.12/site-packages/bsreadsim/_bin/htsim-core",
+      "sha256": "1dce41b849ad18dd2f9689e928fec115fafd2060b8d3bc2356162091713966af",
+      "version": "htsim-core 0.3.0"
+    },
+    "installed_package_path": "/tmp/bsreadsim-venv-R54inc/lib/python3.12/site-packages/bsreadsim/__init__.py",
+    "native_extension": {
+      "path": "/tmp/bsreadsim-venv-R54inc/lib/python3.12/site-packages/bsreadsim/_native.cpython-312-x86_64-linux-gnu.so",
+      "sha256": "1feeebf7f9664a166a2a9bb6a450d781d79b043b02b42b94462ed2b242065763"
+    },
+    "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "python": "3.12.3 (main, Jun 19 2026, 12:46:00) [GCC 13.3.0]",
+    "source_identity": "working-tree Git identity deliberately not collected",
+    "wheel": {
+      "filename": "bsreadsim-0.3.0-cp312-cp312-linux_x86_64.whl",
+      "sha256": "340e417a24bb00906d21fe7d3fb926fd9f7b5081caff05f2d83bf92b12431d94"
+    }
+  },
+  "limitations": [
+    "One formal repetition was run after a 20,000-fragment warmup.",
+    "Component active spans are sampled process lifetimes and overlap; their throughputs are not additive.",
+    "Per-component CPU and memory values are sampled from /proc at 25 ms; the end-to-end wall clock is unsampled.",
+    "CPU affinity fixes execution to logical CPU 0 but does not eliminate host or WSL contention."
+  ],
+  "schema": "bsreadsim-post-cleanup-components-1",
+  "validation": {
+    "ctest": {
+      "failed": 0,
+      "passed": 38
+    },
+    "formal_counts": {
+      "core": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "methylation_site_count": 81843071,
+        "per_contig_fragment_counts": [
+          500000
+        ],
+        "skipped_fragment_count": 82475,
+        "template_base_count": 200008688
+      },
+      "python": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "records_by_role": {
+          "bam": 1000000
+        }
+      }
+    },
+    "installed_native_bam_tests": {
+      "failed": 0,
+      "passed": 2
+    },
+    "installed_native_differential": {
+      "accepted": 127,
+      "candidates": 2346,
+      "exact": true
+    },
+    "native_bam_available": true,
+    "native_bam_columns_available": true,
+    "source_python_unittest": {
+      "failed": 0,
+      "passed": 232,
+      "skipped": 9
+    },
+    "bam_only": true
+  },
+  "workload": {
+    "chunk_size": 4096,
+    "compression": "gzip",
+    "core_workers": 1,
+    "cpu_affinity": [
+      0
+    ],
+    "error_rate": 0.0,
+    "fragments": 500000,
+    "gzip_level": 1,
+    "insert_max": 1000,
+    "insert_mean": 400,
+    "insert_min": 150,
+    "insert_stddev": 25.0,
+    "max_in_flight_fragments": 4096,
+    "mutation_rate": 0.0,
+    "output_roles": [
+      "bam"
+    ],
+    "paired_end": true,
+    "read_length": 150,
+    "reads": 1000000,
+    "reference": "<external-reference>/chr21.fa",
+    "reference_sha256": "393c1db4f23345d2a5600e43a7dd692505f76867f9a2ff3d853f8042ffb64c0d",
+    "seed": 20260815,
+    "technology": "WGBS",
+    "fragment_summary": false,
+    "warmup_fragments": 20000,
+    "workers": 1
+  }
+}

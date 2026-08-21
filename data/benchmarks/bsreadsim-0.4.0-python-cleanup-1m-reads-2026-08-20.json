@@ -1,0 +1,123 @@
+{
+  "schema": "bsreadsim-python-cleanup-benchmark-v1",
+  "date": "2026-08-20",
+  "version": "0.4.0",
+  "purpose": "Validate Python cleanup, installed-wheel behavior, output equivalence, and 1,000,000-read performance.",
+  "build": {
+    "wheel": "bsreadsim-0.4.0-cp312-cp312-linux_x86_64.whl",
+    "wheel_sha256": "fd03553d30fe3aa544a16e82c58a25b7d1fb25fb2ebcdbb0e41b556d9c9b127d",
+    "wheel_size_bytes": 2649538,
+    "build_wall_seconds": 25.90,
+    "build_peak_rss_kib": 61832,
+    "install_wall_seconds": 0.63,
+    "install_peak_rss_kib": 52852,
+    "packaged_core_version": "0.4.0"
+  },
+  "validation": {
+    "python_compileall": {
+      "status": "pass",
+      "wall_seconds": 0.71,
+      "peak_rss_kib": 16800
+    },
+    "ctest_release": {
+      "status": "pass",
+      "passed": 39,
+      "failed": 0,
+      "wall_seconds": 4.29
+    },
+    "python_tests_installed_native_extension": {
+      "status": "pass",
+      "passed": 231,
+      "failed": 0,
+      "wall_seconds": 3.17,
+      "peak_rss_kib": 58524
+    },
+    "static_python_audit": {
+      "source_files": 28,
+      "test_files": 34,
+      "unused_imports": 0,
+      "private_no_caller_candidates": 0,
+      "legacy_or_old_typing_hits": 0
+    },
+    "samtools": {
+      "version": "1.23",
+      "quickcheck": "pass",
+      "records": 1000000,
+      "missing_zt": 0,
+      "missing_zr": 0,
+      "missing_zf": 0,
+      "missing_zx": 0,
+      "fastq_records_processed": 1000000,
+      "fastq_discarded_singletons": 0,
+      "fastq_wall_seconds": 0.75,
+      "fastq_peak_rss_kib": 9184
+    },
+    "semantic_equivalence": {
+      "method": "SHA-256 over samtools view records after replacing only RG:Z run identifiers with a constant",
+      "baseline_normalized_record_sha256": "1e24b55debf03a3d47c1c8e50de4d45e5e20239a93b128253bfb65bfaaa2dcf0",
+      "cleanup_normalized_record_sha256": "1e24b55debf03a3d47c1c8e50de4d45e5e20239a93b128253bfb65bfaaa2dcf0",
+      "status": "pass"
+    }
+  },
+  "benchmark": {
+    "reference_sha256": "64321e9a6924e3ca99082111607969a0e17cb337a43548dbb46d561b0bdf0794",
+    "fragments": 500000,
+    "reads": 1000000,
+    "mode": "WGBS paired-end 150 bp",
+    "workers": 1,
+    "core_workers": 1,
+    "chunk_fragments": 4096,
+    "max_in_flight_fragments": 4096,
+    "seed": 20260815,
+    "methdb_seed": 0,
+    "warmup_fragments": 20000,
+    "output": "BAM with fragment summary and fragment realization",
+    "baseline": {
+      "wall_seconds": 30.928340669,
+      "reads_per_second": 32332.8047,
+      "peak_process_tree_pss_kib": 453366,
+      "peak_process_tree_rss_kib": 468184,
+      "bam_size_bytes": 190379380
+    },
+    "cleanup_normal_affinity": {
+      "wall_seconds": 31.508068779,
+      "reads_per_second": 31737.9020,
+      "peak_process_tree_pss_kib": 454181,
+      "peak_process_tree_rss_kib": 469040,
+      "bam_size_bytes": 190377988,
+      "bam_sha256": "995d39c7563f6549a3af419bcef98b055f324b6f5e738349979d0f204059e82c",
+      "methylation_sites": 80231805,
+      "template_bases": 199995854
+    },
+    "cleanup_single_cpu_lower_bound": {
+      "cpu": 0,
+      "wall_seconds": 47.483627147,
+      "reads_per_second": 21059.8907,
+      "peak_process_tree_pss_kib": 445449,
+      "peak_process_tree_rss_kib": 460332,
+      "bam_size_bytes": 190384876,
+      "bam_sha256": "836306ac1c997e288486e960919ee61350f918dcd47615d66013c1489ec5c85f"
+    },
+    "normal_affinity_delta_percent": {
+      "wall_seconds": 1.874,
+      "reads_per_second": -1.840,
+      "peak_process_tree_pss_kib": 0.180,
+      "peak_process_tree_rss_kib": 0.183,
+      "bam_size_bytes": -0.000731
+    },
+    "decision": "keep",
+    "decision_basis": "Output records are semantically identical, all validation gates pass, and the approximately 1.8 percent throughput variation is consistent with host run-to-run noise rather than a changed hot path."
+  },
+  "cleanup_scope": {
+    "removed_unused_imports": 18,
+    "moved_test_only_protocol_encoders": 3,
+    "removed_dead_production_methods": 1,
+    "narrow_cleanup_blocks_converted_to_contextlib_suppress": 10,
+    "retained_intentionally": [
+      "typed per-fragment APIs as public reference and plugin seams",
+      "batch APIs as the production throughput path",
+      "processing-worker payload encoding as an intentional performance boundary",
+      "semantic exception translation paths"
+    ]
+  }
+}

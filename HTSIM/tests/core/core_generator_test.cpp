@@ -58,7 +58,7 @@ void write_text(const std::string &path, const std::string &text)
 CoreConfig baseline_config(const TempFile &reference, const std::string &fasta)
 {
     CoreConfig config;
-    config.truth_columns = htsim::core::TruthColumnsMode::full;
+    config.emit_details = true;
     config.run_id = "00000000-0000-0000-0000-000000000001";
     config.normalized_config_sha256 = htsim::crypto::sha256(bytes_of("config"));
     config.master_seed = UINT64_C(0x123456789abcdef0);
@@ -191,7 +191,7 @@ void test_variable_wgbs_generation_and_capability_gate()
     profiled.coverage = htsim::core::CoverageMode::profile;
     profiled.coverage_profile_path = profile_file.path();
     profiled.coverage_profile_format = "tsv";
-    profiled.coverage_profile_version = "wgbs-gc-target-v1";
+    profiled.coverage_profile_version = "wgbs-gc-target-v2";
     profiled.coverage_profile_sha256 =
         htsim::crypto::sha256(bytes_of(profile));
     std::ostringstream profiled_stream(std::ios::binary);
@@ -335,20 +335,36 @@ void test_wgbs_depth_conversion_and_preflight_rejections()
         "chunk size changed depth-derived WGBS protocol output");
 
     config.depth = 0.01;
-    require_empty_failure(
-        [&](std::ostringstream &sink) {
-            (void)htsim::core::generate_core_stream(config, sink);
-        },
-        "depth-derived zero fragment count");
+    std::ostringstream minimum_depth(std::ios::binary);
+    const auto minimum_depth_trailer =
+        htsim::core::generate_core_stream(config, minimum_depth);
+    require(minimum_depth_trailer.fragment_count == 1U,
+            "positive WGBS depth did not ceil to one fragment");
 
     config.depth = 2.0;
     config.technology = htsim::core::Technology::rrbs;
     config.rrbs_cut_sites = {"|C"};
-    require_empty_failure(
-        [&](std::ostringstream &sink) {
-            (void)htsim::core::generate_core_stream(config, sink);
-        },
-        "RRBS depth input");
+    std::ostringstream rrbs_depth(std::ios::binary);
+    const auto rrbs_depth_trailer =
+        htsim::core::generate_core_stream(config, rrbs_depth);
+    require(rrbs_depth_trailer.fragment_count == 2U
+                && rrbs_depth_trailer.mate_count == 4U,
+            "RRBS depth did not use the eligible restriction-region denominator");
+
+    const std::string target_text = "chr1\t1\t7\tprobe\t1\t+\n";
+    TempFile targets;
+    write_text(targets.path(), target_text);
+    config.technology = htsim::core::Technology::tbs;
+    config.rrbs_cut_sites.clear();
+    config.tbs_bed_path = targets.path();
+    config.tbs_bed_sha256 = htsim::crypto::sha256(bytes_of(target_text));
+    config.tbs_center_stddev = 0.0;
+    std::ostringstream tbs_depth(std::ios::binary);
+    const auto tbs_depth_trailer =
+        htsim::core::generate_core_stream(config, tbs_depth);
+    require(tbs_depth_trailer.fragment_count == 2U
+                && tbs_depth_trailer.mate_count == 4U,
+            "TBS depth did not use the target-region union denominator");
 }
 
 void test_valid_wgbs_profile_generation_and_chunk_independence()
@@ -364,7 +380,7 @@ void test_valid_wgbs_profile_generation_and_chunk_independence()
     config.coverage = htsim::core::CoverageMode::profile;
     config.coverage_profile_path = profile.path();
     config.coverage_profile_format = "tsv";
-    config.coverage_profile_version = "wgbs-gc-target-v1";
+    config.coverage_profile_version = "wgbs-gc-target-v2";
     config.coverage_profile_sha256 =
         htsim::crypto::sha256(bytes_of(profile_text));
 
@@ -401,7 +417,7 @@ void test_valid_wgbs_profile_generation_and_chunk_independence()
             (void)htsim::core::generate_core_stream(config, sink);
         },
         "coverage profile version mismatch");
-    config.coverage_profile_version = "wgbs-gc-target-v1";
+    config.coverage_profile_version = "wgbs-gc-target-v2";
     config.technology = htsim::core::Technology::rrbs;
     config.rrbs_cut_sites = {"|C"};
     require_empty_failure(
@@ -501,7 +517,7 @@ void test_wgbs_vcf_deletions_and_preflight_rejections()
     config.coverage = htsim::core::CoverageMode::profile;
     config.coverage_profile_path = coverage_profile.path();
     config.coverage_profile_format = "tsv";
-    config.coverage_profile_version = "wgbs-gc-target-v1";
+    config.coverage_profile_version = "wgbs-gc-target-v2";
     config.coverage_profile_sha256 =
         htsim::crypto::sha256(bytes_of(all_one_profile));
     require_empty_failure(
@@ -568,14 +584,21 @@ void test_de_novo_mutation_generation_and_preflight_rejections()
     profiled.coverage = htsim::core::CoverageMode::profile;
     profiled.coverage_profile_path = coverage_profile.path();
     profiled.coverage_profile_format = "tsv";
-    profiled.coverage_profile_version = "wgbs-gc-target-v1";
+    profiled.coverage_profile_version = "wgbs-gc-target-v2";
     profiled.coverage_profile_sha256 =
         htsim::crypto::sha256(bytes_of(all_one_profile));
-    require_empty_failure(
-        [&](std::ostringstream &sink) {
-            (void)htsim::core::generate_core_stream(profiled, sink);
-        },
-        "target GC profile with de novo mutations");
+    std::ostringstream profiled_stream(std::ios::binary);
+    const auto profiled_trailer =
+        htsim::core::generate_core_stream(profiled, profiled_stream);
+    require(profiled_trailer.fragment_count == 7U
+                && profiled_trailer.mate_count == 14U,
+            "target GC profile lost de novo mutation fragment counts");
+    profiled.chunk_size = 2U;
+    std::ostringstream profiled_rechunked(std::ios::binary);
+    (void)htsim::core::generate_core_stream(
+        profiled, profiled_rechunked);
+    require(profiled_rechunked.str() == profiled_stream.str(),
+            "chunk size changed target GC de novo mutation output");
 
     const std::string empty_vcf = vcf_header();
     TempFile variants;

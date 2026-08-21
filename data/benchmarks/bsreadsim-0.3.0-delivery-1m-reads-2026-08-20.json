@@ -1,0 +1,193 @@
+{
+  "schema": "bsreadsim-delivery-benchmark-1",
+  "created_at_utc": "2026-08-20T23:05:37.455746+00:00",
+  "version": "0.3.0",
+  "decision": "accepted",
+  "workload": {
+    "technology": "WGBS",
+    "fragments": 500000,
+    "reads": 1000000,
+    "paired_end": true,
+    "read_length": 150,
+    "insert_min": 150,
+    "insert_mean": 400,
+    "insert_max": 1000,
+    "insert_stddev": 25,
+    "seed": "20260815",
+    "workers": 1,
+    "core_workers": 1,
+    "chunk_size": 4096,
+    "max_in_flight_fragments": 4096,
+    "gzip_level": 1,
+    "warmup_fragments": 20000,
+    "memory_sample_ms": 25
+  },
+  "artifacts": {
+    "reference": {
+      "size_bytes": 48750010,
+      "sha256": "e7a21813e1a17619cdee1b208d4ce9a23fab907d39831227469b48219c18604d"
+    },
+    "wheel": {
+      "filename": "bsreadsim-0.3.0-cp312-cp312-linux_x86_64.whl",
+      "size_bytes": 2621068,
+      "sha256": "25c7c0e2819b61ca463a3e0c7a6a69b642684e01f1e2ee45267e9496debafb8a"
+    },
+    "core": {
+      "version": "htsim-core 0.3.0",
+      "sha256": "0eb35aae54ad5eebe4d995433a39bd54754a64cf2d71784f96dd3afd2fa992c0",
+      "wheel_location": "bsreadsim/native/htsim-core"
+    },
+    "native_extension": {
+      "filename": "_native.cpython-312-x86_64-linux-gnu.so",
+      "sha256": "fc8b7c4dc28e8262adadaa79f584cd2d7de78deb103ed885670f8f9db1003377"
+    },
+    "rich_bam": {
+      "record_count": 1000000,
+      "role": "bam",
+      "sha256": "85caf05af601429ce39582389b179a24ab6fcfc4e9dfb19be72432c2694365f5",
+      "size_bytes": 117062274
+    }
+  },
+  "validation": {
+    "python_unittest": {
+      "passed": 230,
+      "failed": 0,
+      "wall_seconds": 2.35,
+      "peak_rss_kib": 58680
+    },
+    "ctest_release": {
+      "passed": 38,
+      "failed": 0,
+      "wall_seconds": 3.26
+    },
+    "wheel_build": {
+      "wall_seconds": 16.2,
+      "peak_rss_kib": 271624
+    },
+    "wheel_install": {
+      "wall_seconds": 0.55,
+      "peak_rss_kib": 52612
+    },
+    "benchmarked_runtime_identity": {
+      "delivery_core_matches_benchmark": true,
+      "delivery_native_extension_matches_benchmark": true,
+      "legacy_bin_directory_absent": true
+    },
+    "samtools": {
+      "version": "1.19.2",
+      "htslib_version": "1.19",
+      "quickcheck": "passed",
+      "decoded_records": 1000000,
+      "records_missing_zt_zr_zf": 0
+    },
+    "fragment_summary_semantics": {
+      "zf_matches_typed_reference": true,
+      "non_zf_columnar_sam_unchanged": true
+    }
+  },
+  "lanes": [
+    {
+      "key": "core_no_truth",
+      "scope": "native core only",
+      "output_policy": "protocol-none",
+      "wall_seconds": 14.19514397601597,
+      "reads": 1000000,
+      "reads_per_second": 70446.62609196454,
+      "fragments_per_second": 35223.31304598227,
+      "peak_pss_kib": 430237,
+      "peak_rss_kib": 443040,
+      "output_bytes": null,
+      "outputs": [],
+      "self_cpu_seconds": null,
+      "children_cpu_seconds": 14.194406
+    },
+    {
+      "key": "fastq_end_to_end",
+      "scope": "installed wheel end to end",
+      "output_policy": "fastq",
+      "wall_seconds": 19.04009418305941,
+      "reads": 1000000,
+      "reads_per_second": 52520.74860479065,
+      "fragments_per_second": 26260.374302395325,
+      "peak_pss_kib": 477356,
+      "peak_rss_kib": 492200,
+      "output_bytes": 46950137,
+      "outputs": [
+        {
+          "record_count": 500000,
+          "role": "read1",
+          "sha256": "a51d941aa5cb98fef70e610294a22cb019bdb4f62fb17df015358b952f0cfd2a",
+          "size_bytes": 23745530
+        },
+        {
+          "record_count": 500000,
+          "role": "read2",
+          "sha256": "be0f7bee6f121f90b666c9830f433f4978ec71473d5f51e874e4d6b5cb986d0e",
+          "size_bytes": 23204607
+        }
+      ],
+      "self_cpu_seconds": 15.371571000000001,
+      "children_cpu_seconds": 14.771631000000001
+    },
+    {
+      "key": "core_full_truth",
+      "scope": "native core only",
+      "output_policy": "protocol-full",
+      "wall_seconds": 18.148794237989932,
+      "reads": 1000000,
+      "reads_per_second": 55100.07920563404,
+      "fragments_per_second": 27550.03960281702,
+      "peak_pss_kib": 438390,
+      "peak_rss_kib": 451172,
+      "output_bytes": null,
+      "outputs": [],
+      "self_cpu_seconds": null,
+      "children_cpu_seconds": 18.146788000000004
+    },
+    {
+      "key": "rich_bam_end_to_end",
+      "scope": "installed wheel end to end",
+      "output_policy": "bam",
+      "wall_seconds": 29.48854733305052,
+      "reads": 1000000,
+      "reads_per_second": 33911.470399194885,
+      "fragments_per_second": 16955.735199597442,
+      "peak_pss_kib": 457874,
+      "peak_rss_kib": 472684,
+      "output_bytes": 117062274,
+      "outputs": [
+        {
+          "record_count": 1000000,
+          "role": "bam",
+          "sha256": "85caf05af601429ce39582389b179a24ab6fcfc4e9dfb19be72432c2694365f5",
+          "size_bytes": 117062274
+        }
+      ],
+      "self_cpu_seconds": 27.653619,
+      "children_cpu_seconds": 22.608193999999997
+    }
+  ],
+  "derived_deltas_seconds": {
+    "full_truth_columns_over_no_truth_core": 3.953650261973962,
+    "fastq_pipeline_over_no_truth_core": 4.844950207043439,
+    "rich_bam_pipeline_over_full_truth_core": 11.339753095060587
+  },
+  "rich_bam_optimization": {
+    "before": {
+      "wall_seconds": 348.5720012829406,
+      "reads_per_second": 2868.847745428315,
+      "peak_pss_kib": 390620,
+      "sha256": "1586211a73379cdfc15a4f074bbaecd2c2d17ff142444b8c6b78d25a9d3455a4"
+    },
+    "after": {
+      "wall_seconds": 29.48854733305052,
+      "reads_per_second": 33911.470399194885,
+      "peak_pss_kib": 457874,
+      "sha256": "85caf05af601429ce39582389b179a24ab6fcfc4e9dfb19be72432c2694365f5"
+    },
+    "throughput_speedup": 11.820589103494562,
+    "wall_time_reduction_fraction": 0.9154018474676219,
+    "implementation": "Compute the 12-field fragment summary in the common NumPy batch and append zf in the native SAM formatter; do not materialize typed fragments."
+  },
+  "interpretation": "Core-only and end-to-end lanes are separate measurements. Derived deltas are comparable-path differences, not direct per-stage timers."
+}

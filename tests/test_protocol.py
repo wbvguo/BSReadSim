@@ -12,7 +12,7 @@ import unittest
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY_ROOT / "src"))
 
-from bsreadsim.protocol import (  # noqa: E402
+from bsreadsim.native.protocol import (  # noqa: E402
     AmbiguityPolicy,
     BaseEncoding,
     CONFIG_SCHEMA_VERSION,
@@ -28,16 +28,14 @@ from bsreadsim.protocol import (  # noqa: E402
     NO_REFERENCE_POSITION,
     ProtocolError,
     ProtocolReader,
-    ProtocolWriter,
     RNG_CONTRACT,
     Technology,
-    TruthColumns,
-    TruthMode,
+    FragmentDetails,
+    VariantSourceCode,
     VariantKind,
-    encode_stream,
-    read_stream,
 )
-from bsreadsim.protocol import crc32c  # noqa: E402
+from stream_support import ProtocolWriter, encode_stream, read_stream  # noqa: E402
+from bsreadsim.native.protocol import crc32c  # noqa: E402
 
 
 PREAMBLE_SIZE = struct.calcsize("<8sHHI")
@@ -50,7 +48,7 @@ def frozen_fixture(name: str) -> bytes:
     return bytes.fromhex((FIXTURE_ROOT / (name + ".hex")).read_text(encoding="ascii"))
 
 
-def make_header(*, truth: bool) -> Header:
+def make_header(*, details: bool) -> Header:
     return Header(
         run_id="00000000-0000-4000-8000-000000000002",
         core_version="2.0.0-alpha.1",
@@ -59,7 +57,7 @@ def make_header(*, truth: bool) -> Header:
         master_seed=0x0123456789ABCDEF,
         normalized_config_sha256=hashlib.sha256(b"protocol-v2-config").digest(),
         technology=Technology.WGBS,
-        truth_columns=TruthMode.FULL if truth else TruthMode.NONE,
+        has_details=details,
         mates_per_fragment=1,
         base_encoding=BaseEncoding.ACGTN_U8,
         ambiguity_policy=AmbiguityPolicy.PRESERVE_N,
@@ -75,16 +73,16 @@ def make_header(*, truth: bool) -> Header:
     )
 
 
-def make_no_truth_batch() -> FragmentBatch:
+def make_no_annotation_batch() -> FragmentBatch:
     return FragmentBatch(
         first_fragment_ordinal=0,
         contig_indices=(0, 0),
-        reference_begins=(10, 20),
+        reference_starts=(10, 20),
         reference_ends=(14, 24),
         template_offsets=(0, 4, 8),
         mate_offsets=(0, 1, 2),
         site_offsets=(0, 1, 2),
-        mate_template_begins=(0, 1),
+        mate_template_starts=(0, 1),
         mate_template_ends=(3, 4),
         site_template_offsets=(1, 1),
         site_probabilities=(0.25, 0.75),
@@ -93,47 +91,54 @@ def make_no_truth_batch() -> FragmentBatch:
         mate_indices=(0, 0),
         mate_reverse_complements=(0, 0),
         site_contexts=(MethylationContext.CG_C, MethylationContext.CG_G),
-        site_sources=(MethylationSource.BETA, MethylationSource.CGMAP),
+        methylation_sources=(MethylationSource.BETA, MethylationSource.CGMAP),
         site_alleles=(
             MethylationAllele.SHARED,
             MethylationAllele.ALTERNATE_HAPLOTYPE,
         ),
         template_bases=(0, 1, 2, 3, 3, 2, 1, 0),
-        truth=None,
+        details=None,
     )
 
 
-def make_full_truth_batch() -> FragmentBatch:
-    truth = TruthColumns(
+def make_full_annotation_batch() -> FragmentBatch:
+    details = FragmentDetails(
         projection_offsets=(0, 1, 3, 5),
-        event_offsets=(0, 1, 2, 3),
+        variant_offsets=(0, 1, 2, 3),
         original_n_offsets=(0, 0, 0, 1),
-        projection_template_begins=(0, 0, 3, 0, 2),
+        projection_template_starts=(0, 0, 3, 0, 2),
         projection_template_ends=(4, 2, 5, 2, 3),
-        projection_reference_begins=(10, 20, 22, 30, 33),
-        event_ids=(1, 2, 3),
-        event_reference_begins=(11, 22, 32),
-        event_reference_ends=(12, 22, 33),
-        event_template_begins=(1, 2, 2),
-        event_template_ends=(2, 3, 2),
-        event_ref_offsets=(0, 1, 1, 2),
-        event_alt_offsets=(0, 1, 2, 2),
+        projection_reference_starts=(10, 20, 22, 30, 33),
+        variant_indices=(1, 2, 3),
+        variant_id_offsets=(0, 2, 4, 6),
+        variant_reference_starts=(11, 22, 32),
+        variant_reference_ends=(12, 22, 33),
+        variant_template_starts=(1, 2, 2),
+        variant_template_ends=(2, 3, 2),
+        variant_ref_offsets=(0, 1, 1, 2),
+        variant_alt_offsets=(0, 1, 2, 2),
         site_reference_positions=(12, 21, NO_REFERENCE_POSITION, 31),
         original_n_template_offsets=(0,),
-        event_kinds=(VariantKind.SNV, VariantKind.INSERTION, VariantKind.DELETION),
-        event_phased_haplotypes=(1, 1, 1),
-        event_ref_bases=(1, 2),
-        event_alt_bases=(3, 2),
+        variant_sources=(
+            VariantSourceCode.VCF,
+            VariantSourceCode.VCF,
+            VariantSourceCode.DE_NOVO,
+        ),
+        variant_kinds=(VariantKind.SNV, VariantKind.INSERTION, VariantKind.DELETION),
+        variant_phased_haplotypes=(1, 1, 1),
+        variant_ids=b"v1v2v3",
+        variant_ref_bases=(1, 2),
+        variant_alt_bases=(3, 2),
     )
     return FragmentBatch(
         first_fragment_ordinal=0,
         contig_indices=(0, 0, 0),
-        reference_begins=(10, 20, 30),
+        reference_starts=(10, 20, 30),
         reference_ends=(14, 24, 34),
         template_offsets=(0, 4, 9, 12),
         mate_offsets=(0, 1, 2, 3),
         site_offsets=(0, 1, 3, 4),
-        mate_template_begins=(0, 0, 0),
+        mate_template_starts=(0, 0, 0),
         mate_template_ends=(3, 3, 3),
         site_template_offsets=(2, 1, 2, 1),
         site_probabilities=(0.5, 0.25, 0.75, 1.0),
@@ -147,7 +152,7 @@ def make_full_truth_batch() -> FragmentBatch:
             MethylationContext.CG_G,
             MethylationContext.CG_C,
         ),
-        site_sources=(MethylationSource.BETA,) * 4,
+        methylation_sources=(MethylationSource.BETA,) * 4,
         site_alleles=(
             MethylationAllele.ALTERNATE_HAPLOTYPE,
             MethylationAllele.SHARED,
@@ -155,7 +160,7 @@ def make_full_truth_batch() -> FragmentBatch:
             MethylationAllele.SHARED,
         ),
         template_bases=(0, 3, 2, 3, 0, 1, 2, 3, 0, 4, 1, 3),
-        truth=truth,
+        details=details,
     )
 
 
@@ -163,12 +168,12 @@ def make_unequal_pe_batch() -> FragmentBatch:
     return FragmentBatch(
         first_fragment_ordinal=0,
         contig_indices=(0,),
-        reference_begins=(40,),
+        reference_starts=(40,),
         reference_ends=(45,),
         template_offsets=(0, 5),
         mate_offsets=(0, 2),
         site_offsets=(0, 0),
-        mate_template_begins=(0, 2),
+        mate_template_starts=(0, 2),
         mate_template_ends=(2, 5),
         site_template_offsets=(),
         site_probabilities=(),
@@ -177,10 +182,10 @@ def make_unequal_pe_batch() -> FragmentBatch:
         mate_indices=(0, 1),
         mate_reverse_complements=(0, 1),
         site_contexts=(),
-        site_sources=(),
+        methylation_sources=(),
         site_alleles=(),
         template_bases=(0, 1, 2, 3, 0),
-        truth=None,
+        details=None,
     )
 
 
@@ -213,10 +218,10 @@ class ProtocolRoundTripTests(unittest.TestCase):
     def test_crc_primitive_remains_castagnoli(self) -> None:
         self.assertEqual(crc32c(b"123456789"), 0xE3069283)
 
-    def test_no_truth_batch_round_trips_as_immutable_views(self) -> None:
-        header = make_header(truth=False)
+    def test_no_annotation_batch_round_trips_as_immutable_views(self) -> None:
+        header = make_header(details=False)
         encoded = encode_stream(
-            header, (make_no_truth_batch(),), skipped_fragment_count=7
+            header, (make_no_annotation_batch(),), skipped_fragment_count=7
         )
         decoded = read_stream(
             encoded,
@@ -229,35 +234,35 @@ class ProtocolRoundTripTests(unittest.TestCase):
         batch = decoded.batches[0]
         self.assertEqual(tuple(batch.template_offsets), (0, 4, 8))
         self.assertEqual(tuple(batch.template_bases), (0, 1, 2, 3, 3, 2, 1, 0))
-        self.assertIsNone(batch.truth)
+        self.assertIsNone(batch.details)
         self.assertTrue(batch.raw_payload.readonly)
         self.assertEqual(decoded.trailer.fragment_count, 2)
         self.assertEqual(decoded.trailer.fragment_batch_count, 1)
         self.assertEqual(decoded.trailer.per_contig_fragment_counts, (2,))
 
-    def test_full_truth_batch_covers_snv_insertion_deletion_and_n(self) -> None:
-        header = make_header(truth=True)
-        decoded = read_stream(encode_stream(header, (make_full_truth_batch(),)))
+    def test_full_annotation_batch_covers_snv_insertion_deletion_and_n(self) -> None:
+        header = make_header(details=True)
+        decoded = read_stream(encode_stream(header, (make_full_annotation_batch(),)))
         batch = decoded.batches[0]
-        self.assertIsNotNone(batch.truth)
-        truth = batch.truth
-        self.assertEqual(tuple(truth.event_kinds), (1, 2, 3))
+        self.assertIsNotNone(batch.details)
+        details = batch.details
+        self.assertEqual(tuple(details.variant_kinds), (1, 2, 3))
         self.assertEqual(
-            tuple(truth.site_reference_positions),
+            tuple(details.site_reference_positions),
             (12, 21, NO_REFERENCE_POSITION, 31),
         )
-        self.assertEqual(tuple(truth.original_n_template_offsets), (0,))
+        self.assertEqual(tuple(details.original_n_template_offsets), (0,))
         self.assertEqual(tuple(batch.site_probabilities), (0.5, 0.25, 0.75, 1.0))
-        self.assertTrue(truth.event_ids.raw.readonly)
+        self.assertTrue(details.variant_indices.raw.readonly)
 
     def test_header_only_stream_has_zero_batch_trailer(self) -> None:
-        decoded = read_stream(encode_stream(make_header(truth=False), ()))
+        decoded = read_stream(encode_stream(make_header(details=False), ()))
         self.assertEqual(decoded.batches, ())
         self.assertEqual(decoded.trailer.fragment_count, 0)
         self.assertEqual(decoded.trailer.fragment_batch_count, 0)
 
     def test_stream_digest_excludes_trailer(self) -> None:
-        encoded = encode_stream(make_header(truth=False), (make_no_truth_batch(),))
+        encoded = encode_stream(make_header(details=False), (make_no_annotation_batch(),))
         trailer_start = frame_bounds(encoded)[-1][0]
         decoded = read_stream(encoded)
         self.assertEqual(
@@ -267,7 +272,7 @@ class ProtocolRoundTripTests(unittest.TestCase):
 
     def test_header_carries_distinct_paired_end_read_lengths(self) -> None:
         header = replace(
-            make_header(truth=False),
+            make_header(details=False),
             mates_per_fragment=2,
             read_length_r1=2,
             read_length_r2=3,
@@ -279,7 +284,7 @@ class ProtocolRoundTripTests(unittest.TestCase):
     def test_error_frame_is_terminal_and_rejects_the_run(self) -> None:
         output = io.BytesIO()
         writer = ProtocolWriter(output)
-        writer.write_header(make_header(truth=False))
+        writer.write_header(make_header(details=False))
         writer.write_error(ErrorFrame(1204, "batch exceeds limit"))
         with self.assertRaisesRegex(CoreReportedError, "1204") as raised:
             read_stream(output.getvalue())
@@ -288,7 +293,7 @@ class ProtocolRoundTripTests(unittest.TestCase):
     def test_empty_error_diagnostic_is_valid_but_still_terminal(self) -> None:
         output = io.BytesIO()
         writer = ProtocolWriter(output)
-        writer.write_header(make_header(truth=False))
+        writer.write_header(make_header(details=False))
         writer.write_error(ErrorFrame(1, ""))
         with self.assertRaises(CoreReportedError) as raised:
             read_stream(output.getvalue())
@@ -300,19 +305,16 @@ class ProtocolGoldenFixtureTests(unittest.TestCase):
         expected = {
             "header-none": (
                 244,
-                "94dfd95954618c8b57b4b68e8ad63734af610514e9c169f16466293b8fbf28ea",
+                "5bd464816d26450bbb801661077047092716bfafa1e81d06e924c957c726e61e",
             ),
             "batch-none": (
                 156,
                 "57d85ec26bf7e7f92394a1b1847a6df99d127015c405c4f025d76bc9e6665ba4",
             ),
-            "batch-full": (
-                468,
-                "2618de26cdf85f69528e60ba100201989c963253bb7a301d57463b7d8691121c",
-            ),
+            "batch-full": (496, "7fca502060dae056c67a28d68225de2a23fb069b5212af74120137ea6eeca74c"),
             "trailer-none": (
                 112,
-                "2a94417307f8acc1c4546e82cdba61afeb9ac5db552d68b89f01b8a2c910e32c",
+                "8065c6bdcc203aeb450b913d3dd1fbbeaa981d4722ea8f8b3cb4486deb5b337f",
             ),
             "error": (
                 48,
@@ -326,27 +328,27 @@ class ProtocolGoldenFixtureTests(unittest.TestCase):
                 self.assertEqual(hashlib.sha256(fixture).hexdigest(), digest)
 
     def test_reference_encoder_matches_every_frozen_frame(self) -> None:
-        no_truth_stream = encode_stream(
-            make_header(truth=False),
-            (make_no_truth_batch(),),
+        without_annotations_stream = encode_stream(
+            make_header(details=False),
+            (make_no_annotation_batch(),),
             skipped_fragment_count=7,
         )
-        no_truth_bounds = frame_bounds(no_truth_stream)
+        without_annotations_bounds = frame_bounds(without_annotations_stream)
         self.assertEqual(
-            no_truth_stream[: no_truth_bounds[0][3]],
+            without_annotations_stream[: without_annotations_bounds[0][3]],
             frozen_fixture("header-none"),
         )
         self.assertEqual(
-            no_truth_stream[no_truth_bounds[1][0] : no_truth_bounds[1][3]],
+            without_annotations_stream[without_annotations_bounds[1][0] : without_annotations_bounds[1][3]],
             frozen_fixture("batch-none"),
         )
         self.assertEqual(
-            no_truth_stream[no_truth_bounds[2][0] : no_truth_bounds[2][3]],
+            without_annotations_stream[without_annotations_bounds[2][0] : without_annotations_bounds[2][3]],
             frozen_fixture("trailer-none"),
         )
 
         full_stream = encode_stream(
-            make_header(truth=True), (make_full_truth_batch(),)
+            make_header(details=True), (make_full_annotation_batch(),)
         )
         full_bounds = frame_bounds(full_stream)
         self.assertEqual(
@@ -356,7 +358,7 @@ class ProtocolGoldenFixtureTests(unittest.TestCase):
 
         error_output = io.BytesIO()
         error_writer = ProtocolWriter(error_output)
-        error_writer.write_header(make_header(truth=False))
+        error_writer.write_header(make_header(details=False))
         error_writer.write_error(ErrorFrame(1204, "batch exceeds limit"))
         error_stream = error_output.getvalue()
         error_bounds = frame_bounds(error_stream)
@@ -368,7 +370,7 @@ class ProtocolGoldenFixtureTests(unittest.TestCase):
     def test_frozen_envelopes_have_checked_lengths_types_sequences_and_crc(self) -> None:
         expected = {
             "batch-none": (136, 2, 0, 1, 156),
-            "batch-full": (448, 2, 1, 1, 468),
+            "batch-full": (476, 2, 1, 1, 496),
             "trailer-none": (92, 3, 0, 2, 112),
             "error": (28, 255, 0, 1, 48),
         }
@@ -389,14 +391,14 @@ class ProtocolGoldenFixtureTests(unittest.TestCase):
                     crc32c(fixture[:payload_end]),
                 )
 
-    def test_frozen_no_truth_stream_decodes_and_authenticates(self) -> None:
+    def test_frozen_no_annotation_stream_decodes_and_authenticates(self) -> None:
         encoded = b"".join(
             frozen_fixture(name)
             for name in ("header-none", "batch-none", "trailer-none")
         )
         decoded = read_stream(
             encoded,
-            expected_header=make_header(truth=False),
+            expected_header=make_header(details=False),
             expected_skipped_fragment_count=7,
         )
         self.assertEqual(decoded.trailer.fragment_count, 2)
@@ -405,13 +407,13 @@ class ProtocolGoldenFixtureTests(unittest.TestCase):
 
 class ProtocolSemanticTests(unittest.TestCase):
     def assert_batch_rejected(
-        self, batch: FragmentBatch, pattern: str, *, truth: bool
+        self, batch: FragmentBatch, pattern: str, *, details: bool
     ) -> None:
         with self.assertRaisesRegex(ProtocolError, pattern):
-            encode_stream(make_header(truth=truth), (batch,))
+            encode_stream(make_header(details=details), (batch,))
 
     def test_common_prefix_and_context_are_strict(self) -> None:
-        batch = make_no_truth_batch()
+        batch = make_no_annotation_batch()
         cases = (
             (replace(batch, template_offsets=(1, 4, 8)), "begin at zero"),
             (replace(batch, mate_offsets=(0, 2, 2)), "mate count"),
@@ -427,88 +429,88 @@ class ProtocolSemanticTests(unittest.TestCase):
         )
         for invalid, pattern in cases:
             with self.subTest(pattern=pattern):
-                self.assert_batch_rejected(invalid, pattern, truth=False)
+                self.assert_batch_rejected(invalid, pattern, details=False)
 
     def test_projection_runs_must_be_maximal(self) -> None:
-        batch = make_full_truth_batch()
-        truth = batch.truth
+        batch = make_full_annotation_batch()
+        details = batch.details
         split = replace(
-            truth,
+            details,
             projection_offsets=(0, 2, 4, 6),
-            projection_template_begins=(0, 2, 0, 3, 0, 2),
+            projection_template_starts=(0, 2, 0, 3, 0, 2),
             projection_template_ends=(2, 4, 2, 5, 2, 3),
-            projection_reference_begins=(10, 12, 20, 22, 30, 33),
+            projection_reference_starts=(10, 12, 20, 22, 30, 33),
         )
         self.assert_batch_rejected(
-            replace(batch, truth=split), "not maximal", truth=True
+            replace(batch, details=split), "not maximal", details=True
         )
 
-    def test_sparse_truth_cover_and_event_shapes_fail_closed(self) -> None:
-        batch = make_full_truth_batch()
-        truth = batch.truth
+    def test_sparse_annotation_cover_and_event_shapes_fail_closed(self) -> None:
+        batch = make_full_annotation_batch()
+        details = batch.details
         cases = (
             (
-                replace(truth, projection_template_ends=(4, 3, 5, 2, 3)),
+                replace(details, projection_template_ends=(4, 3, 5, 2, 3)),
                 "projection|insertion|cover",
             ),
             (
-                replace(truth, event_alt_offsets=(0, 1, 1, 2)),
+                replace(details, variant_alt_offsets=(0, 1, 1, 2)),
                 "ALT bases disagree",
             ),
             (
                 replace(
-                    truth,
-                    event_offsets=(0, 2, 2, 3),
-                    event_ids=(2, 1, 3),
+                    details,
+                    variant_offsets=(0, 2, 2, 3),
+                    variant_indices=(2, 1, 3),
                 ),
                 "strictly increasing",
             ),
             (
-                replace(truth, site_reference_positions=(12, 21, 22, 31)),
+                replace(details, site_reference_positions=(12, 21, 22, 31)),
                 "site reference position",
             ),
             (
                 replace(
-                    truth,
-                    event_reference_begins=(11, 21, 32),
-                    event_reference_ends=(12, 21, 33),
+                    details,
+                    variant_reference_starts=(11, 21, 32),
+                    variant_reference_ends=(12, 21, 33),
                 ),
                 "insertion anchor",
             ),
             (
                 replace(
-                    truth,
-                    event_reference_begins=(11, 22, 31),
-                    event_reference_ends=(12, 22, 32),
+                    details,
+                    variant_reference_starts=(11, 22, 31),
+                    variant_reference_ends=(12, 22, 32),
                 ),
                 "deletion boundary",
             ),
             (
-                replace(truth, original_n_offsets=(0, 0, 0, 0)),
+                replace(details, original_n_offsets=(0, 0, 0, 0)),
                 "original_n_offsets|PRESERVE_N provenance",
             ),
         )
-        for invalid_truth, pattern in cases:
+        for invalid_annotations, pattern in cases:
             with self.subTest(pattern=pattern):
                 self.assert_batch_rejected(
-                    replace(batch, truth=invalid_truth), pattern, truth=True
+                    replace(batch, details=invalid_annotations), pattern, details=True
                 )
 
-    def test_truth_policy_is_stream_wide(self) -> None:
+    def test_annotation_policy_is_stream_wide(self) -> None:
         self.assert_batch_rejected(
-            replace(make_no_truth_batch(), truth=make_full_truth_batch().truth),
+            replace(make_no_annotation_batch(), details=make_full_annotation_batch().details),
             "forbids",
-            truth=False,
+            details=False,
         )
         self.assert_batch_rejected(
-            replace(make_full_truth_batch(), truth=None), "requires", truth=True
+            replace(make_full_annotation_batch(), details=None), "requires", details=True
         )
 
     def test_writer_is_poisoned_after_a_component_failure(self) -> None:
         output = io.BytesIO()
         writer = ProtocolWriter(output)
-        writer.write_header(make_header(truth=False))
-        invalid = replace(make_no_truth_batch(), first_fragment_ordinal=1)
+        writer.write_header(make_header(details=False))
+        invalid = replace(make_no_annotation_batch(), first_fragment_ordinal=1)
         with self.assertRaisesRegex(ProtocolError, "ordinal"):
             writer.write_batch(invalid)
         with self.assertRaisesRegex(ProtocolError, "poisoned"):
@@ -518,7 +520,7 @@ class ProtocolSemanticTests(unittest.TestCase):
 class ProtocolCorruptionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.encoded = encode_stream(
-            make_header(truth=False), (make_no_truth_batch(),)
+            make_header(details=False), (make_no_annotation_batch(),)
         )
 
     def assert_rejected(self, stream: bytes, pattern: str) -> None:
@@ -539,7 +541,7 @@ class ProtocolCorruptionTests(unittest.TestCase):
                 start + 5, 0x80
             ),
         )
-        self.assert_rejected(corrupted, "unknown flags|truth flag")
+        self.assert_rejected(corrupted, "unknown flags|details flag")
 
     def test_valid_crc_cannot_hide_an_invalid_prefix(self) -> None:
         def mutate(data, _start, payload_start, _payload_end):
@@ -604,7 +606,7 @@ class ProtocolCorruptionTests(unittest.TestCase):
             read_stream(self.encoded, core_exit_status=status)
 
     def test_header_projection_mismatch_is_fatal(self) -> None:
-        expected = replace(make_header(truth=False), master_seed=7)
+        expected = replace(make_header(details=False), master_seed=7)
         self.assert_rejected_expected_header(expected)
 
     def assert_rejected_expected_header(self, header: Header) -> None:
