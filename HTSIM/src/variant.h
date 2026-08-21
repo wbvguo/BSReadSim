@@ -25,7 +25,7 @@ public:
 // One normalized, biallelic event in original-reference coordinates. REF and
 // ALT have already had their common prefix and suffix removed. Insertions use
 // a zero-width interval and empty REF; deletions use empty ALT.
-struct Event {
+struct Variant {
     std::uint32_t contig_index = 0;
     std::uint32_t reference_start = 0;
     std::uint32_t reference_end = 0;
@@ -34,6 +34,8 @@ struct Event {
     model::Bases alt_bases;
     model::HaplotypeMask alt_haplotypes =
         model::HaplotypeMask::both;
+    std::string id;
+    model::VariantSource source = model::VariantSource::vcf;
 };
 
 // Verified text VCF snapshot projected into reference order. The frozen v1
@@ -48,34 +50,34 @@ public:
         const std::vector<reference::ContigMetadata> &reference_catalog,
         std::uint64_t master_seed);
 
-    const std::vector<Event> &events(std::uint32_t contig_index) const;
-    std::uint64_t event_count() const noexcept;
+    const std::vector<Variant> &variants(std::uint32_t contig_index) const;
+    std::uint64_t variant_count() const noexcept;
     const crypto::Sha256Digest &file_sha256() const noexcept;
 
 private:
     crypto::Sha256Digest file_sha256_ = {};
-    std::vector<std::vector<Event>> events_by_contig_;
-    std::uint64_t event_count_ = 0;
+    std::vector<std::vector<Variant>> variants_by_contig_;
+    std::uint64_t variant_count_ = 0;
 };
 
 // Per-contig reference validation boundary. Construction verifies canonical
 // order, non-overlap, contig identity, and exact REF bases against the opened
-// reference snapshot. This component retains only typed events.
+// reference snapshot. This component retains only typed variants.
 class ContigVariants {
 public:
     ContigVariants(
         const model::Bases &reference_bases,
-        const std::vector<Event> &events,
+        const std::vector<Variant> &variants,
         std::uint32_t contig_index);
 
-    const std::vector<Event> &events() const noexcept;
+    const std::vector<Variant> &variants() const noexcept;
     std::uint32_t contig_index() const noexcept;
     std::uint32_t reference_length() const noexcept;
 
 private:
     std::uint32_t contig_index_ = 0;
     std::uint32_t reference_length_ = 0;
-    std::vector<Event> events_;
+    std::vector<Variant> variants_;
 };
 
 } // namespace htsim::variant
@@ -115,8 +117,8 @@ struct ProjectedInterval {
     std::uint32_t reference_end = 0;
     model::Bases template_bases;
     std::vector<std::int64_t> reference_positions;
-    std::vector<std::uint32_t> base_event_ids;
-    std::vector<model::VariantEvent> variant_events;
+    std::vector<std::uint32_t> base_variant_indices;
+    std::vector<model::Variant> variants;
 };
 
 // Insertions are anchored at a reference boundary.  A haplotype-coordinate
@@ -130,7 +132,7 @@ struct ProjectionBoundaryPolicy {
     bool include_end_anchor_insertion = false;
 };
 
-// Apply only events whose HaplotypeMask contains zero_based_haplotype. An
+// Apply only variants whose HaplotypeMask contains zero_based_haplotype. An
 // interval that cuts through an active deletion is rejected; callers must not
 // silently truncate a deletion at a fragment boundary.
 ProjectedInterval project_interval(
@@ -208,12 +210,12 @@ public:
     // any representable physical window of this length.  Per-base protocol
     // arrays are deliberately excluded because their cost is already bounded
     // by the physical template length.
-    std::uint64_t maximum_variant_event_payload_bytes(
+    std::uint64_t maximum_variant_payload_bytes(
         const variant::ContigVariants &variants,
         std::uint32_t physical_span) const;
 
     // Project one non-empty physical haplotype slice back to typed reference
-    // truth.  A slice boundary inside an insertion fails closed.
+    // details.  A slice boundary inside an insertion fails closed.
     ProjectedInterval project(
         const reference::Contig &contig,
         const variant::ContigVariants &variants,
@@ -248,7 +250,7 @@ private:
         std::uint32_t begin,
         std::uint32_t end);
     void append_alternate_run(
-        const variant::Event &event,
+        const variant::Variant &event,
         std::uint32_t reference_begin);
     FragmentBoundary &upsert_exception(
         std::uint32_t haplotype_offset,
@@ -290,7 +292,7 @@ struct MutationParameters {
 // contig. Reference coordinates and per-contig event ordinals remain uint32;
 // RNG entities widen the reference coordinate to uint64 without packing it
 // together with another field.
-std::vector<Event> generate_de_novo_events(
+std::vector<Variant> generate_de_novo_events(
     const reference::Contig &contig,
     std::uint64_t master_seed,
     const MutationParameters &parameters);

@@ -95,7 +95,9 @@ class BuildPythonWithCore(build_py):
             raise CompileError(
                 "CMake did not install the expected core: {}".format(built_core)
             )
-        package_core = Path(self.build_lib) / "bsreadsim" / "_bin" / CORE_FILENAME
+        package_core = (
+            Path(self.build_lib) / "bsreadsim" / "native" / CORE_FILENAME
+        )
         package_core.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(str(built_core), str(package_core))
         if os.name != "nt":
@@ -185,7 +187,7 @@ setup(
             sources=[
                 "src/bsreadsim/_native.c",
                 "src/bsreadsim/_protocol_validate.c",
-                "src/bsreadsim/_truth_native.c",
+                "src/bsreadsim/_sam_native.c",
             ],
         )
     ],

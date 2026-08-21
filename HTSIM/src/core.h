@@ -32,24 +32,19 @@ enum class CoverageMode {
     target_score,
 };
 
-enum class TruthColumnsMode : std::uint8_t {
-    none = 0,
-    full = 1,
-};
-
 struct BetaShape {
     double alpha = 0.0;
     double beta = 0.0;
 };
 
 struct CoreConfig {
-    // Execution-format controls are deliberately outside the normalized
-    // scientific configuration. Production omits Truth; debug requests it.
-    TruthColumnsMode truth_columns = TruthColumnsMode::none;
+    // Transport details are execution metadata, not scientific configuration.
+    bool emit_details = false;
     std::uint32_t protocol_batch_fragments = 64;
     std::string run_id;
     crypto::Sha256Digest normalized_config_sha256 = {};
     std::uint64_t master_seed = 0;
+    std::uint64_t catalog_seed = 0;
     std::string reference_path;
     crypto::Sha256Digest reference_sha256 = {};
     std::optional<std::string> vcf_path;
@@ -58,6 +53,8 @@ struct CoreConfig {
     std::optional<crypto::Sha256Digest> cgmap_sha256;
     std::optional<std::string> bed_methyl_path;
     std::optional<crypto::Sha256Digest> bed_methyl_sha256;
+    std::optional<std::string> methdb_path;
+    std::optional<crypto::Sha256Digest> methdb_sha256;
     std::optional<std::string> asm_path;
     std::optional<crypto::Sha256Digest> asm_sha256;
     std::optional<std::string> asm_bed_path;
@@ -115,15 +112,14 @@ CoreConfig parse_core_config(int argc, char *argv[]);
 
 namespace htsim::core {
 
-inline constexpr const char core_version[] = "0.3.0";
+inline constexpr const char core_version[] = "0.4.0";
 
 class CoreGeneratorError : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
 };
 
-// Run the generator and write the columnar protocol bytes to sink. No-Truth is
-// the production default; debug requests the optional Full Truth columns.
+// Run the generator and write the columnar protocol bytes to sink.
 // All capability, reference, planning, allocation, and header-size checks run
 // before the protocol Writer is constructed, so those failures leave sink at
 // zero bytes. A failure during record emission leaves a truncated stream that
@@ -136,6 +132,12 @@ protocol::Trailer generate_core_stream(
 // This is the first half of the external-model exchange workflow and emits no
 // binary protocol frames.
 void generate_rrbs_candidate_bed(
+    const CoreConfig &config,
+    std::ostream &sink);
+
+// Serialize the exact normalized methylation probability catalog. The
+// snapshot is independent of fragment/state/conversion/sequencing draws.
+void generate_methdb_catalog(
     const CoreConfig &config,
     std::ostream &sink);
 

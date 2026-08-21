@@ -27,7 +27,7 @@ using htsim::model::Bases;
 using htsim::model::VariantKind;
 using htsim::reference::Contig;
 using htsim::variant::ContigVariants;
-using htsim::variant::Event;
+using htsim::variant::Variant;
 
 void require(bool condition, const std::string &message)
 {
@@ -96,7 +96,7 @@ void require_common_fragment_equal(
                 && left_site.template_offset == right_site.template_offset
                 && left_site.reference_pos == right_site.reference_pos
                 && left_site.context == right_site.context
-                && left_site.source == right_site.source
+                && left_site.methylation_source == right_site.methylation_source
                 && left_site.allele == right_site.allele
                 && left_site.methylation_probability
                     == right_site.methylation_probability,
@@ -115,19 +115,19 @@ void require_common_fragment_equal(
     }
 }
 
-void require_compact_truth_state_empty(
+void require_compact_annotation_state_empty(
     const htsim::model::Fragment &fragment)
 {
     require(
         fragment.reference_positions.empty()
-            && fragment.base_event_ids.empty()
-            && fragment.variant_events.empty(),
-        "compact construction retained projection truth state");
+            && fragment.base_variant_indices.empty()
+            && fragment.variants.empty(),
+        "compact construction retained projection details state");
     for (const auto &mate : fragment.mates) {
         require(
             mate.reference_start == 0U && mate.reference_end == 0U
                 && mate.site_refs.empty(),
-            "compact construction retained mate truth state");
+            "compact construction retained mate details state");
     }
 }
 
@@ -159,11 +159,11 @@ void test_paired_fragment_and_overlap_projection()
     require(fragment.reference_positions
                 == std::vector<std::int64_t>({1, 2, 3, 4, 5, 6}),
             "reference positions are wrong");
-    require(fragment.base_event_ids.size() == 6
-                && fragment.variant_events.empty(),
+    require(fragment.base_variant_indices.size() == 6
+                && fragment.variants.empty(),
             "variant-free baseline emitted an event");
-    for (const auto event_id : fragment.base_event_ids) {
-        require(event_id == htsim::model::no_variant_event,
+    for (const auto variant_index : fragment.base_variant_indices) {
+        require(variant_index == htsim::model::no_variant_index,
                 "variant-free base has an event id");
     }
     require(fragment.mates.size() == 2,
@@ -254,9 +254,9 @@ void test_common_columns_fragment_detail()
             reference_layout,
             FragmentDetail::common_columns);
     require_common_fragment_equal(full_reference, compact_reference);
-    require_compact_truth_state_empty(compact_reference);
+    require_compact_annotation_state_empty(compact_reference);
 
-    const std::vector<Event> events = {
+    const std::vector<Variant> events = {
         {0U, 3U, 4U, VariantKind::snv, encode("G"), encode("A"),
          htsim::model::HaplotypeMask::haplotype_1},
         {0U, 6U, 6U, VariantKind::insertion, {}, encode("CG"),
@@ -284,15 +284,15 @@ void test_common_columns_fragment_detail()
             projected_layout,
             FragmentDetail::common_columns);
     require_common_fragment_equal(full_projected, compact_projected);
-    require_compact_truth_state_empty(compact_projected);
-    require(!full_projected.variant_events.empty(),
-            "variant fixture did not exercise discarded event truth");
+    require_compact_annotation_state_empty(compact_projected);
+    require(!full_projected.variants.empty(),
+            "variant fixture did not exercise discarded event details");
 }
 
 void test_variant_projected_fragment_boundary()
 {
     const Contig contig = contig_for("AACGTAACGTT");
-    const std::vector<Event> events = {
+    const std::vector<Variant> events = {
         {0U, 3U, 4U, VariantKind::snv, encode("G"), encode("A"),
          htsim::model::HaplotypeMask::haplotype_1},
         {0U, 6U, 6U, VariantKind::insertion, {}, encode("CG"),
@@ -322,7 +322,7 @@ void test_variant_projected_fragment_boundary()
                 && fragment.reference_start == 1U
                 && fragment.reference_end == 10U
                 && fragment.template_bases == encode("ACATACGACGT")
-                && fragment.variant_events.size() == 2U,
+                && fragment.variants.size() == 2U,
             "variant projection was not transferred into the fragment");
     require(fragment.mates.size() == 2U
                 && fragment.mates[0].template_start == 0U
@@ -361,7 +361,7 @@ void test_variant_projected_fragment_boundary()
 void test_haplotype_coordinate_insert_length()
 {
     const Contig contig = contig_for("AACGTAACGTT");
-    const std::vector<Event> events = {
+    const std::vector<Variant> events = {
         {0U, 6U, 6U, VariantKind::insertion, {}, encode("CG"),
          htsim::model::HaplotypeMask::haplotype_1},
     };
@@ -405,7 +405,7 @@ void test_haplotype_coordinate_insert_length()
 void test_insertion_only_mate_envelope()
 {
     const Contig contig = contig_for("A");
-    const std::vector<Event> events = {
+    const std::vector<Variant> events = {
         {0U, 0U, 1U, VariantKind::deletion, encode("A"), {},
          htsim::model::HaplotypeMask::both},
         {0U, 1U, 1U, VariantKind::insertion, {}, encode("C"),
@@ -432,7 +432,7 @@ void test_insertion_only_mate_envelope()
 void test_invalid_projected_inputs_fail_closed()
 {
     const Contig contig = contig_for("AACGTAACGTT");
-    const std::vector<Event> events = {
+    const std::vector<Variant> events = {
         {0U, 3U, 4U, VariantKind::snv, encode("G"), encode("A"),
          htsim::model::HaplotypeMask::haplotype_1},
     };
@@ -467,14 +467,14 @@ void test_invalid_projected_inputs_fail_closed()
 
     auto missing_event_base = good;
     const auto changed = std::find_if(
-        missing_event_base.base_event_ids.begin(),
-        missing_event_base.base_event_ids.end(),
-        [](std::uint32_t event_id) {
-            return event_id != htsim::model::no_variant_event;
+        missing_event_base.base_variant_indices.begin(),
+        missing_event_base.base_variant_indices.end(),
+        [](std::uint32_t variant_index) {
+            return variant_index != htsim::model::no_variant_index;
         });
-    require(changed != missing_event_base.base_event_ids.end(),
+    require(changed != missing_event_base.base_variant_indices.end(),
             "invalid projection fixture has no changed base");
-    *changed = htsim::model::no_variant_event;
+    *changed = htsim::model::no_variant_index;
     require_error(
         [&] {
             (void)htsim::fragment_builder::maximum_payload_bytes(

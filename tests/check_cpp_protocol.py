@@ -4,7 +4,8 @@ from pathlib import Path
 import subprocess
 import sys
 
-from bsreadsim.protocol import CoreReportedError, read_stream
+from bsreadsim.native.protocol import CoreReportedError
+from stream_support import read_stream
 
 
 PREAMBLE_SIZE = 16
@@ -54,7 +55,7 @@ def main(argv):
         for name in ("header-none", "batch-none", "trailer-none")
     )
     if none != expected_none:
-        raise SystemExit("C++ no-Truth stream differs from frozen Python bytes")
+        raise SystemExit("C++ no-Details stream differs from frozen Python bytes")
     if error != fixture(fixture_root, "header-none") + fixture(
         fixture_root, "error"
     ):
@@ -62,10 +63,10 @@ def main(argv):
 
     full_frames = frame_bounds(full)
     if len(full_frames) != 3:
-        raise SystemExit("C++ Full-Truth stream has the wrong frame count")
+        raise SystemExit("C++ Full-Details stream has the wrong frame count")
     batch_start, _, _, batch_end = full_frames[1]
     if full[batch_start:batch_end] != fixture(fixture_root, "batch-full"):
-        raise SystemExit("C++ Full-Truth batch differs from frozen Python bytes")
+        raise SystemExit("C++ Full-Details batch differs from frozen Python bytes")
 
     decoded_none = read_stream(
         none,
@@ -77,11 +78,11 @@ def main(argv):
         or tuple(decoded_none.batches[0].template_offsets) != (0, 4, 8)
         or not decoded_none.batches[0].raw_payload.readonly
     ):
-        raise SystemExit("Python decoded incorrect C++ no-Truth values")
+        raise SystemExit("Python decoded incorrect C++ no-Details values")
     decoded_full = read_stream(full)
-    truth = decoded_full.batches[0].truth
-    if truth is None or tuple(truth.event_kinds) != (1, 2, 3):
-        raise SystemExit("Python decoded incorrect C++ Full-Truth events")
+    details = decoded_full.batches[0].details
+    if details is None or tuple(details.variant_kinds) != (1, 2, 3):
+        raise SystemExit("Python decoded incorrect C++ Full-Details events")
     try:
         read_stream(error)
     except CoreReportedError as reported:

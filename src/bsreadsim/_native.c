@@ -19,11 +19,12 @@ static uint32_t crc32c_tables[8][256];
 
 
 PyObject *fragment_type;
-PyObject *variant_event_type;
+PyObject *variant_type;
 PyObject *methylation_site_type;
 PyObject *site_reference_type;
 PyObject *mate_type;
 PyObject *capture_strands[3];
+PyObject *variant_sources[3];
 PyObject *variant_kinds[4];
 PyObject *methylation_contexts[16];
 PyObject *methylation_sources[5];
@@ -41,7 +42,8 @@ static const unsigned char alternative_bases[4][3] = {
 };
 
 
-PyObject *bsreadsim_native_truth_json_bytes(PyObject *self, PyObject *args);
+PyObject *bsreadsim_native_format_sam_batch(PyObject *self, PyObject *args);
+PyObject *bsreadsim_native_format_sam_columns(PyObject *self, PyObject *args);
 PyObject *bsreadsim_native_validate_protocol_batch_columns(
     PyObject *self,
     PyObject *args
@@ -493,7 +495,7 @@ get_required_attribute(PyObject *owner, const char *name)
     if (value == NULL) {
         PyErr_Format(
             PyExc_RuntimeError,
-            "native adapter could not resolve bsreadsim.model.%s",
+            "native adapter could not resolve bsreadsim.process.batch.%s",
             name
         );
     }
@@ -520,6 +522,7 @@ initialize_protocol_types(void)
 {
     PyObject *module = NULL;
     PyObject *capture_type = NULL;
+    PyObject *variant_source_type = NULL;
     PyObject *variant_kind_type = NULL;
     PyObject *context_type = NULL;
     PyObject *source_type = NULL;
@@ -530,27 +533,29 @@ initialize_protocol_types(void)
     if (protocol_types_initialized) {
         return 1;
     }
-    module = PyImport_ImportModule("bsreadsim.model");
+    module = PyImport_ImportModule("bsreadsim.process.batch");
     if (module == NULL) {
         return 0;
     }
     fragment_type = get_required_attribute(module, "Fragment");
-    variant_event_type = get_required_attribute(module, "VariantEvent");
+    variant_type = get_required_attribute(module, "Variant");
     methylation_site_type = get_required_attribute(module, "MethylationSite");
     site_reference_type = get_required_attribute(module, "SiteReference");
     mate_type = get_required_attribute(module, "Mate");
     capture_type = get_required_attribute(module, "CaptureStrand");
+    variant_source_type = get_required_attribute(module, "VariantSource");
     variant_kind_type = get_required_attribute(module, "VariantKind");
     context_type = get_required_attribute(module, "MethylationContext");
     source_type = get_required_attribute(module, "MethylationSource");
     allele_type = get_required_attribute(module, "MethylationAllele");
     if (
         fragment_type == NULL
-        || variant_event_type == NULL
+        || variant_type == NULL
         || methylation_site_type == NULL
         || site_reference_type == NULL
         || mate_type == NULL
         || capture_type == NULL
+        || variant_source_type == NULL
         || variant_kind_type == NULL
         || context_type == NULL
         || source_type == NULL
@@ -563,6 +568,11 @@ initialize_protocol_types(void)
         if (capture_strands[index] == NULL) {
             goto fail;
         }
+    }
+    variant_sources[1] = get_required_attribute(variant_source_type, "VCF");
+    variant_sources[2] = get_required_attribute(variant_source_type, "DE_NOVO");
+    if (variant_sources[1] == NULL || variant_sources[2] == NULL) {
+        goto fail;
     }
     for (index = 1; index <= 3; ++index) {
         variant_kinds[index] = make_enum_value(variant_kind_type, index);
@@ -593,6 +603,7 @@ initialize_protocol_types(void)
     Py_DECREF(source_type);
     Py_DECREF(context_type);
     Py_DECREF(variant_kind_type);
+    Py_DECREF(variant_source_type);
     Py_DECREF(capture_type);
     Py_DECREF(module);
     protocol_types_initialized = 1;
@@ -603,6 +614,7 @@ fail:
     Py_XDECREF(source_type);
     Py_XDECREF(context_type);
     Py_XDECREF(variant_kind_type);
+    Py_XDECREF(variant_source_type);
     Py_XDECREF(capture_type);
     Py_DECREF(module);
     return 0;
@@ -699,6 +711,18 @@ u64_decimal_length(uint64_t value)
 }
 
 
+static Py_ssize_t
+u64_hex_length(uint64_t value)
+{
+    Py_ssize_t length = 1;
+    while (value >= UINT64_C(16)) {
+        value >>= 4;
+        length += 1;
+    }
+    return length;
+}
+
+
 static unsigned char *
 write_u64_decimal(unsigned char *target, uint64_t value)
 {
@@ -708,6 +732,24 @@ write_u64_decimal(unsigned char *target, uint64_t value)
     do {
         reversed[length++] = (unsigned char)('0' + value % UINT64_C(10));
         value /= UINT64_C(10);
+    } while (value != 0);
+    for (index = length; index > 0; --index) {
+        *target++ = reversed[index - 1];
+    }
+    return target;
+}
+
+
+static unsigned char *
+write_u64_hex(unsigned char *target, uint64_t value)
+{
+    static const unsigned char digits[] = "0123456789abcdef";
+    unsigned char reversed[16];
+    Py_ssize_t length = 0;
+    Py_ssize_t index;
+    do {
+        reversed[length++] = digits[value & UINT64_C(15)];
+        value >>= 4;
     } while (value != 0);
     for (index = length; index > 0; --index) {
         *target++ = reversed[index - 1];
@@ -773,7 +815,7 @@ write_fastq_record(
     *target++ = '-';
     target = write_u64_decimal(target, right);
     *target++ = ':';
-    target = write_u64_decimal(target, ordinal);
+    target = write_u64_hex(target, ordinal);
     *target++ = '/';
     *target++ = (unsigned char)('0' + mate_number);
     *target++ = '\n';
@@ -1058,7 +1100,7 @@ native_format_fastq_batch(PyObject *self, PyObject *args)
             )
             || !checked_add_size(
                 &record_size,
-                u64_decimal_length(ordinal),
+                u64_hex_length(ordinal),
                 "FASTQ record"
             )) {
             goto done;
@@ -1071,10 +1113,9 @@ native_format_fastq_batch(PyObject *self, PyObject *args)
             goto done;
         }
         lengths = Py_BuildValue(
-            "(nnn)",
+            "(nn)",
             record_size,
-            paired_end ? record_size : 0,
-            (Py_ssize_t)0
+            paired_end ? record_size : 0
         );
         if (lengths == NULL) {
             goto done;
@@ -1409,15 +1450,23 @@ static PyMethodDef native_methods[] = {
         bsreadsim_native_decode_protocol_fragments,
         METH_VARARGS,
         PyDoc_STR(
-            "Reconstruct validated protocol Full-Truth typed fragments."
+            "Reconstruct validated protocol typed fragments."
         )
     },
     {
-        "canonical_truth_json_bytes",
-        bsreadsim_native_truth_json_bytes,
+        "format_sam_columns",
+        bsreadsim_native_format_sam_columns,
         METH_VARARGS,
         PyDoc_STR(
-            "Format one validated ProcessedFragment as canonical UTF-8 JSON bytes."
+            "Format validated Full-Details columns as one exact SAM batch."
+        )
+    },
+    {
+        "format_sam_batch",
+        bsreadsim_native_format_sam_batch,
+        METH_VARARGS,
+        PyDoc_STR(
+            "Format validated ProcessedFragment values as one exact SAM batch."
         )
     },
     {NULL, NULL, 0, NULL}

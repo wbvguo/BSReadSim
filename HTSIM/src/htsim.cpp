@@ -12,9 +12,10 @@ void print_help(std::ostream &output)
     output
         << "Usage: htsim-core [core contract options]\n"
         << "       htsim-core rrbs-catalog [core contract options]\n"
+        << "       htsim-core methdb-catalog [core contract options]\n"
         << "       htsim-core --sam-to-bam LEVEL\n"
         << "The complete argv contract is documented in docs/core-cli.md.\n"
-        << "Output controls: --truth-columns none|full.\n";
+        << "Output controls: --emit-details none|full.\n";
 }
 
 } // namespace
@@ -57,6 +58,18 @@ int main(int argc, char *argv[])
             if (!std::cout) {
                 throw htsim::core::CoreGeneratorError(
                     "failed while flushing the RRBS candidate BED");
+            }
+            return 0;
+        }
+        if (argc >= 2 && argv != nullptr && argv[1] != nullptr
+            && std::string_view(argv[1]) == "methdb-catalog") {
+            const htsim::core::CoreConfig config =
+                htsim::core::parse_core_config(argc - 1, argv + 1);
+            htsim::core::generate_methdb_catalog(config, std::cout);
+            std::cout.flush();
+            if (!std::cout) {
+                throw htsim::core::CoreGeneratorError(
+                    "failed while flushing the MethDB snapshot");
             }
             return 0;
         }

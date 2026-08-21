@@ -9,7 +9,7 @@
 
 
 #define COMMON_COLUMN_COUNT 18
-#define TRUTH_COLUMN_COUNT 19
+#define DETAIL_COLUMN_COUNT 22
 #define NO_REFERENCE_POSITION UINT32_C(0xffffffff)
 
 
@@ -21,12 +21,12 @@ typedef struct {
 
 static const char *common_column_names[COMMON_COLUMN_COUNT] = {
     "batch.contig_indices",
-    "batch.reference_begins",
+    "batch.reference_starts",
     "batch.reference_ends",
     "batch.template_offsets",
     "batch.mate_offsets",
     "batch.site_offsets",
-    "batch.mate_template_begins",
+    "batch.mate_template_starts",
     "batch.mate_template_ends",
     "batch.site_template_offsets",
     "batch.site_probabilities",
@@ -35,32 +35,35 @@ static const char *common_column_names[COMMON_COLUMN_COUNT] = {
     "batch.mate_indices",
     "batch.mate_reverse_complements",
     "batch.site_contexts",
-    "batch.site_sources",
+    "batch.methylation_sources",
     "batch.site_alleles",
     "batch.template_bases"
 };
 
 
-static const char *truth_column_names[TRUTH_COLUMN_COUNT] = {
-    "truth.projection_offsets",
-    "truth.event_offsets",
-    "truth.original_n_offsets",
-    "truth.projection_template_begins",
-    "truth.projection_template_ends",
-    "truth.projection_reference_begins",
-    "truth.event_ids",
-    "truth.event_reference_begins",
-    "truth.event_reference_ends",
-    "truth.event_template_begins",
-    "truth.event_template_ends",
-    "truth.event_ref_offsets",
-    "truth.event_alt_offsets",
-    "truth.site_reference_positions",
-    "truth.original_n_template_offsets",
-    "truth.event_kinds",
-    "truth.event_phased_haplotypes",
-    "truth.event_ref_bases",
-    "truth.event_alt_bases"
+static const char *detail_column_names[DETAIL_COLUMN_COUNT] = {
+    "details.projection_offsets",
+    "details.variant_offsets",
+    "details.original_n_offsets",
+    "details.projection_template_starts",
+    "details.projection_template_ends",
+    "details.projection_reference_starts",
+    "details.variant_indices",
+    "details.variant_id_offsets",
+    "details.variant_reference_starts",
+    "details.variant_reference_ends",
+    "details.variant_template_starts",
+    "details.variant_template_ends",
+    "details.variant_ref_offsets",
+    "details.variant_alt_offsets",
+    "details.site_reference_positions",
+    "details.original_n_template_offsets",
+    "details.variant_sources",
+    "details.variant_kinds",
+    "details.variant_phased_haplotypes",
+    "details.variant_ids",
+    "details.variant_ref_bases",
+    "details.variant_alt_bases"
 };
 
 
@@ -539,16 +542,17 @@ validate_common_columns(
 
 
 static int
-validate_truth_columns(
+validate_details(
     ColumnBuffer *common,
-    ColumnBuffer *truth,
+    ColumnBuffer *details,
     uint32_t fragment_count,
     uint32_t site_count,
     uint32_t maximum_template_length
 )
 {
     uint32_t projection_count;
-    uint32_t event_count;
+    uint32_t variant_count;
+    uint32_t variant_id_byte_count;
     uint32_t ref_base_count;
     uint32_t alt_base_count;
     uint32_t original_n_count;
@@ -562,56 +566,74 @@ validate_truth_columns(
     int result = 0;
 
     if (
-        !derive_u32_count(&truth[3], 4, truth_column_names[3], &projection_count)
-        || !derive_u32_count(&truth[6], 4, truth_column_names[6], &event_count)
-        || !derive_u32_count(&truth[17], 1, truth_column_names[17], &ref_base_count)
-        || !derive_u32_count(&truth[18], 1, truth_column_names[18], &alt_base_count)
-        || !derive_u32_count(&truth[14], 4, truth_column_names[14], &original_n_count)
+        !derive_u32_count(&details[3], 4, detail_column_names[3], &projection_count)
+        || !derive_u32_count(&details[6], 4, detail_column_names[6], &variant_count)
+        || !derive_u32_count(&details[19], 1, detail_column_names[19], &variant_id_byte_count)
+        || !derive_u32_count(&details[20], 1, detail_column_names[20], &ref_base_count)
+        || !derive_u32_count(&details[21], 1, detail_column_names[21], &alt_base_count)
+        || !derive_u32_count(&details[15], 4, detail_column_names[15], &original_n_count)
     ) {
         goto done;
     }
     if (
         !validate_prefix(
-            &truth[0], fragment_count, projection_count, truth_column_names[0]
+            &details[0], fragment_count, projection_count, detail_column_names[0]
         )
         || !validate_prefix(
-            &truth[1], fragment_count, event_count, truth_column_names[1]
+            &details[1], fragment_count, variant_count, detail_column_names[1]
         )
         || !validate_prefix(
-            &truth[2], fragment_count, original_n_count, truth_column_names[2]
+            &details[2], fragment_count, original_n_count, detail_column_names[2]
         )
-        || !require_column_size(&truth[4], projection_count, 4, truth_column_names[4])
-        || !require_column_size(&truth[5], projection_count, 4, truth_column_names[5])
-        || !require_column_size(&truth[7], event_count, 4, truth_column_names[7])
-        || !require_column_size(&truth[8], event_count, 4, truth_column_names[8])
-        || !require_column_size(&truth[9], event_count, 4, truth_column_names[9])
-        || !require_column_size(&truth[10], event_count, 4, truth_column_names[10])
+        || !require_column_size(&details[4], projection_count, 4, detail_column_names[4])
+        || !require_column_size(&details[5], projection_count, 4, detail_column_names[5])
         || !validate_prefix(
-            &truth[11], event_count, ref_base_count, truth_column_names[11]
+            &details[7], variant_count, variant_id_byte_count, detail_column_names[7]
+        )
+        || !require_column_size(&details[8], variant_count, 4, detail_column_names[8])
+        || !require_column_size(&details[9], variant_count, 4, detail_column_names[9])
+        || !require_column_size(&details[10], variant_count, 4, detail_column_names[10])
+        || !require_column_size(&details[11], variant_count, 4, detail_column_names[11])
+        || !validate_prefix(
+            &details[12], variant_count, ref_base_count, detail_column_names[12]
         )
         || !validate_prefix(
-            &truth[12], event_count, alt_base_count, truth_column_names[12]
+            &details[13], variant_count, alt_base_count, detail_column_names[13]
         )
-        || !require_column_size(&truth[13], site_count, 4, truth_column_names[13])
-        || !require_column_size(&truth[15], event_count, 1, truth_column_names[15])
-        || !require_column_size(&truth[16], event_count, 1, truth_column_names[16])
+        || !require_column_size(&details[14], site_count, 4, detail_column_names[14])
+        || !require_column_size(&details[16], variant_count, 1, detail_column_names[16])
+        || !require_column_size(&details[17], variant_count, 1, detail_column_names[17])
+        || !require_column_size(&details[18], variant_count, 1, detail_column_names[18])
     ) {
         goto done;
     }
+    for (index = 0; index < variant_count; ++index) {
+        const uint32_t id_begin = load_u32_le(&details[7], index);
+        const uint32_t id_end = load_u32_le(&details[7], index + 1U);
+        const unsigned char source = load_u8(&details[16], index);
+        if (id_begin == id_end) {
+            PyErr_SetString(PyExc_ValueError, "variant ID must not be empty");
+            goto done;
+        }
+        if (source < 1 || source > 2) {
+            PyErr_SetString(PyExc_ValueError, "variant source is invalid");
+            goto done;
+        }
+    }
     for (index = 0; index < ref_base_count; ++index) {
-        if (load_u8(&truth[17], index) > 3) {
+        if (load_u8(&details[20], index) > 3) {
             PyErr_SetString(
                 PyExc_ValueError,
-                "truth.event_ref_bases contains an invalid base code"
+                "details.variant_ref_bases contains an invalid base code"
             );
             goto done;
         }
     }
     for (index = 0; index < alt_base_count; ++index) {
-        if (load_u8(&truth[18], index) > 3) {
+        if (load_u8(&details[21], index) > 3) {
             PyErr_SetString(
                 PyExc_ValueError,
-                "truth.event_alt_bases contains an invalid base code"
+                "details.variant_alt_bases contains an invalid base code"
             );
             goto done;
         }
@@ -642,18 +664,18 @@ validate_truth_columns(
         const uint32_t reference_begin = load_u32_le(&common[1], row);
         const uint32_t reference_end = load_u32_le(&common[2], row);
         const unsigned char haplotype = load_u8(&common[10], row);
-        const uint32_t projection_begin = load_u32_le(&truth[0], row);
-        const uint32_t projection_end = load_u32_le(&truth[0], row + 1U);
-        const uint32_t event_begin = load_u32_le(&truth[1], row);
-        const uint32_t event_end = load_u32_le(&truth[1], row + 1U);
+        const uint32_t projection_begin = load_u32_le(&details[0], row);
+        const uint32_t projection_end = load_u32_le(&details[0], row + 1U);
+        const uint32_t event_begin = load_u32_le(&details[1], row);
+        const uint32_t event_end = load_u32_le(&details[1], row + 1U);
         const uint32_t site_begin = load_u32_le(&common[5], row);
         const uint32_t site_end = load_u32_le(&common[5], row + 1U);
-        const uint32_t original_n_begin = load_u32_le(&truth[2], row);
-        const uint32_t original_n_end = load_u32_le(&truth[2], row + 1U);
+        const uint32_t original_n_begin = load_u32_le(&details[2], row);
+        const uint32_t original_n_end = load_u32_le(&details[2], row + 1U);
         uint32_t previous_template_end = 0;
         uint32_t previous_reference_begin = 0;
         uint32_t previous_reference_end = 0;
-        uint32_t previous_event_id = 0;
+        uint32_t previous_variant_index = 0;
         uint32_t previous_n = 0;
         int has_previous_projection = 0;
         int has_previous_event = 0;
@@ -666,9 +688,9 @@ validate_truth_columns(
         memset(mapped_positions, 0xff, (size_t)template_length * sizeof(*mapped_positions));
 
         for (index = projection_begin; index < projection_end; ++index) {
-            const uint32_t template_begin = load_u32_le(&truth[3], index);
-            const uint32_t template_end = load_u32_le(&truth[4], index);
-            const uint32_t mapped_begin = load_u32_le(&truth[5], index);
+            const uint32_t template_begin = load_u32_le(&details[3], index);
+            const uint32_t template_end = load_u32_le(&details[4], index);
+            const uint32_t mapped_begin = load_u32_le(&details[5], index);
             const uint64_t mapped_end_64 =
                 (uint64_t)mapped_begin + (template_end - template_begin);
             uint32_t local_offset;
@@ -745,36 +767,36 @@ validate_truth_columns(
         }
 
         for (index = event_begin; index < event_end; ++index) {
-            const uint32_t event_id = load_u32_le(&truth[6], index);
-            const unsigned char kind = load_u8(&truth[15], index);
-            const unsigned char phased = load_u8(&truth[16], index);
-            const uint32_t event_reference_begin = load_u32_le(&truth[7], index);
-            const uint32_t event_reference_end = load_u32_le(&truth[8], index);
-            const uint32_t event_template_begin = load_u32_le(&truth[9], index);
-            const uint32_t event_template_end = load_u32_le(&truth[10], index);
-            const uint32_t ref_begin = load_u32_le(&truth[11], index);
-            const uint32_t ref_end = load_u32_le(&truth[11], index + 1U);
-            const uint32_t alt_begin = load_u32_le(&truth[12], index);
-            const uint32_t alt_end = load_u32_le(&truth[12], index + 1U);
+            const uint32_t variant_index = load_u32_le(&details[6], index);
+            const unsigned char kind = load_u8(&details[17], index);
+            const unsigned char phased = load_u8(&details[18], index);
+            const uint32_t event_reference_begin = load_u32_le(&details[8], index);
+            const uint32_t event_reference_end = load_u32_le(&details[9], index);
+            const uint32_t event_template_begin = load_u32_le(&details[10], index);
+            const uint32_t event_template_end = load_u32_le(&details[11], index);
+            const uint32_t ref_begin = load_u32_le(&details[12], index);
+            const uint32_t ref_end = load_u32_le(&details[12], index + 1U);
+            const uint32_t alt_begin = load_u32_le(&details[13], index);
+            const uint32_t alt_end = load_u32_le(&details[13], index + 1U);
             uint32_t reference_span;
             uint32_t template_span;
             uint32_t relative;
 
-            if (event_id == NO_REFERENCE_POSITION) {
+            if (variant_index == NO_REFERENCE_POSITION) {
                 PyErr_SetString(
                     PyExc_ValueError,
                     "event id uses the reserved sentinel"
                 );
                 goto done;
             }
-            if (has_previous_event && event_id <= previous_event_id) {
+            if (has_previous_event && variant_index <= previous_variant_index) {
                 PyErr_SetString(
                     PyExc_ValueError,
                     "event ids must be strictly increasing"
                 );
                 goto done;
             }
-            previous_event_id = event_id;
+            previous_variant_index = variant_index;
             has_previous_event = 1;
             if (kind < 1 || kind > 3) {
                 PyErr_SetString(
@@ -941,7 +963,7 @@ validate_truth_columns(
                 event_cover[local_offset] = 1;
                 if (
                     load_u8(&common[17], template_flat_begin + local_offset)
-                    != load_u8(&truth[18], alt_begin + relative)
+                    != load_u8(&details[21], alt_begin + relative)
                 ) {
                     PyErr_SetString(
                         PyExc_ValueError,
@@ -984,7 +1006,7 @@ validate_truth_columns(
         }
         for (index = site_begin; index < site_end; ++index) {
             const uint32_t local_offset = load_u32_le(&common[8], index);
-            if (load_u32_le(&truth[13], index) != mapped_positions[local_offset]) {
+            if (load_u32_le(&details[14], index) != mapped_positions[local_offset]) {
                 PyErr_SetString(
                     PyExc_ValueError,
                     "site reference position disagrees with projection"
@@ -993,7 +1015,7 @@ validate_truth_columns(
             }
         }
         for (index = original_n_begin; index < original_n_end; ++index) {
-            const uint32_t local_offset = load_u32_le(&truth[14], index);
+            const uint32_t local_offset = load_u32_le(&details[15], index);
             if (local_offset >= template_length) {
                 PyErr_SetString(
                     PyExc_ValueError,
@@ -1509,48 +1531,62 @@ done:
 
 
 static PyObject *
-make_variant_event(ColumnBuffer *truth, uint32_t index)
+make_variant(ColumnBuffer *details, uint32_t index)
 {
-    const uint32_t ref_begin = load_u32_le(&truth[11], index);
-    const uint32_t ref_end = load_u32_le(&truth[11], index + 1U);
-    const uint32_t alt_begin = load_u32_le(&truth[12], index);
-    const uint32_t alt_end = load_u32_le(&truth[12], index + 1U);
-    const unsigned char kind = load_u8(&truth[15], index);
+    const uint32_t ref_begin = load_u32_le(&details[12], index);
+    const uint32_t ref_end = load_u32_le(&details[12], index + 1U);
+    const uint32_t alt_begin = load_u32_le(&details[13], index);
+    const uint32_t alt_end = load_u32_le(&details[13], index + 1U);
+    const uint32_t id_begin = load_u32_le(&details[7], index);
+    const uint32_t id_end = load_u32_le(&details[7], index + 1U);
+    const unsigned char source = load_u8(&details[16], index);
+    const unsigned char kind = load_u8(&details[17], index);
+    PyObject *variant_id = NULL;
     PyObject *ref_bases = NULL;
     PyObject *alt_bases = NULL;
     PyObject *arguments = NULL;
     PyObject *result = NULL;
 
     ref_bases = PyBytes_FromStringAndSize(
-        (const char *)truth[17].view.buf + ref_begin,
+        (const char *)details[20].view.buf + ref_begin,
         (Py_ssize_t)(ref_end - ref_begin)
     );
     alt_bases = PyBytes_FromStringAndSize(
-        (const char *)truth[18].view.buf + alt_begin,
+        (const char *)details[21].view.buf + alt_begin,
         (Py_ssize_t)(alt_end - alt_begin)
     );
-    arguments = PyTuple_New(7);
+    variant_id = PyUnicode_DecodeUTF8(
+        (const char *)details[19].view.buf + id_begin,
+        (Py_ssize_t)(id_end - id_begin),
+        "strict"
+    );
+    arguments = PyTuple_New(9);
     if (
         ref_bases == NULL
         || alt_bases == NULL
+        || variant_id == NULL
         || arguments == NULL
-        || !tuple_set_unsigned(arguments, 0, load_u32_le(&truth[6], index))
-        || !tuple_set_borrowed(arguments, 1, variant_kinds[kind])
-        || !tuple_set_unsigned(arguments, 2, load_u8(&truth[16], index))
-        || !tuple_set_unsigned(arguments, 3, load_u32_le(&truth[7], index))
-        || !tuple_set_unsigned(arguments, 4, load_u32_le(&truth[8], index))
+        || !tuple_set_unsigned(arguments, 0, load_u32_le(&details[6], index))
+        || !tuple_set_borrowed(arguments, 2, variant_sources[source])
+        || !tuple_set_borrowed(arguments, 3, variant_kinds[kind])
+        || !tuple_set_unsigned(arguments, 4, load_u8(&details[18], index))
+        || !tuple_set_unsigned(arguments, 5, load_u32_le(&details[8], index))
+        || !tuple_set_unsigned(arguments, 6, load_u32_le(&details[9], index))
     ) {
         goto done;
     }
-    PyTuple_SET_ITEM(arguments, 5, ref_bases);
+    PyTuple_SET_ITEM(arguments, 1, variant_id);
+    variant_id = NULL;
+    PyTuple_SET_ITEM(arguments, 7, ref_bases);
     ref_bases = NULL;
-    PyTuple_SET_ITEM(arguments, 6, alt_bases);
+    PyTuple_SET_ITEM(arguments, 8, alt_bases);
     alt_bases = NULL;
-    result = call_record(variant_event_type, arguments);
+    result = call_record(variant_type, arguments);
     arguments = NULL;
 
 done:
     Py_XDECREF(arguments);
+    Py_XDECREF(variant_id);
     Py_XDECREF(ref_bases);
     Py_XDECREF(alt_bases);
     return result;
@@ -1560,12 +1596,14 @@ done:
 static PyObject *
 make_methylation_site(
     ColumnBuffer *common,
-    ColumnBuffer *truth,
+    ColumnBuffer *details,
     uint32_t global_index,
     uint32_t local_index
 )
 {
-    const uint32_t reference_position = load_u32_le(&truth[13], global_index);
+    const uint32_t reference_position = details == NULL
+        ? NO_REFERENCE_POSITION
+        : load_u32_le(&details[14], global_index);
     const unsigned char context = load_u8(&common[14], global_index);
     const unsigned char source = load_u8(&common[15], global_index);
     const unsigned char allele = load_u8(&common[16], global_index);
@@ -1626,17 +1664,17 @@ make_site_reference(uint32_t read_offset, uint32_t site_index)
 
 static int
 find_event_anchor(
-    ColumnBuffer *truth,
+    ColumnBuffer *details,
     uint32_t event_begin,
     uint32_t event_end,
-    uint32_t event_id,
+    uint32_t variant_index,
     uint32_t *anchor
 )
 {
     uint32_t index;
     for (index = event_begin; index < event_end; ++index) {
-        if (load_u32_le(&truth[6], index) == event_id) {
-            *anchor = load_u32_le(&truth[7], index);
+        if (load_u32_le(&details[6], index) == variant_index) {
+            *anchor = load_u32_le(&details[8], index);
             return 1;
         }
     }
@@ -1648,14 +1686,16 @@ find_event_anchor(
 static PyObject *
 make_mate(
     ColumnBuffer *common,
-    ColumnBuffer *truth,
+    ColumnBuffer *details,
+    uint32_t fragment_reference_start,
+    uint32_t fragment_reference_end,
     uint32_t mate_index,
     uint32_t site_begin,
     uint32_t site_end,
     uint32_t event_begin,
     uint32_t event_end,
     const uint32_t *mapped_positions,
-    const uint32_t *base_event_ids
+    const uint32_t *base_variant_indices
 )
 {
     const uint32_t template_begin = load_u32_le(&common[6], mate_index);
@@ -1668,9 +1708,13 @@ make_mate(
         &common[8], site_begin, site_end, template_end
     );
     const uint32_t site_reference_count = selected_end - selected_begin;
-    uint32_t reference_start = UINT32_MAX;
-    uint32_t reference_end = 0;
-    int has_mapped_position = 0;
+    uint32_t reference_start = details == NULL
+        ? fragment_reference_start
+        : UINT32_MAX;
+    uint32_t reference_end = details == NULL
+        ? fragment_reference_end
+        : 0;
+    int has_mapped_position = details == NULL;
     PyObject *site_references = NULL;
     PyObject *arguments = NULL;
     PyObject *result = NULL;
@@ -1694,16 +1738,16 @@ make_mate(
         uint32_t anchor = 0;
         int has_anchor = 0;
         for (cursor = template_begin; cursor < template_end; ++cursor) {
-            const uint32_t event_id = base_event_ids[cursor];
+            const uint32_t variant_index = base_variant_indices[cursor];
             uint32_t candidate;
-            if (event_id == NO_REFERENCE_POSITION) {
+            if (variant_index == NO_REFERENCE_POSITION) {
                 continue;
             }
             if (!find_event_anchor(
-                truth,
+                details,
                 event_begin,
                 event_end,
-                event_id,
+                variant_index,
                 &candidate
             )) {
                 goto done;
@@ -1788,28 +1832,32 @@ done:
 static PyObject *
 make_fragment(
     ColumnBuffer *common,
-    ColumnBuffer *truth,
+    ColumnBuffer *details,
     uint32_t first_ordinal,
     uint32_t row,
     uint32_t *mapped_positions,
-    uint32_t *base_event_ids,
+    uint32_t *base_variant_indices,
     PyObject *no_event_object
 )
 {
     const uint32_t template_flat_begin = load_u32_le(&common[3], row);
     const uint32_t template_length =
         load_u32_le(&common[3], row + 1U) - template_flat_begin;
-    const uint32_t projection_begin = load_u32_le(&truth[0], row);
-    const uint32_t projection_end = load_u32_le(&truth[0], row + 1U);
-    const uint32_t event_begin = load_u32_le(&truth[1], row);
-    const uint32_t event_end = load_u32_le(&truth[1], row + 1U);
+    const uint32_t projection_begin =
+        details == NULL ? 0U : load_u32_le(&details[0], row);
+    const uint32_t projection_end =
+        details == NULL ? 0U : load_u32_le(&details[0], row + 1U);
+    const uint32_t event_begin =
+        details == NULL ? 0U : load_u32_le(&details[1], row);
+    const uint32_t event_end =
+        details == NULL ? 0U : load_u32_le(&details[1], row + 1U);
     const uint32_t site_begin = load_u32_le(&common[5], row);
     const uint32_t site_end = load_u32_le(&common[5], row + 1U);
     const uint32_t mate_begin = load_u32_le(&common[4], row);
     const uint32_t mate_end = load_u32_le(&common[4], row + 1U);
     PyObject *template_bases = NULL;
     PyObject *reference_positions = NULL;
-    PyObject *event_ids = NULL;
+    PyObject *variant_indices = NULL;
     PyObject *events = NULL;
     PyObject *sites = NULL;
     PyObject *mates = NULL;
@@ -1823,14 +1871,14 @@ make_fragment(
         (size_t)template_length * sizeof(*mapped_positions)
     );
     memset(
-        base_event_ids,
+        base_variant_indices,
         0xff,
-        (size_t)template_length * sizeof(*base_event_ids)
+        (size_t)template_length * sizeof(*base_variant_indices)
     );
     for (index = projection_begin; index < projection_end; ++index) {
-        const uint32_t template_begin = load_u32_le(&truth[3], index);
-        const uint32_t template_end = load_u32_le(&truth[4], index);
-        const uint32_t reference_begin = load_u32_le(&truth[5], index);
+        const uint32_t template_begin = load_u32_le(&details[3], index);
+        const uint32_t template_end = load_u32_le(&details[4], index);
+        const uint32_t reference_begin = load_u32_le(&details[5], index);
         uint32_t local_offset;
         for (local_offset = template_begin; local_offset < template_end; ++local_offset) {
             mapped_positions[local_offset] =
@@ -1838,12 +1886,12 @@ make_fragment(
         }
     }
     for (index = event_begin; index < event_end; ++index) {
-        const uint32_t template_begin = load_u32_le(&truth[9], index);
-        const uint32_t template_end = load_u32_le(&truth[10], index);
-        const uint32_t event_id = load_u32_le(&truth[6], index);
+        const uint32_t template_begin = load_u32_le(&details[10], index);
+        const uint32_t template_end = load_u32_le(&details[11], index);
+        const uint32_t variant_index = load_u32_le(&details[6], index);
         uint32_t local_offset;
         for (local_offset = template_begin; local_offset < template_end; ++local_offset) {
-            base_event_ids[local_offset] = event_id;
+            base_variant_indices[local_offset] = variant_index;
         }
     }
 
@@ -1852,14 +1900,14 @@ make_fragment(
         template_length
     );
     reference_positions = PyTuple_New(template_length);
-    event_ids = PyTuple_New(template_length);
+    variant_indices = PyTuple_New(template_length);
     events = PyTuple_New(event_end - event_begin);
     sites = PyTuple_New(site_end - site_begin);
     mates = PyTuple_New(mate_end - mate_begin);
     if (
         template_bases == NULL
         || reference_positions == NULL
-        || event_ids == NULL
+        || variant_indices == NULL
         || events == NULL
         || sites == NULL
         || mates == NULL
@@ -1875,16 +1923,16 @@ make_fragment(
         )) {
             goto done;
         }
-        if (base_event_ids[index] == NO_REFERENCE_POSITION) {
-            if (!tuple_set_borrowed(event_ids, index, no_event_object)) {
+        if (base_variant_indices[index] == NO_REFERENCE_POSITION) {
+            if (!tuple_set_borrowed(variant_indices, index, no_event_object)) {
                 goto done;
             }
-        } else if (!tuple_set_unsigned(event_ids, index, base_event_ids[index])) {
+        } else if (!tuple_set_unsigned(variant_indices, index, base_variant_indices[index])) {
             goto done;
         }
     }
     for (index = event_begin; index < event_end; ++index) {
-        PyObject *event = make_variant_event(truth, index);
+        PyObject *event = make_variant(details, index);
         if (event == NULL) {
             goto done;
         }
@@ -1893,7 +1941,7 @@ make_fragment(
     for (index = site_begin; index < site_end; ++index) {
         PyObject *site = make_methylation_site(
             common,
-            truth,
+            details,
             index,
             index - site_begin
         );
@@ -1905,14 +1953,16 @@ make_fragment(
     for (index = mate_begin; index < mate_end; ++index) {
         PyObject *mate = make_mate(
             common,
-            truth,
+            details,
+            load_u32_le(&common[1], row),
+            load_u32_le(&common[2], row),
             index,
             site_begin,
             site_end,
             event_begin,
             event_end,
             mapped_positions,
-            base_event_ids
+            base_variant_indices
         );
         if (mate == NULL) {
             goto done;
@@ -1940,8 +1990,8 @@ make_fragment(
     template_bases = NULL;
     PyTuple_SET_ITEM(arguments, 7, reference_positions);
     reference_positions = NULL;
-    PyTuple_SET_ITEM(arguments, 8, event_ids);
-    event_ids = NULL;
+    PyTuple_SET_ITEM(arguments, 8, variant_indices);
+    variant_indices = NULL;
     PyTuple_SET_ITEM(arguments, 9, events);
     events = NULL;
     PyTuple_SET_ITEM(arguments, 10, sites);
@@ -1956,7 +2006,7 @@ done:
     Py_XDECREF(mates);
     Py_XDECREF(sites);
     Py_XDECREF(events);
-    Py_XDECREF(event_ids);
+    Py_XDECREF(variant_indices);
     Py_XDECREF(reference_positions);
     Py_XDECREF(template_bases);
     return result;
@@ -1967,17 +2017,17 @@ PyObject *
 bsreadsim_native_decode_protocol_fragments(PyObject *self, PyObject *args)
 {
     PyObject *common_object;
-    PyObject *truth_object;
+    PyObject *details_object;
     PyObject *first_ordinal_object;
     PyObject *contig_lengths_object;
     PyObject *mates_per_fragment_object;
     PyObject *read_length_r1_object;
     PyObject *read_length_r2_object;
     ColumnBuffer common[COMMON_COLUMN_COUNT];
-    ColumnBuffer truth[TRUTH_COLUMN_COUNT];
+    ColumnBuffer details[DETAIL_COLUMN_COUNT];
     uint32_t *contig_lengths = NULL;
     uint32_t *mapped_positions = NULL;
-    uint32_t *base_event_ids = NULL;
+    uint32_t *base_variant_indices = NULL;
     uint32_t contig_count;
     uint32_t first_ordinal;
     uint32_t mates_per_fragment;
@@ -1992,17 +2042,18 @@ bsreadsim_native_decode_protocol_fragments(PyObject *self, PyObject *args)
     PyObject *result = NULL;
     Py_ssize_t index;
     uint32_t row;
+    int has_details;
     (void)self;
 
     memset(common, 0, sizeof(common));
-    memset(truth, 0, sizeof(truth));
+    memset(details, 0, sizeof(details));
     if (!PyArg_UnpackTuple(
         args,
         "decode_protocol_fragments",
         7,
         7,
         &common_object,
-        &truth_object,
+        &details_object,
         &first_ordinal_object,
         &contig_lengths_object,
         &mates_per_fragment_object,
@@ -2011,6 +2062,7 @@ bsreadsim_native_decode_protocol_fragments(PyObject *self, PyObject *args)
     )) {
         return NULL;
     }
+    has_details = details_object != Py_None;
     if (
         !parse_u32(first_ordinal_object, "batch.first_fragment_ordinal", &first_ordinal)
         || !parse_u32(
@@ -2053,22 +2105,22 @@ bsreadsim_native_decode_protocol_fragments(PyObject *self, PyObject *args)
             goto done;
         }
     }
-    if (
-        !acquire_columns(
-            common_object,
-            COMMON_COLUMN_COUNT,
-            common_column_names,
-            common,
-            "common_columns"
-        )
-        || !acquire_columns(
-            truth_object,
-            TRUTH_COLUMN_COUNT,
-            truth_column_names,
-            truth,
-            "truth_columns"
-        )
-    ) {
+    if (!acquire_columns(
+        common_object,
+        COMMON_COLUMN_COUNT,
+        common_column_names,
+        common,
+        "common_columns"
+    )) {
+        goto done;
+    }
+    if (has_details && !acquire_columns(
+        details_object,
+        DETAIL_COLUMN_COUNT,
+        detail_column_names,
+        details,
+        "has_details"
+    )) {
         goto done;
     }
     if (!validate_common_columns(
@@ -2089,9 +2141,9 @@ bsreadsim_native_decode_protocol_fragments(PyObject *self, PyObject *args)
     )) {
         goto done;
     }
-    if (!validate_truth_columns(
+    if (has_details && !validate_details(
         common,
-        truth,
+        details,
         fragment_count,
         site_count,
         maximum_template_length
@@ -2106,14 +2158,14 @@ bsreadsim_native_decode_protocol_fragments(PyObject *self, PyObject *args)
     mapped_positions = PyMem_Malloc(
         (size_t)maximum_template_length * sizeof(*mapped_positions)
     );
-    base_event_ids = PyMem_Malloc(
-        (size_t)maximum_template_length * sizeof(*base_event_ids)
+    base_variant_indices = PyMem_Malloc(
+        (size_t)maximum_template_length * sizeof(*base_variant_indices)
     );
     no_event_object = PyLong_FromUnsignedLong(NO_REFERENCE_POSITION);
     result = PyTuple_New(fragment_count);
     if (
         mapped_positions == NULL
-        || base_event_ids == NULL
+        || base_variant_indices == NULL
         || no_event_object == NULL
         || result == NULL
     ) {
@@ -2126,11 +2178,11 @@ bsreadsim_native_decode_protocol_fragments(PyObject *self, PyObject *args)
     for (row = 0; row < fragment_count; ++row) {
         PyObject *fragment = make_fragment(
             common,
-            truth,
+            has_details ? details : NULL,
             first_ordinal,
             row,
             mapped_positions,
-            base_event_ids,
+            base_variant_indices,
             no_event_object
         );
         if (fragment == NULL) {
@@ -2142,10 +2194,10 @@ bsreadsim_native_decode_protocol_fragments(PyObject *self, PyObject *args)
 
 done:
     Py_XDECREF(no_event_object);
-    PyMem_Free(base_event_ids);
+    PyMem_Free(base_variant_indices);
     PyMem_Free(mapped_positions);
     PyMem_Free(contig_lengths);
-    release_columns(truth, TRUTH_COLUMN_COUNT);
+    release_columns(details, DETAIL_COLUMN_COUNT);
     release_columns(common, COMMON_COLUMN_COUNT);
     return result;
 }
@@ -2155,16 +2207,16 @@ PyObject *
 bsreadsim_native_validate_protocol_batch_columns(PyObject *self, PyObject *args)
 {
     PyObject *common_object;
-    PyObject *truth_object;
+    PyObject *details_object;
     PyObject *first_ordinal_object;
     PyObject *contig_lengths_object;
     PyObject *mates_per_fragment_object;
     PyObject *read_length_r1_object;
     PyObject *read_length_r2_object;
     PyObject *expected_ordinal_object;
-    PyObject *truth_mode_object;
+    PyObject *has_details_object;
     ColumnBuffer common[COMMON_COLUMN_COUNT];
-    ColumnBuffer truth[TRUTH_COLUMN_COUNT];
+    ColumnBuffer details[DETAIL_COLUMN_COUNT];
     uint32_t *contig_lengths = NULL;
     uint32_t contig_count;
     uint32_t first_ordinal;
@@ -2172,7 +2224,7 @@ bsreadsim_native_validate_protocol_batch_columns(PyObject *self, PyObject *args)
     uint32_t read_length_r1;
     uint32_t read_length_r2;
     uint32_t expected_ordinal = 0;
-    uint32_t truth_mode;
+    uint32_t has_details_mode;
     uint32_t fragment_count;
     uint32_t template_count;
     uint32_t mate_count;
@@ -2184,21 +2236,21 @@ bsreadsim_native_validate_protocol_batch_columns(PyObject *self, PyObject *args)
     (void)self;
 
     memset(common, 0, sizeof(common));
-    memset(truth, 0, sizeof(truth));
+    memset(details, 0, sizeof(details));
     if (!PyArg_UnpackTuple(
         args,
         "validate_protocol_batch_columns",
         9,
         9,
         &common_object,
-        &truth_object,
+        &details_object,
         &first_ordinal_object,
         &contig_lengths_object,
         &mates_per_fragment_object,
         &read_length_r1_object,
         &read_length_r2_object,
         &expected_ordinal_object,
-        &truth_mode_object
+        &has_details_object
     )) {
         return NULL;
     }
@@ -2211,7 +2263,7 @@ bsreadsim_native_validate_protocol_batch_columns(PyObject *self, PyObject *args)
         )
         || !parse_u32(read_length_r1_object, "header.read_length_r1", &read_length_r1)
         || !parse_u32(read_length_r2_object, "header.read_length_r2", &read_length_r2)
-        || !parse_u32(truth_mode_object, "header.truth_columns", &truth_mode)
+        || !parse_u32(has_details_object, "header.has_details", &has_details_mode)
     ) {
         goto done;
     }
@@ -2233,17 +2285,17 @@ bsreadsim_native_validate_protocol_batch_columns(PyObject *self, PyObject *args)
         );
         goto done;
     }
-    if (truth_mode > 1) {
-        PyErr_SetString(PyExc_ValueError, "header.truth_columns is invalid");
+    if (has_details_mode > 1) {
+        PyErr_SetString(PyExc_ValueError, "header.has_details is invalid");
         goto done;
     }
     if (
-        (truth_mode == 0 && truth_object != Py_None)
-        || (truth_mode == 1 && truth_object == Py_None)
+        (has_details_mode == 0 && details_object != Py_None)
+        || (has_details_mode == 1 && details_object == Py_None)
     ) {
         PyErr_SetString(
             PyExc_ValueError,
-            "batch truth columns disagree with header"
+            "batch details columns disagree with header"
         );
         goto done;
     }
@@ -2299,13 +2351,13 @@ bsreadsim_native_validate_protocol_batch_columns(PyObject *self, PyObject *args)
         goto done;
     }
     if (
-        truth_mode == 1
+        has_details_mode == 1
         && !acquire_columns(
-            truth_object,
-            TRUTH_COLUMN_COUNT,
-            truth_column_names,
-            truth,
-            "truth_columns"
+            details_object,
+            DETAIL_COLUMN_COUNT,
+            detail_column_names,
+            details,
+            "has_details"
         )
     ) {
         goto done;
@@ -2329,10 +2381,10 @@ bsreadsim_native_validate_protocol_batch_columns(PyObject *self, PyObject *args)
         goto done;
     }
     if (
-        truth_mode == 1
-        && !validate_truth_columns(
+        has_details_mode == 1
+        && !validate_details(
             common,
-            truth,
+            details,
             fragment_count,
             site_count,
             maximum_template_length
@@ -2344,7 +2396,7 @@ bsreadsim_native_validate_protocol_batch_columns(PyObject *self, PyObject *args)
 
 done:
     PyMem_Free(contig_lengths);
-    release_columns(truth, TRUTH_COLUMN_COUNT);
+    release_columns(details, DETAIL_COLUMN_COUNT);
     release_columns(common, COMMON_COLUMN_COUNT);
     if (!result) {
         return NULL;

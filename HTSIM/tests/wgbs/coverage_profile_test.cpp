@@ -19,6 +19,9 @@ namespace {
 using htsim::wgbs::CoverageProfileError;
 using htsim::wgbs::WgbsGcProfile;
 using htsim::wgbs::WgbsGcSampler;
+using htsim::wgbs::VariableWgbsCandidate;
+using htsim::wgbs::VariableWgbsGcSampler;
+using htsim::wgbs::UnreachableTargetPolicy;
 using htsim::wgbs::calibrate_gc_target;
 using htsim::wgbs::FixedFragmentShape;
 
@@ -250,6 +253,26 @@ void test_profiled_sampling_and_chunk_independence()
         },
         "positive target mass without an opportunity was accepted");
 
+    const WgbsGcProfile partly_unreachable = load_profile("0.5\n0\n0.5\n");
+    const auto projected = calibrate_gc_target(
+        partly_unreachable,
+        {unreachable.bin_opportunity_counts()},
+        UnreachableTargetPolicy::drop_and_renormalize);
+    require(projected.acceptance_probabilities
+                    == std::vector<double>({1.0, 0.0, 0.0})
+                && projected.contig_allocation_weights
+                    == std::vector<double>({9.0})
+                && projected.dropped_target_probability == 0.5,
+            "approximate calibration did not project unreachable target mass");
+    require_error(
+        [&] {
+            (void)calibrate_gc_target(
+                high_gc,
+                {unreachable.bin_opportunity_counts()},
+                UnreachableTargetPolicy::drop_and_renormalize);
+        },
+        "projection accepted a target with no reachable positive mass");
+
     const WgbsGcProfile certain = load_profile("0.5\n0.5\n");
     const WgbsGcSampler certain_sampler(
         encode("ACGT"), {1U, 1U, false, 0.0}, certain);
@@ -302,6 +325,73 @@ void test_profiled_sampling_and_chunk_independence()
             "global target calibration or contig mixing changed");
 }
 
+void test_variable_insert_profile_rejection_and_chunk_independence()
+{
+    const auto bases = encode("AAAACCCCGGGGTTTTAAAACCCCGGGGTTTT");
+    const WgbsGcProfile high_gc = load_profile("0\n0\n1\n");
+    const VariableWgbsGcSampler sampler(
+        bases,
+        0U,
+        991U,
+        {4U, 7U, 10U, 2.0},
+        4U,
+        false,
+        0.0,
+        high_gc);
+    require(sampler.allocation_weight() > 0U,
+            "variable GC sampler lost its proposal domain");
+
+    const std::vector<double> high_gc_only{0.0, 0.0, 1.0};
+    const auto whole = sampler.sample(0U, 80U, high_gc_only);
+    const auto first = sampler.sample(0U, 23U, high_gc_only);
+    const auto second = sampler.sample(
+        first.next_candidate_ordinal, 57U, high_gc_only);
+    std::vector<VariableWgbsCandidate> joined = first.candidates;
+    joined.insert(
+        joined.end(), second.candidates.begin(), second.candidates.end());
+    require(whole.candidates.size() == 80U
+                && whole.candidates.size() == joined.size()
+                && whole.skipped_count > 0U
+                && whole.skipped_count
+                    == first.skipped_count + second.skipped_count
+                && whole.next_candidate_ordinal
+                    == second.next_candidate_ordinal,
+            "profiled variable-insert accounting changed across chunks");
+
+    bool saw_different_insert_lengths = false;
+    const std::uint32_t first_insert = whole.candidates.front().insert_length;
+    for (std::size_t index = 0U; index < whole.candidates.size(); ++index) {
+        const auto &candidate = whole.candidates[index];
+        require(candidate.reference_start == joined[index].reference_start
+                    && candidate.insert_length == joined[index].insert_length,
+                "profiled variable-insert candidate changed across chunks");
+        saw_different_insert_lengths = saw_different_insert_lengths
+            || candidate.insert_length != first_insert;
+        const auto begin = bases.begin() + candidate.reference_start;
+        const auto end = begin + candidate.insert_length;
+        const std::uint32_t gc_count = static_cast<std::uint32_t>(std::count_if(
+            begin,
+            end,
+            [](std::uint8_t base) {return base == 1U || base == 2U;}));
+        require(high_gc.bin_for_counts(gc_count, candidate.insert_length) == 2U,
+                "profiled variable-insert sampler accepted a zero-mass bin");
+    }
+    require(saw_different_insert_lengths,
+            "GC rejection accidentally fixed the insert length");
+
+    require(sampler.sample(0U, 0U, high_gc_only).candidates.empty(),
+            "zero-output variable GC request returned candidates");
+    require_error(
+        [&] {(void)sampler.sample(0U, 1U, {1.0});},
+        "variable GC sampler accepted the wrong bin count");
+    require_error(
+        [&] {(void)sampler.sample(0U, 1U, {0.0, -0.1, 1.1});},
+        "variable GC sampler accepted invalid probabilities");
+    require_error(
+        [&] {(void)sampler.sample(0U, 1U, {0.0, 0.0, 0.0});},
+        "variable GC sampler accepted an all-zero calibration");
+}
+
 } // namespace
 
 int main()
@@ -310,6 +400,7 @@ int main()
         test_profile_parse_and_exact_bin_mapping();
         test_profile_rejections();
         test_profiled_sampling_and_chunk_independence();
+        test_variable_insert_profile_rejection_and_chunk_independence();
         return EXIT_SUCCESS;
     } catch (const std::exception &error) {
         std::cerr << "coverage_profile_test: " << error.what() << '\n';

@@ -19,13 +19,13 @@
 namespace htsim::protocol {
 
 inline constexpr std::uint16_t protocol_major = 2;
-inline constexpr std::uint16_t protocol_minor = 0;
+inline constexpr std::uint16_t protocol_minor = 1;
 inline constexpr std::uint32_t preamble_flags = 0;
 inline constexpr std::size_t maximum_string_bytes = 1024U * 1024U;
 inline constexpr std::size_t maximum_frame_payload = 64U * 1024U * 1024U;
 inline constexpr std::uint32_t no_reference_position = UINT32_C(0xffffffff);
-inline constexpr std::uint8_t truth_columns_present = UINT8_C(0x01);
-inline constexpr std::string_view config_schema_version = "1.0";
+inline constexpr std::uint8_t details_present = UINT8_C(0x01);
+inline constexpr std::string_view config_schema_version = "1.1";
 inline constexpr std::string_view rng_contract = rng::contract_id;
 
 using Digest = crypto::Sha256Digest;
@@ -50,11 +50,11 @@ enum class FrameType : std::uint8_t {
 };
 
 enum class Technology : std::uint8_t {wgbs = 1, rrbs = 2, tbs = 3};
-enum class TruthMode : std::uint8_t {none = 0, full = 1};
 enum class BaseEncoding : std::uint8_t {acgtn_u8 = 1};
 enum class AmbiguityPolicy : std::uint8_t {preserve_n = 0, resolve_once = 1};
 enum class CaptureStrand : std::uint8_t {unknown = 0, forward = 1, reverse = 2};
 enum class VariantKind : std::uint8_t {snv = 1, insertion = 2, deletion = 3};
+enum class VariantSource : std::uint8_t {vcf = 1, de_novo = 2};
 enum class MethylationContext : std::uint8_t {
     cg_c = 1,
     chg_c = 3,
@@ -89,7 +89,7 @@ struct Header {
     std::uint64_t master_seed = 0;
     Digest normalized_config_sha256 = {};
     Technology technology = Technology::wgbs;
-    TruthMode truth_columns = TruthMode::none;
+    bool has_details = false;
     std::uint8_t mates_per_fragment = 1;
     BaseEncoding base_encoding = BaseEncoding::acgtn_u8;
     AmbiguityPolicy ambiguity_policy = AmbiguityPolicy::preserve_n;
@@ -98,37 +98,40 @@ struct Header {
     std::vector<Contig> contigs;
 };
 
-struct TruthColumns {
+struct FragmentDetails {
     std::vector<std::uint32_t> projection_offsets;
-    std::vector<std::uint32_t> event_offsets;
+    std::vector<std::uint32_t> variant_offsets;
     std::vector<std::uint32_t> original_n_offsets;
-    std::vector<std::uint32_t> projection_template_begins;
+    std::vector<std::uint32_t> projection_template_starts;
     std::vector<std::uint32_t> projection_template_ends;
-    std::vector<std::uint32_t> projection_reference_begins;
-    std::vector<std::uint32_t> event_ids;
-    std::vector<std::uint32_t> event_reference_begins;
-    std::vector<std::uint32_t> event_reference_ends;
-    std::vector<std::uint32_t> event_template_begins;
-    std::vector<std::uint32_t> event_template_ends;
-    std::vector<std::uint32_t> event_ref_offsets;
-    std::vector<std::uint32_t> event_alt_offsets;
+    std::vector<std::uint32_t> projection_reference_starts;
+    std::vector<std::uint32_t> variant_indices;
+    std::vector<std::uint32_t> variant_id_offsets;
+    std::vector<std::uint32_t> variant_reference_starts;
+    std::vector<std::uint32_t> variant_reference_ends;
+    std::vector<std::uint32_t> variant_template_starts;
+    std::vector<std::uint32_t> variant_template_ends;
+    std::vector<std::uint32_t> variant_ref_offsets;
+    std::vector<std::uint32_t> variant_alt_offsets;
     std::vector<std::uint32_t> site_reference_positions;
     std::vector<std::uint32_t> original_n_template_offsets;
-    std::vector<std::uint8_t> event_kinds;
-    std::vector<std::uint8_t> event_phased_haplotypes;
-    Bases event_ref_bases;
-    Bases event_alt_bases;
+    std::vector<std::uint8_t> variant_sources;
+    std::vector<std::uint8_t> variant_kinds;
+    std::vector<std::uint8_t> variant_phased_haplotypes;
+    std::vector<std::uint8_t> variant_ids;
+    Bases variant_ref_bases;
+    Bases variant_alt_bases;
 };
 
 struct FragmentBatch {
     std::uint32_t first_fragment_ordinal = 0;
     std::vector<std::uint32_t> contig_indices;
-    std::vector<std::uint32_t> reference_begins;
+    std::vector<std::uint32_t> reference_starts;
     std::vector<std::uint32_t> reference_ends;
     std::vector<std::uint32_t> template_offsets;
     std::vector<std::uint32_t> mate_offsets;
     std::vector<std::uint32_t> site_offsets;
-    std::vector<std::uint32_t> mate_template_begins;
+    std::vector<std::uint32_t> mate_template_starts;
     std::vector<std::uint32_t> mate_template_ends;
     std::vector<std::uint32_t> site_template_offsets;
     std::vector<float> site_probabilities;
@@ -137,10 +140,10 @@ struct FragmentBatch {
     std::vector<std::uint8_t> mate_indices;
     std::vector<std::uint8_t> mate_reverse_complements;
     std::vector<std::uint8_t> site_contexts;
-    std::vector<std::uint8_t> site_sources;
+    std::vector<std::uint8_t> methylation_sources;
     std::vector<std::uint8_t> site_alleles;
     Bases template_bases;
-    std::optional<TruthColumns> truth;
+    std::optional<FragmentDetails> details;
 
     std::uint32_t fragment_count() const;
     std::uint32_t template_base_count() const;

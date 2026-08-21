@@ -11,7 +11,7 @@ import unittest
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY_ROOT / "src"))
 
-from bsreadsim.config import (  # noqa: E402
+from bsreadsim.run.config import (  # noqa: E402
     ConfigValidationError,
     UINT64_MAX,
     normalize_run_config,
@@ -23,7 +23,7 @@ MODEL_SHA = "1" * 64
 
 def base_config(technology: str = "WGBS") -> dict:
     config = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "reference": "inputs/reference.fa",
         "inputs": {},
         "technology": technology,
@@ -61,11 +61,11 @@ def base_config(technology: str = "WGBS") -> dict:
 
 class NormalizedConfigTests(unittest.TestCase):
     def test_json_run_file_apis_are_not_available(self) -> None:
-        from bsreadsim import config as config_module
-        from bsreadsim import pipeline as pipeline_module
+        from bsreadsim.run import config as config_module
+        from bsreadsim.run import execute as execute_module
 
         self.assertFalse(hasattr(config_module, "load_run_config"))
-        self.assertFalse(hasattr(pipeline_module, "run_config"))
+        self.assertFalse(hasattr(execute_module, "run_config"))
 
     def test_wgbs_is_the_normalized_default(self) -> None:
         document = base_config()
@@ -111,8 +111,8 @@ class NormalizedConfigTests(unittest.TestCase):
         )
         self.assertEqual(loaded.normalized["output"]["compression"], "gzip")
         self.assertEqual(loaded.normalized["output"]["gzip_level"], 6)
-        self.assertFalse(loaded.normalized["output"]["truth_bam"])
-        self.assertEqual(loaded.normalized["output"]["truth"], "none")
+        self.assertFalse(loaded.normalized["output"]["bam"])
+        self.assertNotIn("details", loaded.normalized["output"])
         self.assertNotIn("shuffle", loaded.normalized["output"])
         self.assertNotIn("overwrite", loaded.normalized["output"])
 
@@ -155,14 +155,14 @@ class NormalizedConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigValidationError, "requires RRBS"):
             normalize_run_config(wgbs, self.base_directory)
 
-    def test_rrbs_variant_candidate_bed_requires_explicit_seed(self) -> None:
+    def test_rrbs_variant_candidate_bed_uses_catalog_seed_default(self) -> None:
         config = base_config("RRBS")
         config["rrbs"]["candidate_bed"] = "profiles/rrbs-candidates.bed"
         config["inputs"]["vcf"] = "inputs/sample.vcf"
         config["mutation"]["rate"] = 0
 
-        with self.assertRaisesRegex(ConfigValidationError, "explicit seed"):
-            normalize_run_config(config, self.base_directory)
+        normalized = normalize_run_config(config, self.base_directory).normalized
+        self.assertEqual(normalized["methylation"]["catalog_seed"], "0")
 
     def test_paths_resolve_against_cli_invocation_directory(self) -> None:
         config = base_config()
@@ -265,9 +265,9 @@ class NormalizedConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigValidationError, "unsigned 64-bit"):
             normalize_run_config(config, self.base_directory)
 
-    def test_output_truth_is_not_a_user_config_field(self) -> None:
+    def test_output_session_annotation_is_not_a_user_config_field(self) -> None:
         config = base_config()
-        config["output"]["truth"] = "full"
+        config["output"]["details"] = "full"
         with self.assertRaises(ConfigValidationError):
             normalize_run_config(config, self.base_directory)
 
@@ -292,53 +292,23 @@ class NormalizedConfigTests(unittest.TestCase):
                 with self.assertRaises(ConfigValidationError):
                     normalize_run_config(invalid, self.base_directory)
 
-    def test_truth_bam_is_an_explicit_boolean_output_policy(self) -> None:
+    def test_bam_is_an_explicit_boolean_output_policy(self) -> None:
         enabled = base_config()
-        enabled["output"]["truth_bam"] = True
+        enabled["output"]["bam"] = True
         loaded = normalize_run_config(enabled, self.base_directory)
-        self.assertTrue(loaded.normalized["output"]["truth_bam"])
-        self.assertEqual(loaded.normalized["output"]["truth"], "none")
+        self.assertTrue(loaded.normalized["output"]["bam"])
+        self.assertNotIn("details", loaded.normalized["output"])
 
         invalid = base_config()
-        invalid["output"]["truth_bam"] = "yes"
+        invalid["output"]["bam"] = "yes"
         with self.assertRaises(ConfigValidationError):
             normalize_run_config(invalid, self.base_directory)
 
-    def test_public_modes_select_truth_before_config_identity(self) -> None:
-        production = normalize_run_config(
-            base_config(),
-            self.base_directory,
-            mode="production",
-        )
-        debug = normalize_run_config(
-            base_config(),
-            self.base_directory,
-            mode="debug",
-        )
-
-        self.assertEqual(production.normalized["output"]["truth"], "none")
-        self.assertEqual(debug.normalized["output"]["truth"], "full")
-        self.assertNotEqual(production.sha256, debug.sha256)
-
-    def test_user_truth_is_rejected_in_every_mode(self) -> None:
-        for mode in ("production", "debug"):
-            with self.subTest(mode=mode):
-                config = base_config()
-                config["output"]["truth"] = "full"
-                with self.assertRaises(ConfigValidationError):
-                    normalize_run_config(
-                        config,
-                        self.base_directory,
-                        mode=mode,
-                    )
-
-    def test_invalid_public_mode_is_rejected(self) -> None:
-        with self.assertRaisesRegex(ConfigValidationError, "run mode"):
-            normalize_run_config(
-                base_config(),
-                self.base_directory,
-                mode="profile",
-            )
+    def test_user_annotation_field_is_rejected(self) -> None:
+        config = base_config()
+        config["output"]["details"] = "full"
+        with self.assertRaises(ConfigValidationError):
+            normalize_run_config(config, self.base_directory)
 
     def test_core_worker_bounds_are_schema_validated(self) -> None:
         for value in (0, 65):

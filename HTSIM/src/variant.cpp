@@ -9,6 +9,7 @@
 #include <string_view>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 #include <iterator>
 #include <cmath>
 
@@ -23,6 +24,45 @@
 
 namespace htsim::variant {
 namespace {
+
+std::string hexadecimal(std::uint64_t value)
+{
+    constexpr char digits[] = "0123456789abcdef";
+    std::string result;
+    do {
+        result.push_back(digits[value & UINT64_C(0xf)]);
+        value >>= 4U;
+    } while (value != 0U);
+    std::reverse(result.begin(), result.end());
+    return result;
+}
+
+std::uint64_t catalog_address(
+    std::uint32_t contig_index,
+    std::size_t local_index)
+{
+    if (local_index > std::numeric_limits<std::uint32_t>::max()) {
+        throw VariantCatalogError("variant index exceeds uint32");
+    }
+    return (static_cast<std::uint64_t>(contig_index) << 32U)
+        | static_cast<std::uint32_t>(local_index);
+}
+
+std::string unique_variant_id(
+    std::string requested,
+    std::string_view fallback_prefix,
+    std::uint64_t address,
+    std::unordered_set<std::string> &used)
+{
+    if (requested.empty() || requested == ".") {
+        requested = std::string(fallback_prefix) + hexadecimal(address);
+    }
+    if (used.insert(requested).second) {return requested;}
+
+    const std::string disambiguated = requested + "@" + hexadecimal(address);
+    if (used.insert(disambiguated).second) {return disambiguated;}
+    throw VariantCatalogError("variant ID cannot be made unique");
+}
 
 model::Bases parse_allele(std::string_view text, const char *field)
 {
@@ -258,7 +298,7 @@ model::HaplotypeMask resolve_alt_haplotypes(
         : model::HaplotypeMask::haplotype_2;
 }
 
-Event normalize_event(
+Variant normalize_event(
     std::uint32_t contig_index,
     std::uint32_t one_based_position,
     model::Bases reference,
@@ -310,7 +350,7 @@ Event normalize_event(
         kind = model::VariantKind::deletion;
     } else if (normalized_ref.size() != 1U || normalized_alt.size() != 1U) {
         throw VariantCatalogError(
-            "VCF v1 subset rejects MNP and complex replacement events");
+            "VCF v1 subset rejects MNP and complex replacement variants");
     }
 
     const std::uint64_t normalized_start = original_start + prefix;
@@ -331,7 +371,7 @@ Event normalize_event(
     };
 }
 
-bool conflicts(const Event &left, const Event &right) noexcept
+bool conflicts(const Variant &left, const Variant &right) noexcept
 {
     const bool left_insertion = left.reference_start == left.reference_end;
     const bool right_insertion = right.reference_start == right.reference_end;
@@ -350,7 +390,7 @@ bool conflicts(const Event &left, const Event &right) noexcept
         && right.reference_start < left.reference_end;
 }
 
-bool event_less(const Event &left, const Event &right) noexcept
+bool event_less(const Variant &left, const Variant &right) noexcept
 {
     return std::tie(left.reference_start, left.reference_end, left.kind)
         < std::tie(right.reference_start, right.reference_end, right.kind);
@@ -364,7 +404,7 @@ VariantFile::VariantFile(
     const std::vector<reference::ContigMetadata> &reference_catalog,
     std::uint64_t master_seed)
     : file_sha256_(expected_file_sha256),
-      events_by_contig_(reference_catalog.size())
+      variants_by_contig_(reference_catalog.size())
 {
     try {
         std::unordered_map<std::string, std::uint32_t> contig_indices;
@@ -390,6 +430,7 @@ VariantFile::VariantFile(
         std::uint32_t previous_contig = 0;
         std::uint32_t previous_position = 0;
         bool have_previous_record = false;
+        std::unordered_set<std::string> used_variant_ids;
         snapshot.visit_hts([&](htsFile *file) {
             HtsLogGuard log_guard;
             const htsFormat *format = hts_get_format(file);
@@ -507,7 +548,7 @@ VariantFile::VariantFile(
                         continue;
                     }
 
-                    auto &contig_events = events_by_contig_[contig_index];
+                    auto &contig_events = variants_by_contig_[contig_index];
                     if (contig_events.size()
                         == std::numeric_limits<std::uint32_t>::max()) {
                         throw VariantCatalogError(
@@ -519,33 +560,41 @@ VariantFile::VariantFile(
                         static_cast<std::uint32_t>(contig_index));
                     const auto mask = resolve_alt_haplotypes(
                         genotype, key, contig_events.size());
-                    Event event = normalize_event(
+                    Variant event = normalize_event(
                         contig_index,
                         position,
                         std::move(reference),
                         std::move(alternate),
                         mask,
                         reference_catalog[contig_index].length);
+                    const std::uint64_t address = catalog_address(
+                        contig_index, contig_events.size());
+                    event.id = unique_variant_id(
+                        record->d.id == nullptr ? std::string() : record->d.id,
+                        "aaracf_",
+                        address,
+                        used_variant_ids);
+                    event.source = model::VariantSource::vcf;
                     if (!contig_events.empty()) {
-                        const Event &previous = contig_events.back();
+                        const Variant &previous = contig_events.back();
                         if (event_less(event, previous)) {
                             throw VariantCatalogError(
-                                "VCF normalized events are not in canonical "
+                                "VCF normalized variants are not in canonical "
                                 "order");
                         }
                         if (conflicts(previous, event)) {
                             throw VariantCatalogError(
-                                "VCF normalized events overlap or share an "
+                                "VCF normalized variants overlap or share an "
                                 "insertion anchor");
                         }
                     }
                     contig_events.push_back(std::move(event));
-                    if (event_count_
+                    if (variant_count_
                         == std::numeric_limits<std::uint64_t>::max()) {
                         throw VariantCatalogError(
                             "VCF event count exceeds uint64");
                     }
-                    ++event_count_;
+                    ++variant_count_;
                 } catch (const VariantCatalogError &error) {
                     throw VariantCatalogError(
                         "VCF line " + std::to_string(file->lineno) + ": "
@@ -563,18 +612,18 @@ VariantFile::VariantFile(
     }
 }
 
-const std::vector<Event> &VariantFile::events(
+const std::vector<Variant> &VariantFile::variants(
     std::uint32_t contig_index) const
 {
-    if (contig_index >= events_by_contig_.size()) {
+    if (contig_index >= variants_by_contig_.size()) {
         throw VariantCatalogError("VCF contig index is out of range");
     }
-    return events_by_contig_[contig_index];
+    return variants_by_contig_[contig_index];
 }
 
-std::uint64_t VariantFile::event_count() const noexcept
+std::uint64_t VariantFile::variant_count() const noexcept
 {
-    return event_count_;
+    return variant_count_;
 }
 
 const crypto::Sha256Digest &VariantFile::file_sha256() const noexcept
@@ -584,16 +633,16 @@ const crypto::Sha256Digest &VariantFile::file_sha256() const noexcept
 
 ContigVariants::ContigVariants(
     const model::Bases &reference_bases,
-    const std::vector<Event> &events,
+    const std::vector<Variant> &variants,
     std::uint32_t contig_index)
-    : contig_index_(contig_index), events_(events)
+    : contig_index_(contig_index), variants_(variants)
 {
     if (reference_bases.size() > std::numeric_limits<std::uint32_t>::max()) {
         throw VariantCatalogError("VCF reference contig exceeds uint32");
     }
     reference_length_ = static_cast<std::uint32_t>(reference_bases.size());
-    for (std::size_t index = 0; index < events_.size(); ++index) {
-        const Event &event = events_[index];
+    for (std::size_t index = 0; index < variants_.size(); ++index) {
+        const Variant &event = variants_[index];
         if (event.contig_index != contig_index) {
             throw VariantCatalogError("VCF event belongs to another contig");
         }
@@ -649,18 +698,18 @@ ContigVariants::ContigVariants(
                     + static_cast<std::ptrdiff_t>(event.reference_start))) {
             throw VariantCatalogError("VCF REF does not match the reference snapshot");
         }
-        if (index != 0U && conflicts(events_[index - 1U], event)) {
-            throw VariantCatalogError("VCF contig events overlap");
+        if (index != 0U && conflicts(variants_[index - 1U], event)) {
+            throw VariantCatalogError("VCF contig variants overlap");
         }
-        if (index != 0U && event_less(event, events_[index - 1U])) {
-            throw VariantCatalogError("VCF contig events are not canonical");
+        if (index != 0U && event_less(event, variants_[index - 1U])) {
+            throw VariantCatalogError("VCF contig variants are not canonical");
         }
     }
 }
 
-const std::vector<Event> &ContigVariants::events() const noexcept
+const std::vector<Variant> &ContigVariants::variants() const noexcept
 {
-    return events_;
+    return variants_;
 }
 
 std::uint32_t ContigVariants::contig_index() const noexcept
@@ -702,12 +751,14 @@ std::uint8_t phased_haplotype(model::HaplotypeMask mask)
         "variant has an invalid haplotype mask");
 }
 
-model::VariantEvent protocol_event(
-    const variant::Event &event,
-    std::uint32_t event_id)
+model::Variant to_model_variant(
+    const variant::Variant &event,
+    std::uint32_t variant_index)
 {
     return {
-        event_id,
+        variant_index,
+        event.id,
+        event.source,
         event.kind,
         phased_haplotype(event.alt_haplotypes),
         event.reference_start,
@@ -736,14 +787,14 @@ void append_reference(
         projection.template_bases.end(), first, last);
     for (std::uint32_t position = begin; position < end; ++position) {
         projection.reference_positions.push_back(position);
-        projection.base_event_ids.push_back(model::no_variant_event);
+        projection.base_variant_indices.push_back(model::no_variant_index);
     }
 }
 
 void append_alternate(
     ProjectedInterval &projection,
-    const variant::Event &event,
-    std::uint32_t event_id)
+    const variant::Variant &event,
+    std::uint32_t variant_index)
 {
     require_append_capacity(
         projection.template_bases.size(), event.alt_bases.size());
@@ -761,8 +812,8 @@ void append_alternate(
             projection.reference_positions.push_back(position);
         }
     }
-    projection.base_event_ids.insert(
-        projection.base_event_ids.end(), event.alt_bases.size(), event_id);
+    projection.base_variant_indices.insert(
+        projection.base_variant_indices.end(), event.alt_bases.size(), variant_index);
 }
 
 bool insertion_belongs_to_interval(
@@ -855,27 +906,27 @@ ProjectedInterval project_interval(
     projection.reference_end = reference_end;
     projection.template_bases.reserve(reference_end - reference_start);
     projection.reference_positions.reserve(reference_end - reference_start);
-    projection.base_event_ids.reserve(reference_end - reference_start);
+    projection.base_variant_indices.reserve(reference_end - reference_start);
 
     std::uint32_t cursor = reference_start;
-    const auto &events = variants.events();
-    if (events.size() > std::numeric_limits<std::uint32_t>::max()) {
+    const auto &variant_records = variants.variants();
+    if (variant_records.size() > std::numeric_limits<std::uint32_t>::max()) {
         throw ProjectionError(
             ProjectionFailure::capacity,
             "variant event count exceeds uint32");
     }
     auto event = std::lower_bound(
-        events.begin(),
-        events.end(),
+        variant_records.begin(),
+        variant_records.end(),
         reference_start,
-        [](const variant::Event &candidate, std::uint32_t position) {
+        [](const variant::Variant &candidate, std::uint32_t position) {
             return candidate.reference_start < position;
         });
-    if (event != events.begin()) {--event;}
-    for (; event != events.end(); ++event) {
+    if (event != variant_records.begin()) {--event;}
+    for (; event != variant_records.end(); ++event) {
         const std::size_t ordinal = static_cast<std::size_t>(
-            std::distance(events.begin(), event));
-        const variant::Event &current = *event;
+            std::distance(variant_records.begin(), event));
+        const variant::Variant &current = *event;
         if (current.contig_index != contig.index
             || current.reference_end > contig.bases.size()
             || !std::equal(
@@ -899,8 +950,8 @@ ProjectedInterval project_interval(
                 current.alt_haplotypes, zero_based_haplotype)) {
             continue;
         }
-        const std::uint32_t event_id = static_cast<std::uint32_t>(ordinal);
-        if (event_id == model::no_variant_event) {
+        const std::uint32_t variant_index = static_cast<std::uint32_t>(ordinal);
+        if (variant_index == model::no_variant_index) {
             throw ProjectionError(
                 ProjectionFailure::capacity,
                 "variant event ordinal uses the no-event sentinel");
@@ -916,8 +967,8 @@ ProjectedInterval project_interval(
             }
             append_reference(
                 projection, contig.bases, cursor, current.reference_start);
-            projection.variant_events.push_back(protocol_event(current, event_id));
-            append_alternate(projection, current, event_id);
+            projection.variants.push_back(to_model_variant(current, variant_index));
+            append_alternate(projection, current, variant_index);
             cursor = current.reference_start;
             continue;
         }
@@ -932,9 +983,9 @@ ProjectedInterval project_interval(
         }
         append_reference(
             projection, contig.bases, cursor, current.reference_start);
-        projection.variant_events.push_back(protocol_event(current, event_id));
+        projection.variants.push_back(to_model_variant(current, variant_index));
         if (current.kind == model::VariantKind::snv) {
-            append_alternate(projection, current, event_id);
+            append_alternate(projection, current, variant_index);
         }
         cursor = current.reference_end;
     }
@@ -946,7 +997,7 @@ ProjectedInterval project_interval(
             "active variants removed the complete interval");
     }
     if (projection.reference_positions.size() != projection.template_bases.size()
-        || projection.base_event_ids.size() != projection.template_bases.size()) {
+        || projection.base_variant_indices.size() != projection.template_bases.size()) {
         throw ProjectionError(
             ProjectionFailure::invariant,
             "projected per-base arrays are inconsistent");
@@ -994,7 +1045,7 @@ void require_identity(
     }
 }
 
-std::uint64_t event_payload_bytes(const variant::Event &event)
+std::uint64_t event_payload_bytes(const variant::Variant &event)
 {
     const std::uint64_t bases = static_cast<std::uint64_t>(
         event.ref_bases.size() + event.alt_bases.size());
@@ -1021,15 +1072,15 @@ HaplotypeLayout::HaplotypeLayout(
 
     std::uint32_t reference_cursor = 0U;
     std::int64_t cumulative_delta = 0;
-    const auto &events = variants.events();
-    for (std::size_t event_index = 0U;
-         event_index < events.size();
-         ++event_index) {
-        if (event_index >= model::no_variant_event) {
+    const auto &variant_records = variants.variants();
+    for (std::size_t variant_index = 0U;
+         variant_index < variant_records.size();
+         ++variant_index) {
+        if (variant_index >= model::no_variant_index) {
             throw HaplotypeLayoutError(
                 "variant event ordinal uses the no-event sentinel");
         }
-        const variant::Event &event = events[event_index];
+        const variant::Variant &event = variant_records[variant_index];
         if (!model::mask_contains(
                 event.alt_haplotypes, zero_based_haplotype)) {
             continue;
@@ -1082,7 +1133,7 @@ HaplotypeLayout::HaplotypeLayout(
             cumulative_delta,
             haplotype_before,
             length_,
-            static_cast<std::uint32_t>(event_index),
+            static_cast<std::uint32_t>(variant_index),
         });
     }
     append_reference_run(contig.bases, reference_cursor, reference_length_);
@@ -1145,7 +1196,7 @@ void HaplotypeLayout::append_reference_run(
 }
 
 void HaplotypeLayout::append_alternate_run(
-    const variant::Event &event,
+    const variant::Variant &event,
     std::uint32_t reference_begin)
 {
     const std::uint32_t haplotype_begin = length_;
@@ -1267,7 +1318,7 @@ std::uint32_t HaplotypeLayout::ambiguous_count(
     return n_rank(haplotype_end) - n_rank(haplotype_begin);
 }
 
-std::uint64_t HaplotypeLayout::maximum_variant_event_payload_bytes(
+std::uint64_t HaplotypeLayout::maximum_variant_payload_bytes(
     const variant::ContigVariants &variants,
     std::uint32_t physical_span) const
 {
@@ -1282,7 +1333,7 @@ std::uint64_t HaplotypeLayout::maximum_variant_event_payload_bytes(
     const auto interval_at = [&](std::size_t index)
         -> std::optional<StartInterval> {
         const ActiveEventCoordinate &coordinate = active_events_.at(index);
-        if (coordinate.event_ordinal >= variants.events().size()
+        if (coordinate.event_ordinal >= variants.variants().size()
             || coordinate.haplotype_begin > coordinate.haplotype_end
             || coordinate.haplotype_end > length_) {
             throw HaplotypeLayoutError(
@@ -1313,11 +1364,11 @@ std::uint64_t HaplotypeLayout::maximum_variant_event_payload_bytes(
             lower,
             upper,
             event_payload_bytes(
-                variants.events()[coordinate.event_ordinal]),
+                variants.variants()[coordinate.event_ordinal]),
         };
     };
 
-    // Canonical non-overlapping events yield monotone start intervals.  Check
+    // Canonical non-overlapping variants yield monotone start intervals.  Check
     // that invariant explicitly so a future event kind cannot invalidate the
     // allocation-free two-cursor sweep.
     std::optional<StartInterval> previous;
@@ -1546,10 +1597,10 @@ std::uint32_t resolved_deletion_length(
     return length;
 }
 
-void require_event_capacity(const std::vector<Event> &events)
+void require_event_capacity(const std::vector<Variant> &variants)
 {
-    if (events.size()
-        >= static_cast<std::size_t>(model::no_variant_event)) {
+    if (variants.size()
+        >= static_cast<std::size_t>(model::no_variant_index)) {
         throw MutationCatalogError(
             "de novo event count would use the no-event sentinel");
     }
@@ -1557,7 +1608,7 @@ void require_event_capacity(const std::vector<Event> &events)
 
 } // namespace
 
-std::vector<Event> generate_de_novo_events(
+std::vector<Variant> generate_de_novo_events(
     const reference::Contig &contig,
     std::uint64_t master_seed,
     const MutationParameters &parameters)
@@ -1567,7 +1618,7 @@ std::vector<Event> generate_de_novo_events(
             validate_inputs(contig, parameters);
         const std::uint64_t key = rng::derive_key(
             master_seed, rng::Stage::mutation, contig.index);
-        std::vector<Event> events;
+        std::vector<Variant> variants;
         std::uint32_t position = 0U;
         while (position < reference_length) {
             const std::uint8_t reference_base = contig.bases[position];
@@ -1581,7 +1632,7 @@ std::vector<Event> generate_de_novo_events(
                 continue;
             }
 
-            require_event_capacity(events);
+            require_event_capacity(variants);
             const model::HaplotypeMask haplotypes =
                 choose_haplotype_mask(
                     key, position, parameters.homozygous_only);
@@ -1596,7 +1647,7 @@ std::vector<Event> generate_de_novo_events(
                 const std::uint8_t alternate_base =
                     static_cast<std::uint8_t>(
                         (reference_base + offset + 1U) & 3U);
-                events.push_back({
+                variants.push_back({
                     contig.index,
                     position,
                     position + 1U,
@@ -1604,6 +1655,9 @@ std::vector<Event> generate_de_novo_events(
                     {reference_base},
                     {alternate_base},
                     haplotypes,
+                    "varsim_" + hexadecimal(catalog_address(
+                        contig.index, variants.size())),
+                    model::VariantSource::de_novo,
                 });
                 ++position;
                 continue;
@@ -1619,7 +1673,7 @@ std::vector<Event> generate_de_novo_events(
                     resolved_deletion_length(
                         contig.bases, position, requested_length);
                 const std::uint32_t end = position + deletion_length;
-                events.push_back({
+                variants.push_back({
                     contig.index,
                     position,
                     end,
@@ -1631,13 +1685,16 @@ std::vector<Event> generate_de_novo_events(
                             + static_cast<std::ptrdiff_t>(end)),
                     {},
                     haplotypes,
+                    "varsim_" + hexadecimal(catalog_address(
+                        contig.index, variants.size())),
+                    model::VariantSource::de_novo,
                 });
                 position = end;
                 continue;
             }
 
             const std::uint32_t anchor = position + 1U;
-            events.push_back({
+            variants.push_back({
                 contig.index,
                 anchor,
                 anchor,
@@ -1645,13 +1702,16 @@ std::vector<Event> generate_de_novo_events(
                 {},
                 insertion_bases(key, position, requested_length),
                 haplotypes,
+                "varsim_" + hexadecimal(catalog_address(
+                    contig.index, variants.size())),
+                model::VariantSource::de_novo,
             });
             // The typed catalog forbids an insertion and another event at the
             // same anchor. The insertion follows `position`, so the immediately
             // following reference base is the one suppressed.
             position = anchor < reference_length ? anchor + 1U : anchor;
         }
-        return events;
+        return variants;
     } catch (const MutationCatalogError &) {
         throw;
     } catch (const std::exception &error) {

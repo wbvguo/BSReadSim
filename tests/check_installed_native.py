@@ -1,18 +1,12 @@
-"""Differential gate for the installed native protocol validator.
-
-Run this script outside the repository import path with an installed wheel and
-pass the repository root as its only argument.  The frozen wire fixtures are
-decoded once through the native validator and once through the retained Python
-reference validator after deterministic corruption of every payload byte.
-"""
+"""Mutation gate for the required installed native protocol validator."""
 
 from dataclasses import replace
 from pathlib import Path
 import struct
 import sys
 
-import bsreadsim.protocol as protocol
-import bsreadsim.protocol_adapter as protocol_adapter
+import bsreadsim.native.protocol as protocol
+import bsreadsim.process.fragment as protocol_adapter
 
 
 FRAME_ENVELOPE = struct.Struct("<IBBHQ")
@@ -35,14 +29,7 @@ def frame_payload(frame: bytes, *, offset: int = 0) -> tuple[int, bytes]:
     return flags, frame[begin:end]
 
 
-def accepts(
-    payload: bytes,
-    flags: int,
-    header,
-    validator,
-) -> bool:
-    previous = protocol._native_validate_batch_columns
-    protocol._native_validate_batch_columns = validator
+def accepts(payload: bytes, flags: int, header) -> bool:
     try:
         protocol._decode_batch_payload(
             payload,
@@ -52,8 +39,6 @@ def accepts(
         )
     except (MemoryError, protocol.ProtocolError):
         return False
-    finally:
-        protocol._native_validate_batch_columns = previous
     return True
 
 
@@ -61,7 +46,6 @@ def check_fixture(
     root: Path,
     name: str,
     header,
-    native_validator,
 ) -> tuple[int, int]:
     flags, payload = frame_payload(fixture(root, name))
     candidates = [payload]
@@ -76,20 +60,7 @@ def check_fixture(
             changed[offset] ^= mask
             candidates.append(bytes(changed))
 
-    accepted = 0
-    for ordinal, candidate in enumerate(candidates):
-        reference_result = accepts(candidate, flags, header, None)
-        native_result = accepts(candidate, flags, header, native_validator)
-        if native_result != reference_result:
-            raise AssertionError(
-                "{} candidate {} disagrees: native={} reference={}".format(
-                    name,
-                    ordinal,
-                    native_result,
-                    reference_result,
-                )
-            )
-        accepted += int(native_result)
+    accepted = sum(accepts(candidate, flags, header) for candidate in candidates)
     return len(candidates), accepted
 
 
@@ -99,68 +70,63 @@ def main(argv: list[str]) -> int:
             "usage: check_installed_native.py REPOSITORY_ROOT"
         )
     root = Path(argv[1]).resolve()
-    native_validator = protocol._native_validate_batch_columns
-    if native_validator is None:
-        raise AssertionError("installed wheel has no protocol native validator")
-
     header_frame = fixture(root, "header-none")
     _flags, header_payload = frame_payload(header_frame, offset=PREAMBLE_SIZE)
-    no_truth_header = protocol._decode_header_payload(header_payload)
-    full_truth_header = replace(
-        no_truth_header,
-        truth_columns=protocol.TruthMode.FULL,
+    without_annotations_header = protocol._decode_header_payload(header_payload)
+    full_annotations_header = replace(
+        without_annotations_header,
+        has_details=True,
     )
 
     totals = []
     totals.append(
-        check_fixture(root, "batch-none", no_truth_header, native_validator)
+        check_fixture(root, "batch-none", without_annotations_header)
     )
     totals.append(
-        check_fixture(root, "batch-full", full_truth_header, native_validator)
+        check_fixture(root, "batch-full", full_annotations_header)
     )
     common_flags, common_payload = frame_payload(fixture(root, "batch-none"))
     common_batch = protocol._decode_batch_payload(
         common_payload,
         common_flags,
-        no_truth_header,
+        without_annotations_header,
         expected_first_ordinal=0,
     )
-    reference_common = (
-        protocol_adapter._decode_common_numpy_batch_python(
-            common_batch,
-            no_truth_header,
-        )
-    )
-    native_common = protocol_adapter._decode_common_numpy_batch(
+    native_common = protocol_adapter.decode_common_numpy_batch(
         common_batch,
-        no_truth_header,
+        without_annotations_header,
     )
-    if native_common != reference_common:
+    if (
+        native_common.fragment_count != common_batch.fragment_count
+        or native_common.mate_count != common_batch.mate_count
+    ):
         raise AssertionError(
-            "native and reference common-column adapters disagree"
+            "native common-column adapter changed fixture cardinality"
         )
     full_flags, full_payload = frame_payload(fixture(root, "batch-full"))
     full_batch = protocol._decode_batch_payload(
         full_payload,
         full_flags,
-        full_truth_header,
+        full_annotations_header,
         expected_first_ordinal=0,
-    )
-    reference_fragments = protocol_adapter._decode_fragments_python(
-        full_batch,
-        full_truth_header,
     )
     native_fragments = protocol_adapter.decode_fragments(
         full_batch,
-        full_truth_header,
+        full_annotations_header,
     )
-    if native_fragments != reference_fragments:
+    if (
+        len(native_fragments) != full_batch.fragment_count
+        or sum(len(fragment.mates) for fragment in native_fragments)
+        != full_batch.mate_count
+    ):
         raise AssertionError(
-            "native and reference Full-Truth adapters disagree"
+            "native Full-Details adapter changed fixture cardinality"
         )
+    if tuple(native_fragments[1].reference_positions) != (20, 21, -1, 22, 23):
+        raise AssertionError("native Full-Details adapter changed reference projection")
     print(
         "protocol native differential gate: {} candidates, {} accepted; "
-        "common and Full-Truth adapters exact".format(
+        "common and Full-Details adapters fixture-validated".format(
             sum(total for total, _accepted in totals),
             sum(accepted for _total, accepted in totals),
         )

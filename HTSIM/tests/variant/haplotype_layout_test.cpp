@@ -20,7 +20,7 @@ using htsim::model::Bases;
 using htsim::model::VariantKind;
 using htsim::reference::Contig;
 using htsim::variant::ContigVariants;
-using htsim::variant::Event;
+using htsim::variant::Variant;
 
 void require(bool condition, const std::string &message)
 {
@@ -64,7 +64,7 @@ Contig make_contig()
     return contig;
 }
 
-std::vector<Event> events()
+std::vector<Variant> events()
 {
     return {
         {0U, 1U, 1U, VariantKind::insertion, {}, encode("TT"),
@@ -136,7 +136,7 @@ void test_reference_and_haplotype_boundaries()
             "reference-to-haplotype boundary projection changed");
 }
 
-void test_physical_slices_project_to_typed_truth()
+void test_physical_slices_project_to_typed_annotations()
 {
     const Contig contig = make_contig();
     const ContigVariants variants(contig.bases, events(), contig.index);
@@ -148,30 +148,30 @@ void test_physical_slices_project_to_typed_truth()
                 && insertion.template_bases == encode("TT")
                 && insertion.reference_positions
                     == std::vector<std::int64_t>({-1, -1})
-                && insertion.variant_events.size() == 1U,
-            "insertion-only physical slice lost typed truth");
+                && insertion.variants.size() == 1U,
+            "insertion-only physical slice lost typed details");
 
     const auto after_insertion = layout.project(contig, variants, 3U, 5U);
     require(after_insertion.reference_start == 1U
                 && after_insertion.reference_end == 3U
                 && after_insertion.template_bases == encode("CN")
-                && after_insertion.variant_events.empty(),
+                && after_insertion.variants.empty(),
             "slice after insertion incorrectly retained the insertion");
 
     const auto after_deletion = layout.project(contig, variants, 5U, 7U);
     require(after_deletion.reference_start == 5U
                 && after_deletion.reference_end == 7U
                 && after_deletion.template_bases == encode("AC")
-                && after_deletion.variant_events.empty(),
+                && after_deletion.variants.empty(),
             "slice after deletion used the wrong reference envelope");
 
     const auto spanning = layout.project(contig, variants, 0U, 7U);
     require(spanning.reference_start == 0U
                 && spanning.reference_end == 7U
                 && spanning.template_bases == encode("ATTCNAC")
-                && spanning.variant_events.size() == 2U
-                && spanning.variant_events[0].kind == VariantKind::insertion
-                && spanning.variant_events[1].kind == VariantKind::deletion,
+                && spanning.variants.size() == 2U
+                && spanning.variants[0].kind == VariantKind::insertion
+                && spanning.variants[1].kind == VariantKind::deletion,
             "slice spanning insertion and deletion lost its events");
 
     require_error<ProjectionError>(
@@ -186,21 +186,21 @@ void test_physical_payload_bound_is_window_local()
     const HaplotypeLayout haplotype_0(contig, variants, 0U, false);
     const HaplotypeLayout haplotype_1(contig, variants, 1U, false);
 
-    require(haplotype_0.maximum_variant_event_payload_bytes(variants, 4U)
+    require(haplotype_0.maximum_variant_payload_bytes(variants, 4U)
                 == 34U,
             "payload bound summed variants that cannot share one window");
-    require(haplotype_0.maximum_variant_event_payload_bytes(variants, 5U)
+    require(haplotype_0.maximum_variant_payload_bytes(variants, 5U)
                 == 68U,
             "payload bound missed insertion and deletion in one window");
-    require(haplotype_1.maximum_variant_event_payload_bytes(variants, 4U)
+    require(haplotype_1.maximum_variant_payload_bytes(variants, 4U)
                 == 34U,
             "payload bound ignored the selected haplotype bit");
-    require(haplotype_0.maximum_variant_event_payload_bytes(variants, 9U)
+    require(haplotype_0.maximum_variant_payload_bytes(variants, 9U)
                 == 0U,
             "payload bound invented a window longer than its haplotype");
     require_error<HaplotypeLayoutError>(
         [&] {
-            (void)haplotype_0.maximum_variant_event_payload_bytes(
+            (void)haplotype_0.maximum_variant_payload_bytes(
                 variants, 0U);
         },
         "zero-length payload window was accepted");
@@ -213,7 +213,7 @@ int main()
     try {
         test_materialization_and_two_bit_selection();
         test_reference_and_haplotype_boundaries();
-        test_physical_slices_project_to_typed_truth();
+        test_physical_slices_project_to_typed_annotations();
         test_physical_payload_bound_is_window_local();
         return EXIT_SUCCESS;
     } catch (const std::exception &error) {
