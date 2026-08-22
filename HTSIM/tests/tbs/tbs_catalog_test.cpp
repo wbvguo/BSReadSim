@@ -522,7 +522,7 @@ htsim::reference::Contig make_contig(const std::string &sequence)
 void test_diploid_tbs_centers_on_constructed_haplotypes()
 {
     const auto contig = make_contig("AAAAAAAAAAAA");
-    const std::vector<htsim::variant::Event> events = {
+    const std::vector<htsim::variant::Variant> events = {
         {0U, 6U, 6U, htsim::model::VariantKind::insertion,
          {}, encode("TT"),
          htsim::model::HaplotypeMask::haplotype_1},
@@ -566,7 +566,7 @@ void test_diploid_tbs_centers_on_constructed_haplotypes()
 void test_deleted_tbs_center_removes_only_its_haplotype_bit()
 {
     const auto contig = make_contig("AAAAAAAAAAAA");
-    const std::vector<htsim::variant::Event> events = {
+    const std::vector<htsim::variant::Variant> events = {
         {0U, 5U, 7U, htsim::model::VariantKind::deletion,
          encode("AA"), {},
          htsim::model::HaplotypeMask::haplotype_1},
@@ -593,7 +593,7 @@ void test_deleted_tbs_center_removes_only_its_haplotype_bit()
 void test_diploid_tbs_selects_target_before_haplotype()
 {
     const auto contig = make_contig("AAAAAAAAAAAAAAAAAAAA");
-    const std::vector<htsim::variant::Event> events = {
+    const std::vector<htsim::variant::Variant> events = {
         {0U, 5U, 7U, htsim::model::VariantKind::deletion,
          encode("AA"), {},
          htsim::model::HaplotypeMask::haplotype_1},

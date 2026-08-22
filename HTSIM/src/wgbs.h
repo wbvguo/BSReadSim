@@ -91,7 +91,7 @@ std::vector<std::uint32_t> sample_valid_starts(
 namespace htsim::wgbs {
 
 inline constexpr std::string_view wgbs_gc_format = "tsv";
-inline constexpr std::string_view wgbs_gc_version = "wgbs-gc-target-v1";
+inline constexpr std::string_view wgbs_gc_version = "wgbs-gc-target-v2";
 inline constexpr std::uint32_t maximum_attempts_per_fragment = 100000;
 
 class CoverageProfileError : public std::runtime_error {
@@ -133,16 +133,46 @@ struct SampleBatch {
 struct WgbsGcTargetCalibration {
     std::vector<double> acceptance_probabilities;
     std::vector<double> contig_allocation_weights;
+    double dropped_target_probability = 0.0;
+};
+
+enum class UnreachableTargetPolicy : std::uint8_t {
+    reject = 0,
+    drop_and_renormalize = 1,
+};
+
+// Succinct immutable GC rank index shared by fixed- and variable-insert
+// profile samplers. It stores one bit per reference base plus a word prefix.
+class GcRankIndex {
+public:
+    explicit GcRankIndex(const model::Bases &contig_bases);
+
+    std::uint32_t length() const noexcept;
+    std::uint32_t count(
+        std::uint32_t begin,
+        std::uint32_t end) const;
+
+private:
+    std::vector<std::uint64_t> gc_words_;
+    std::vector<std::uint32_t> gc_prefix_;
+    std::uint32_t length_ = 0;
 };
 
 // Calibrate a global target distribution against fixed-insert opportunity
 // counts. If N_i is the global eligible-start count and p_i the requested
 // output probability, acceptance_i is proportional to p_i/N_i. Contig
 // allocation weights are sum_i N_ci*acceptance_i, which preserves p_i after
-// mixing contigs. A positive target on an unreachable bin fails closed.
+// mixing contigs. Exact mode rejects positive unreachable bins; approximate
+// mode drops their mass and records it before implicitly renormalizing support.
 WgbsGcTargetCalibration calibrate_gc_target(
     const WgbsGcProfile &profile,
-    const std::vector<std::vector<std::uint32_t>> &contig_bin_counts);
+    const std::vector<std::vector<std::uint32_t>> &contig_bin_counts,
+    UnreachableTargetPolicy unreachable_policy =
+        UnreachableTargetPolicy::reject);
+
+WgbsGcTargetCalibration calibrate_haplotype_gc_target(
+    const WgbsGcProfile &profile,
+    const std::vector<std::vector<std::uint32_t>> &contig_category_counts);
 
 // Target-profile WGBS sampling over the same valid-start domain as uniform
 // WGBS. Each output entity repeatedly draws a valid-start rank and an
@@ -166,16 +196,13 @@ public:
         const std::vector<double> &acceptance_probabilities) const;
 
 private:
-    std::uint32_t gc_count(std::uint32_t begin, std::uint32_t end) const;
     std::uint32_t bin(std::uint32_t start) const;
 
     wgbs::FixedFragmentShape shape_;
     wgbs::ValidStartIndex valid_starts_;
     WgbsGcProfile profile_;
-    std::vector<std::uint64_t> gc_words_;
-    std::vector<std::uint32_t> gc_prefix_;
+    GcRankIndex gc_index_;
     std::vector<std::uint32_t> bin_opportunity_counts_;
-    std::uint32_t contig_length_ = 0;
 };
 
 } // namespace htsim::wgbs
@@ -241,6 +268,42 @@ private:
     std::uint32_t allocation_weight_ = 0;
     std::uint32_t maximum_attempts_ = 0;
     bool paired_end_ = false;
+};
+
+// Variable-insert target-GC rejection over the exact proposal domain used by
+// VariableWgbsSampler. Insert length remains the addressed clamped-normal draw
+// at local index 0, start remains local index 1, and local index 2 is reserved
+// for the GC acceptance draw. The supplied acceptance probabilities may be an
+// approximation calibrated outside this component; this sampler only applies
+// them to the actual GC bin of each valid variable-length proposal.
+class VariableWgbsGcSampler {
+public:
+    VariableWgbsGcSampler(
+        const model::Bases &contig_bases,
+        std::uint32_t contig_index,
+        std::uint64_t master_seed,
+        const insert_length::Parameters &insert_parameters,
+        std::uint32_t read_length,
+        bool paired_end,
+        double max_ambiguous_fraction,
+        const WgbsGcProfile &profile,
+        const VariableWgbsOptions &options = {});
+
+    std::uint32_t allocation_weight() const noexcept;
+
+    VariableWgbsBatch sample(
+        std::uint64_t first_candidate_ordinal,
+        std::uint32_t output_count,
+        const std::vector<double> &acceptance_probabilities) const;
+
+private:
+    std::uint32_t bin(const VariableWgbsCandidate &candidate) const;
+
+    VariableWgbsSampler proposals_;
+    WgbsGcProfile profile_;
+    GcRankIndex gc_index_;
+    std::uint64_t fragment_key_ = 0;
+    std::uint32_t maximum_attempts_ = 0;
 };
 
 } // namespace htsim::wgbs
@@ -325,6 +388,16 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+struct HaplotypeCandidate {
+    std::uint32_t reference_start = 0;
+    std::uint8_t haplotype = 0;
+};
+
+struct HaplotypeGcBatch {
+    std::vector<HaplotypeCandidate> candidates;
+    std::uint64_t skipped_count = 0;
+};
+
 // Compact rank-select index over original-reference starts. Every start owns
 // two HaplotypeMask bits: bit 0 is zero-based haplotype 0 and bit 1 is
 // haplotype 1.
@@ -338,6 +411,8 @@ public:
 
     std::uint32_t possible_start_count() const noexcept;
     std::uint32_t valid_start_count() const noexcept;
+    std::uint32_t physical_candidate_count() const noexcept;
+    HaplotypeCandidate candidate_for_physical_rank(std::uint32_t rank) const;
     bool is_valid_start(std::uint32_t zero_based_start) const noexcept;
     model::HaplotypeMask haplotype_mask(
         std::uint32_t zero_based_start) const;
@@ -362,8 +437,38 @@ private:
     // Two adjacent bits per reference start, 32 starts per uint64 word.
     std::vector<std::uint64_t> haplotype_words_;
     std::vector<std::uint32_t> superblock_prefix_;
+    std::vector<std::uint32_t> physical_superblock_prefix_;
     std::uint32_t possible_start_count_ = 0;
     std::uint32_t valid_start_count_ = 0;
+    std::uint32_t physical_candidate_count_ = 0;
+};
+
+class HaplotypeGcSampler {
+public:
+    HaplotypeGcSampler(
+        const reference::Contig &contig,
+        const variant::ContigVariants &variants,
+        const FixedFragmentShape &shape,
+        const WgbsGcProfile &profile);
+
+    std::uint32_t physical_candidate_count() const noexcept;
+    const std::vector<std::uint32_t> &category_opportunity_counts() const noexcept;
+    HaplotypeGcBatch sample(
+        std::uint32_t contig_index,
+        std::uint64_t master_seed,
+        std::uint64_t first_candidate_ordinal,
+        std::uint32_t output_count,
+        const std::vector<double> &acceptance_probabilities) const;
+
+private:
+    std::uint32_t category(const HaplotypeCandidate &candidate) const;
+
+    FixedFragmentShape shape_;
+    HaplotypeStartIndex starts_;
+    WgbsGcProfile profile_;
+    std::array<std::unique_ptr<haplotype::HaplotypeLayout>, 2> layouts_;
+    std::array<std::unique_ptr<GcRankIndex>, 2> gc_indices_;
+    std::vector<std::uint32_t> category_opportunity_counts_;
 };
 
 } // namespace htsim::wgbs

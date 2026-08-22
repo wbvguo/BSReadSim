@@ -20,7 +20,7 @@ from bsreadsim.cli import (  # noqa: E402
     build_run_document,
 )
 from bsreadsim import __version__  # noqa: E402
-from bsreadsim.config import normalize_run_config  # noqa: E402
+from bsreadsim.run.config import normalize_run_config  # noqa: E402
 
 
 def run_module(*arguments: str) -> subprocess.CompletedProcess:
@@ -124,8 +124,11 @@ class CommandLineTests(unittest.TestCase):
                 "variants.vcf",
             ]
         )
-        with self.assertRaisesRegex(CommandLineError, "explicit --seed"):
-            build_rrbs_catalog_document(variant_arguments, REPOSITORY_ROOT)
+        variant_document = build_rrbs_catalog_document(
+            variant_arguments, REPOSITORY_ROOT
+        )
+        self.assertEqual(variant_document["methylation"]["catalog_seed"], "0")
+        self.assertEqual(variant_document["mutation"]["rate"], 0)
 
     def test_run_help_exposes_the_component_boundary(self) -> None:
         result = run_module("run", "--help")
@@ -137,7 +140,7 @@ class CommandLineTests(unittest.TestCase):
         self.assertIn("--bed-methyl", result.stdout)
         self.assertIn("--asm-bed", result.stdout)
         self.assertIn("--core", result.stdout)
-        self.assertIn("--mode", result.stdout)
+        self.assertNotIn("--mode", result.stdout)
 
     def test_no_command_is_not_reported_as_a_successful_run(self) -> None:
         result = run_module()
@@ -145,17 +148,16 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("usage: bsreadsim", result.stdout)
 
-    def test_run_defaults_to_production(self) -> None:
+    def test_run_defaults_to_fastq(self) -> None:
         arguments = build_parser().parse_args(
             ["run", "-r", "reference.fa", "-o", "output", "-n", "10"]
         )
 
-        self.assertEqual(arguments.mode, "production")
         self.assertEqual(arguments.technology, "WGBS")
-        self.assertFalse(arguments.truth_bam)
+        self.assertFalse(arguments.bam)
         self.assertFalse(hasattr(arguments, "protocol_major"))
 
-    def test_debug_mode_is_explicit(self) -> None:
+    def test_bam_flag_projects_into_the_output_contract(self) -> None:
         arguments = build_parser().parse_args(
             [
                 "run",
@@ -165,36 +167,19 @@ class CommandLineTests(unittest.TestCase):
                 "output",
                 "-n",
                 "10",
-                "--mode",
-                "debug",
-            ]
-        )
-
-        self.assertEqual(arguments.mode, "debug")
-
-    def test_truth_bam_flag_projects_into_the_output_contract(self) -> None:
-        arguments = build_parser().parse_args(
-            [
-                "run",
-                "-r",
-                "reference.fa",
-                "-o",
-                "output",
-                "-n",
-                "10",
-                "--truth-bam",
+                "--bam",
             ]
         )
         document = build_run_document(arguments, REPOSITORY_ROOT)
-        self.assertTrue(document["output"]["truth_bam"])
+        self.assertTrue(document["output"]["bam"])
 
-    def test_json_run_config_command_is_not_available(self) -> None:
-        result = run_module("run-config", "run.json", "--mode", "debug")
+    def test_run_config_command_is_not_available(self) -> None:
+        result = run_module("run-config", "run.json")
 
         self.assertEqual(result.returncode, 2)
         self.assertIn("invalid choice", result.stderr)
 
-    def test_profile_path_is_hashed_and_projected_without_json(self) -> None:
+    def test_profile_path_keeps_default_variable_insert_distribution(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             profile_bytes = b"0.1\n0.7\n0.2\n"
@@ -210,8 +195,6 @@ class CommandLineTests(unittest.TestCase):
                     "100",
                     "--coverage-profile",
                     "coverage.tsv",
-                    "--insert-size",
-                    "350",
                     "--workers",
                     "2",
                 ]
@@ -223,13 +206,14 @@ class CommandLineTests(unittest.TestCase):
         artifact = normalized["coverage"]["artifact"]
         self.assertEqual(normalized["coverage"]["kind"], "profile")
         self.assertEqual(artifact["format"], "tsv")
-        self.assertEqual(artifact["version"], "wgbs-gc-target-v1")
+        self.assertEqual(artifact["version"], "wgbs-gc-target-v2")
         self.assertEqual(
             artifact["sha256"], hashlib.sha256(profile_bytes).hexdigest()
         )
-        self.assertEqual(normalized["fragments"]["insert_min"], 350)
-        self.assertEqual(normalized["fragments"]["insert_max"], 350)
-        self.assertEqual(normalized["fragments"]["insert_stddev"], 0)
+        self.assertEqual(normalized["fragments"]["insert_min"], 100)
+        self.assertEqual(normalized["fragments"]["insert_mean"], 400)
+        self.assertEqual(normalized["fragments"]["insert_max"], 1000)
+        self.assertEqual(normalized["fragments"]["insert_stddev"], 25)
         self.assertEqual(normalized["mutation"]["rate"], 0)
         self.assertEqual(normalized["execution"]["workers"], 2)
         self.assertEqual(normalized["sequencing"]["quality"]["phred"], 40)

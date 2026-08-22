@@ -31,9 +31,9 @@ availability bits to the zero-based wire haplotype at this boundary.
 - An event is applied only when its two-bit mask contains the selected
   haplotype. Other events leave the reference unchanged and are not emitted.
 - SNVs replace their one mapped reference base. That template base carries the
-  stable per-contig event ordinal in `base_event_ids`.
+  stable per-contig event ordinal in `base_variant_indices`.
 - Deletions remove their mapped reference bases. The deletion remains in
-  `variant_events` even though no template base can point to it.
+  `variants` even though no template base can point to it.
 - Insertions are emitted immediately before `reference[anchor]`; their
   `reference_positions` are `-1`, and each inserted base points to the event.
 - Event ids are the original zero-based ordinals in the validated per-contig

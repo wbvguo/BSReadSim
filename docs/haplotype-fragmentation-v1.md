@@ -29,7 +29,7 @@ and after all ALT bases. A deletion collapses one physical boundary whose left
 fragment ends at the deletion start and whose right fragment starts at the
 deletion end.
 
-A physical haplotype slice maps back to one reference truth envelope and uses
+A physical haplotype slice maps back to one reference details envelope and uses
 the existing typed SNV, insertion, and deletion events. Physical insert length
 is therefore independent of reference-envelope width. Insertions are
 indivisible wire events: a candidate boundary strictly inside ALT bases
@@ -46,7 +46,7 @@ haplotype and removes only that haplotype choice.
 - RRBS materializes one haplotype sequence at a time for restriction-motif
   discovery. Candidate length and mate ambiguity are evaluated in physical
   haplotype coordinates. Candidates on a variant-bearing contig carry one mask
-  bit and retain their complete typed truth projection.
+  bit and retain their complete typed details projection.
 - TBS keeps BED6 as verified reference-anchored input and computes each
   target's two-bit haplotype eligibility. Sampling is target-first: one BED row
   contributes one uniform choice or one aggregate target output weight, then a

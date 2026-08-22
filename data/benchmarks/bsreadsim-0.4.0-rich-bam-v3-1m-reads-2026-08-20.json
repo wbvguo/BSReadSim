@@ -1,0 +1,208 @@
+{
+  "schema": "bsreadsim-rich-bam-v3-delivery-benchmark-1",
+  "created_at_utc": "2026-08-21T01:58:32Z",
+  "version": "0.4.0",
+  "decision": "accepted",
+  "workload": {
+    "catalog_seed": "0",
+    "chunk_size": 4096,
+    "core_workers": 1,
+    "error_rate": 0,
+    "fragments": 500000,
+    "gzip_level": 1,
+    "insert_max": 1000,
+    "insert_mean": 400,
+    "insert_min": 150,
+    "insert_stddev": 25,
+    "max_in_flight_fragments": 4096,
+    "memory_sample_ms": 25,
+    "mutation_rate": 0,
+    "output_policy": "BAM zt+zr+zf+zx",
+    "paired_end": true,
+    "read_length": 150,
+    "reads": 1000000,
+    "seed": "20260815",
+    "technology": "WGBS",
+    "warmup_fragments": 20000,
+    "workers": 1
+  },
+  "artifacts": {
+    "reference": {
+      "generator": "numpy.default_rng(20260820), 1M pattern x50, A/C/G/T=0.3/0.2/0.2/0.3, width=80",
+      "sha256": "64321e9a6924e3ca99082111607969a0e17cb337a43548dbb46d561b0bdf0794",
+      "size_bytes": 50625014
+    },
+    "wheel": {
+      "filename": "bsreadsim-0.4.0-cp312-cp312-linux_x86_64.whl",
+      "size_bytes": 2650159,
+      "sha256": "5b0088ab4bee29d442a8df73b1644ad9a652bfbbb31cef2afbea6ecca4b41920"
+    },
+    "core": {
+      "version": "htsim-core 0.4.0",
+      "wheel_location": "bsreadsim/native/htsim-core",
+      "sha256": "74926b6f4404e7df0cef9c5e5b41aadd5211ae171ccd47dc338f8629a756437f"
+    },
+    "native_extension": {
+      "filename": "_native.cpython-312-x86_64-linux-gnu.so",
+      "sha256": "7753bdb674793d22b7ef46ffe22b9fd8d5f397d85b3c56be41aeef91daa29f85"
+    }
+  },
+  "validation": {
+    "ctest_release": {
+      "passed": 39,
+      "failed": 0,
+      "wall_seconds": 2.40
+    },
+    "python_unittest": {
+      "passed": 231,
+      "failed": 0,
+      "wall_seconds": 2.595
+    },
+    "wheel_build": {
+      "wall_seconds": 60.11,
+      "peak_rss_kib": 296152
+    },
+    "wheel_install": {
+      "wall_seconds": 0.58,
+      "peak_rss_kib": 53020
+    },
+    "isolated_wheel_smoke": {
+      "package_version": "0.4.0",
+      "core_version": "0.4.0",
+      "rich_bam_completed": true,
+      "source_tree_imported": false
+    },
+    "htslib": {
+      "version": "1.24",
+      "decoded_records": 1000000,
+      "records_missing_zt_zr_zf_zx": 0,
+      "status": "passed"
+    },
+    "samtools": {
+      "version": "1.23",
+      "htslib_version": "1.23",
+      "quickcheck": "passed",
+      "decoded_records": 1000000,
+      "records_missing_zt_zr_zf_zx": 0,
+      "bam_to_fastq": {
+        "processed_reads": 1000000,
+        "discarded_singletons": 0,
+        "wall_seconds": 0.75,
+        "peak_rss_kib": 9184,
+        "status": "passed"
+      },
+      "status": "passed"
+    }
+  },
+  "lanes": [
+    {
+      "core_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "methylation_site_count": 80231805,
+        "per_contig_fragment_counts": [
+          500000
+        ],
+        "skipped_fragment_count": 0,
+        "template_base_count": 199995854
+      },
+      "cpu": {
+        "system_seconds": 4.494225999999999,
+        "user_seconds": 41.630694999999996
+      },
+      "fragments": 500000,
+      "fragments_per_second": 17831.149324049344,
+      "manifest_sha256": "bf107fcca72b1cad530175276746ff277a74a93525e8c1c5f2a0a8eed050a0e2",
+      "output": {
+        "path": "<benchmark-workspace>/formal-zf-output/sim.bam",
+        "record_count": 1000000,
+        "role": "bam",
+        "sha256": "f7aa6483e864373b0e613b19d4799fe27c7dc51ae5b83570e610339c9db8cf9f",
+        "size_bytes": 164351867
+      },
+      "process_tree_memory": {
+        "peak_processes": 3,
+        "peak_pss_kib": 422059,
+        "peak_rss_kib": 436956,
+        "samples": 1041
+      },
+      "python_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "records_by_role": {
+          "bam": 1000000
+        }
+      },
+      "reads": 1000000,
+      "reads_per_second": 35662.29864809869,
+      "stderr": "",
+      "wall_seconds": 28.040817275061272,
+      "key": "rich_bam_without_fragment_realization",
+      "scope": "installed wheel end to end",
+      "output_policy": "BAM zt+zr+zf"
+    },
+    {
+      "core_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "methylation_site_count": 80231805,
+        "per_contig_fragment_counts": [
+          500000
+        ],
+        "skipped_fragment_count": 0,
+        "template_base_count": 199995854
+      },
+      "cpu": {
+        "system_seconds": 4.512537,
+        "user_seconds": 45.085261
+      },
+      "fragments": 500000,
+      "fragments_per_second": 16166.40237349651,
+      "manifest_sha256": "47640717350ddf3cda06ba62174b87d76f6d53994408a76b2eaab6baaf3c7a53",
+      "output": {
+        "path": "<benchmark-workspace>/formal-output/sim.bam",
+        "record_count": 1000000,
+        "role": "bam",
+        "sha256": "0937e98b8bbe7a183052774fc72ff3f3d012f8bd1235e69d1fe3a3ad462ca93a",
+        "size_bytes": 190379380
+      },
+      "process_tree_memory": {
+        "peak_processes": 3,
+        "peak_pss_kib": 453366,
+        "peak_rss_kib": 468184,
+        "samples": 1146
+      },
+      "python_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "records_by_role": {
+          "bam": 1000000
+        }
+      },
+      "reads": 1000000,
+      "reads_per_second": 32332.80474699302,
+      "stderr": "",
+      "wall_seconds": 30.928340669022873,
+      "key": "rich_bam_with_fragment_realization",
+      "scope": "installed wheel end to end",
+      "output_policy": "BAM zt+zr+zf+zx"
+    }
+  ],
+  "fragment_realization_delta": {
+    "wall_seconds": 2.887523393961601,
+    "wall_change_percent": 10.297572162883007,
+    "throughput_change_percent": -9.336173009933491,
+    "output_bytes": 26027513,
+    "output_change_percent": 15.836457154453853,
+    "peak_pss_kib": 31307,
+    "peak_rss_kib": 31228
+  },
+  "historical_context": {
+    "report": "data/benchmarks/bsreadsim-0.3.0-python-cleanup-1m-reads-2026-08-20.json",
+    "same_reference_sha256": true,
+    "old_bam_wall_seconds": 23.622108082985505,
+    "old_bam_reads_per_second": 42333.22430356156,
+    "comparability": "background only: the old BAM did not carry the v3 zf+zx output contract"
+  },
+  "interpretation": "Both formal lanes use the same installed wheel, reference, seed, 500000 paired fragments, and one-worker settings. Their difference isolates optional zx realization serialization. Process-tree memory is sampled every 25 ms."
+}

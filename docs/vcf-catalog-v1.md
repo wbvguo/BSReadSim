@@ -4,7 +4,8 @@ Status: normative contract for predefined genetic variants.
 
 The C++ core is the sole owner of VCF parsing, deterministic phasing, reference
 validation, and haplotype construction. Python receives typed variant events
-and, in debug mode, their sparse per-base provenance through the protocol.
+and, when annotated BAM is requested, their per-base provenance through the
+Full Details protocol projection.
 
 ## Accepted VCF subset
 
@@ -35,7 +36,7 @@ haplotype 2, and 3 is both. These values are availability/applicability bits,
 not the protocol's zero-based sampled haplotype.
 
 Phased `0|1` and `1|0` map directly. `1|1` maps to both. For an unphased
-heterozygote, the core derives the `haplotype` key from `(master_seed,
+heterozygote, the core derives the `haplotype` key from `(catalog_seed,
 contig_index)` and draws one Bernoulli value at `(entity=per-contig event
 ordinal, local=1)`. True assigns ALT to haplotype
 1; false assigns ALT to haplotype 2. Reference-only records do not consume an
@@ -57,12 +58,9 @@ emitting the protocol preamble. Its pre-header
 haplotype/start combination when a boundary cuts a deletion, the projected
 template is too short, or either emitted mate exceeds the N threshold. Uniform
 fixed-insert sampling ranks only eligible reference starts and reports zero
-skips. Variable spans use the addressed proposal stream. Target-GC coverage
-is reference-only and rejects VCF input before generation.
+skips. Variable spans use the addressed proposal stream. Fixed-insert target-GC coverage calibrates physical opportunities after haplotype construction. Variable-insert target-GC with variants remains gated.
 
-Python carries every typed `variant_events` entry through post-processing into
-truth JSONL 1.2. This is required for deletions because no emitted template
-base can carry their event ID. RRBS motif discovery and TBS targeting consume
+Python carries typed `variants` through the internal Full Details transport when BAM is selected. BAM alignment, CIGAR, and summary flags retain deletion effects without a JSON sidecar. RRBS motif discovery and TBS targeting consume
 the two constructed haplotypes before fragmentation, as frozen by
 [haplotype-fragmentation-v1](haplotype-fragmentation-v1.md). A physical cut or
 fragment boundary inside inserted ALT sequence is omitted because the wire

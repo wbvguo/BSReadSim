@@ -121,7 +121,7 @@ struct ReadLayout {
     InsertCoordinate insert_coordinate = InsertCoordinate::reference;
 };
 
-// Select the typed state retained after fragment construction. Full Truth
+// Select the typed state retained after fragment construction. Full Details
 // requires the complete projection. Common columns need only the template,
 // methylation rows, and structural mate slices; omitting the remaining state
 // avoids constructing data that the production wire path does not carry.

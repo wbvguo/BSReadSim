@@ -9,7 +9,7 @@ correctly when a causal variant lies just outside a fragment, when an insertion
 creates a site, or when a deletion joins formerly separated flanks.
 
 The implementation does not materialize whole-contig `reference_positions` or
-`base_event_ids` arrays. It walks each haplotype in `O(L + V)` time, where `L`
+`base_variant_indices` arrays. It walks each haplotype in `O(L + V)` time, where `L`
 is contig length and `V` is event count. Classified site streams are merged by
 base origin:
 

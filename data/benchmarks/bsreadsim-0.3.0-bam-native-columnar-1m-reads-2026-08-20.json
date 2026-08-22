@@ -1,0 +1,197 @@
+{
+  "schema": "bsreadsim-bam-performance-evidence-1",
+  "created_at_utc": "2026-08-20T06:05:52.066471+00:00",
+  "implementation": {
+    "version": "0.3.0",
+    "candidate": "native-columnar-truth-sam",
+    "boundary": "validated protocol columns -> native SAM bytes -> BAM writer",
+    "build_input": "isolated copy of the uncommitted working tree",
+    "wheel_sha256": "56beba1c6a8a20d3b567025bd5d21ace4c575bd9eb2edbffe6c12f8f07bbd7dd",
+    "core_sha256": "ee0228a1dbc81fb41ae7e07eb2df384f99d8f9901b5a18f995855250701bbd29"
+  },
+  "workload": {
+    "reads": 1000000,
+    "read_pairs": 500000,
+    "mode": "production",
+    "cpu_affinity": "CPU 0",
+    "ordering": [
+      "native-columnar",
+      "typed-object-reference"
+    ],
+    "repetitions_per_path": 1,
+    "explicit_warmup": false,
+    "preflight": "20,000-read byte-equivalence smoke ran before the measured pair",
+    "arguments": [
+      "-r",
+      "/tmp/bsreadsim-grch38-chr-bench.wM9a6y/chr21.fa",
+      "-n",
+      "500000",
+      "--seed",
+      "20260815",
+      "--mutation-rate",
+      "0",
+      "--read-length",
+      "150",
+      "--insert-min",
+      "150",
+      "--insert-mean",
+      "400",
+      "--insert-max",
+      "1000",
+      "--insert-stddev",
+      "25",
+      "--error-rate",
+      "0",
+      "--workers",
+      "1",
+      "--core-workers",
+      "1",
+      "--chunk-size",
+      "4096",
+      "--max-in-flight-fragments",
+      "4096",
+      "--compression",
+      "gzip",
+      "--gzip-level",
+      "1",
+      "--prefix",
+      "bench",
+      "--bam"
+    ]
+  },
+  "environment": {
+    "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "python": "3.12.3 (main, Jun 19 2026, 12:46:00) [GCC 13.3.0]",
+    "logical_cpu_count": 28,
+    "core_version": "htsim-core 0.3.0"
+  },
+  "measurements": {
+    "native_columnar": {
+      "maximum_fragments_per_second": 7063.433873953292,
+      "maximum_reads_per_second": 14126.867747906585,
+      "median_fragments_per_second": 7063.433873953292,
+      "median_reads_per_second": 14126.867747906585,
+      "median_wall_seconds": 70.78710000298452,
+      "minimum_fragments_per_second": 7063.433873953292,
+      "minimum_reads_per_second": 14126.867747906585,
+      "output_bytes": 143814133,
+      "peak_pss_kib": 287900
+    },
+    "typed_object_reference": {
+      "maximum_fragments_per_second": 1510.1807128302294,
+      "maximum_reads_per_second": 3020.3614256604587,
+      "median_fragments_per_second": 1510.1807128302294,
+      "median_reads_per_second": 3020.3614256604587,
+      "median_wall_seconds": 331.0862042880617,
+      "minimum_fragments_per_second": 1510.1807128302294,
+      "minimum_reads_per_second": 3020.3614256604587,
+      "output_bytes": 143814133,
+      "peak_pss_kib": 279160
+    }
+  },
+  "paired_comparison": {
+    "wall_reduction_percent": 78.61973737166163,
+    "throughput_speedup": 4.67721102113383,
+    "output_identity": true
+  },
+  "historical_context": {
+    "original_bam_baseline": {
+      "wall_seconds": 297.2336,
+      "reads_per_second": 3364.0,
+      "new_wall_reduction_percent": 76.18469109717591,
+      "new_throughput_speedup": 4.199425608771279
+    },
+    "native_typed_object_batch": {
+      "wall_seconds": 276.1169,
+      "reads_per_second": 3621.65,
+      "new_wall_reduction_percent": 74.3633584170384,
+      "new_throughput_speedup": 3.9006717236360733
+    }
+  },
+  "outputs": [
+    {
+      "record_count": 500000,
+      "role": "read1",
+      "sha256": "09c89dfc3a88cb78c6978e2d549042d467cc3274bb4d417bea73ef919aa1327b",
+      "size_bytes": 34949628
+    },
+    {
+      "record_count": 500000,
+      "role": "read2",
+      "sha256": "92da8c0c5850de25172fe17429a341fa21b932fc482047638e3992b594cf659c",
+      "size_bytes": 34954986
+    },
+    {
+      "record_count": 1000000,
+      "role": "bam",
+      "sha256": "726d5dee118daa87233f3b7d49128735e8ca21bf5a52fed71c415eb70a5b1051",
+      "size_bytes": 73909519
+    }
+  ],
+  "semantic_gates": {
+    "installed_wheel_python_tests": {
+      "passed": 238,
+      "failed": 0
+    },
+    "ctest": {
+      "passed": 40,
+      "failed": 0
+    },
+    "preflight_20000_reads": {
+      "output_identity": true
+    },
+    "complex_paired_end": {
+      "mutation_rate": 0.02,
+      "indel_fraction": 0.35,
+      "indel_extension_probability": 0.25,
+      "sequencing_error_rate": 0.01,
+      "output_identity": true,
+      "outputs": [
+        {
+          "record_count": 10000,
+          "role": "read1",
+          "sha256": "fef4edef070afbe1f3d317e2033d3c12ee67b6ff48c5dcb6edd4d28d3fd7b62d",
+          "size_bytes": 698711
+        },
+        {
+          "record_count": 10000,
+          "role": "read2",
+          "sha256": "a69c5e45bc82dbc5082e27dfc249671f8152e36f51e475c2746a0ea1ace57081",
+          "size_bytes": 699020
+        },
+        {
+          "record_count": 20000,
+          "role": "bam",
+          "sha256": "a837b42a40f68d2db73b7c8a5c4220f8150e3bce47b1aa4e8d8e49f2b21f61c2",
+          "size_bytes": 1706500
+        }
+      ]
+    },
+    "complex_single_end": {
+      "mutation_rate": 0.02,
+      "indel_fraction": 0.35,
+      "indel_extension_probability": 0.25,
+      "sequencing_error_rate": 0.01,
+      "output_identity": true,
+      "outputs": [
+        {
+          "record_count": 10000,
+          "role": "read1",
+          "sha256": "50a258dd8f14e7d4c03f32db21b261cac8658dde5fa08c74e5427c064b7d7056",
+          "size_bytes": 698571
+        },
+        {
+          "record_count": 10000,
+          "role": "bam",
+          "sha256": "d0fcf9b45e1e183861c5bbcd3e2847c1b1e38af8867cb3ab7ca7b6c9f3a678c0",
+          "size_bytes": 809078
+        }
+      ]
+    }
+  },
+  "limitations": [
+    "The 1M comparison is one sequential pinned-CPU pair, not an interleaved multi-repetition distribution.",
+    "The measured fast path applies to production full-truth runs with uniform quality and uniform error models; unsupported modes retain the typed reference path.",
+    "Filesystem and reference caches were warm from the byte-equivalence preflight."
+  ]
+}

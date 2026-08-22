@@ -1,6 +1,7 @@
-"""Equivalence checks for the optional private native hot loops."""
+"""Equivalence checks for private native hot loops."""
 
 from __future__ import annotations
+from bsreadsim.rng import _bernoulli_unchecked
 
 import math
 import struct
@@ -13,25 +14,29 @@ import unittest
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY_ROOT / "src"))
 
-try:
-    from bsreadsim import _native
-except ImportError:
-    _native = None
-
-from bsreadsim.protocol import _crc32c_python  # noqa: E402
+from bsreadsim import _native  # noqa: E402
 from bsreadsim.rng import _philox4x32_10_unchecked  # noqa: E402
-from bsreadsim.rng import (  # noqa: E402
+from bsreadsim.rng import (
     RNGStage,
-    _bernoulli_unchecked,
     _u64_unchecked,
     derive_key,
 )
 
 
-@unittest.skipIf(_native is None, "native extension is not built in the source tree")
+def _crc32c_reference(value: bytes) -> int:
+    """Return an independent bitwise CRC32C oracle for native tests."""
+
+    crc = 0xFFFFFFFF
+    for byte in value:
+        crc ^= byte
+        for _ in range(8):
+            crc = (crc >> 1) ^ (0x82F63B78 if crc & 1 else 0)
+    return (~crc) & 0xFFFFFFFF
+
+
 class NativeEquivalenceTests(unittest.TestCase):
     def test_batched_site_bernoulli_matches_reference(self) -> None:
-        from tests.test_postprocess import make_fragment  # pylint: disable=import-outside-toplevel
+        from tests.test_process_stages import make_fragment  # pylint: disable=import-outside-toplevel
 
         fragment = make_fragment(paired_end=True, ordinal=73)
         key = derive_key(991, RNGStage.SITE_STATE, fragment.contig_index)
@@ -157,7 +162,7 @@ class NativeEquivalenceTests(unittest.TestCase):
         def record(contig, start, end, ordinal, mate_number, sequence, quality):
             left = start + 1
             right = end if end > start else left
-            return "@{}:{}-{}:{}/{}\n{}\n+\n{}\n".format(
+            return "@{}:{}-{}:{:x}/{}\n{}\n+\n{}\n".format(
                 contig,
                 left,
                 right,
@@ -262,7 +267,6 @@ class NativeEquivalenceTests(unittest.TestCase):
                         if paired_end
                         else 0
                     ),
-                    0,
                 )
                 for index, ordinal in enumerate(ordinals)
             )
@@ -311,67 +315,8 @@ class NativeEquivalenceTests(unittest.TestCase):
         for length in (0, 1, 7, 8, 31, 4095, 4096, 4097, 65536):
             value = bytes((index * 37 + 11) & 0xFF for index in range(length))
             with self.subTest(length=length):
-                expected = _crc32c_python(value)
+                expected = _crc32c_reference(value)
                 self.assertEqual(_native.crc32c(value), expected)
                 self.assertEqual(_native.crc32c(bytearray(value)), expected)
                 framed = b"x" + value + b"y"
                 self.assertEqual(_native.crc32c(memoryview(framed)[1:-1]), expected)
-
-    def test_truth_json_matches_reference_for_regular_and_compact_annotations(self) -> None:
-        from bsreadsim.output import (  # pylint: disable=import-outside-toplevel
-            _canonical_truth_json_python,
-        )
-        from bsreadsim.postprocess import (  # pylint: disable=import-outside-toplevel
-            UniformPostprocessConfig,
-            process_fragment,
-        )
-        from tests.test_postprocess import (  # pylint: disable=import-outside-toplevel
-            make_fragment,
-        )
-
-        config = UniformPostprocessConfig(
-            master_seed=7,
-            conversion_rate=1.0,
-            error_rate=0.0,
-            quality_phred=30,
-        )
-        for paired_end in (False, True):
-            fragment = make_fragment(paired_end=paired_end)
-            regular = process_fragment(fragment, 'chr\"雪\\line\n', config)
-            compact = process_fragment(
-                fragment,
-                'chr\"雪\\line\n',
-                config,
-                compact_annotations=True,
-            )
-            for processed in (regular, compact):
-                with self.subTest(
-                    paired_end=paired_end,
-                    compact=processed is compact,
-                ):
-                    expected = _canonical_truth_json_python(processed).encode("utf-8")
-                    self.assertEqual(
-                        _native.canonical_truth_json_bytes(processed),
-                        expected,
-                    )
-                    self.assertEqual(
-                        _native.canonical_truth_json_bytes(processed, True),
-                        expected + b"\n",
-                    )
-
-        for probability in (0.0, -0.0, 1e-7, 0.125, 1.0):
-            value = process_fragment(
-                make_fragment(paired_end=False),
-                "chr1",
-                config,
-            )
-            state = replace(value.site_states[0], probability=probability)
-            value = replace(value, site_states=(state,) + value.site_states[1:])
-            self.assertEqual(
-                _native.canonical_truth_json_bytes(value),
-                _canonical_truth_json_python(value).encode("utf-8"),
-            )
-
-
-if __name__ == "__main__":
-    unittest.main()

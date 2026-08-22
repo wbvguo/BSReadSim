@@ -8,14 +8,13 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
-from typing import List, Optional
 
 from bsreadsim import __version__
-from bsreadsim.manifest import verify_complete_manifest
-from bsreadsim.runtime import packaged_core_candidate, resolve_core_executable
+from bsreadsim.run.manifest import verify_complete_manifest
+from bsreadsim.native.launch import packaged_core_candidate, resolve_core_executable
 
 
-def _baseline_arguments(output_directory: str) -> List[str]:
+def _baseline_arguments(output_directory: str) -> list[str]:
     return [
         "-r",
         "tiny.fa",
@@ -66,8 +65,6 @@ def _baseline_arguments(output_directory: str) -> List[str]:
 def _run_cli(
     directory: Path,
     output_directory: str,
-    *,
-    mode: Optional[str] = None,
 ):
     arguments = [
         sys.executable,
@@ -76,8 +73,6 @@ def _run_cli(
         "run",
         *_baseline_arguments(output_directory),
     ]
-    if mode is not None:
-        arguments.extend(("--mode", mode))
     completed = subprocess.run(
         arguments,
         cwd=str(directory),
@@ -94,7 +89,7 @@ def _run_cli(
     manifest_path = Path(completed.stdout.strip())
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     verify_complete_manifest(manifest)
-    if manifest["versions"]["protocol"] != "2.0":
+    if manifest["versions"]["protocol"] != "2.1":
         raise SystemExit("installed manifest recorded the wrong protocol")
     return manifest_path, manifest
 
@@ -128,39 +123,13 @@ def main() -> int:
         artifact = normalized["coverage"]["artifact"]
         if artifact["sha256"] != hashlib.sha256(profile_bytes).hexdigest():
             raise SystemExit("installed direct CLI recorded the wrong profile digest")
-        if artifact["version"] != "wgbs-gc-target-v1":
+        if artifact["version"] != "wgbs-gc-target-v2":
             raise SystemExit("installed direct CLI recorded the wrong profile version")
         if manifest["counts"]["core"]["fragment_count"] != 4:
             raise SystemExit("installed pipeline emitted the wrong fragment count")
 
         if {item["role"] for item in manifest["outputs"]} != {"read1", "read2"}:
-            raise SystemExit("installed default mode did not remain FASTQ-only")
-        if (directory / "output" / "sample.truth.jsonl.gz").exists():
-            raise SystemExit("installed default mode emitted a Truth artifact")
-
-        _, debug_manifest = _run_cli(directory, "debug-output", mode="debug")
-        if {item["role"] for item in debug_manifest["outputs"]} != {
-            "read1", "read2", "truth"
-        }:
-            raise SystemExit("installed debug mode omitted Truth")
-        if debug_manifest["counts"]["core"] != manifest["counts"]["core"]:
-            raise SystemExit("installed debug mode changed core scientific counts")
-        for field in ("fragment_count", "mate_count"):
-            if (
-                debug_manifest["counts"]["python"][field]
-                != manifest["counts"]["python"][field]
-            ):
-                raise SystemExit(
-                    "installed debug mode changed Python {}".format(field)
-                )
-
-        fastq_output = directory / "output"
-        debug_output = directory / "debug-output"
-        for name in ("sample.R1.fastq.gz", "sample.R2.fastq.gz"):
-            if (fastq_output / name).read_bytes() != (debug_output / name).read_bytes():
-                raise SystemExit(
-                    "installed debug mode changed {} bytes".format(name)
-                )
+            raise SystemExit("installed run did not emit exactly paired FASTQ")
     return 0
 
 

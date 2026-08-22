@@ -177,16 +177,16 @@ void test_cgmap_overlay_and_na_fallback()
     const auto chg_c = find_position(4U);
     require(
         cg_c != catalog.sites().end()
-            && cg_c->source == MethylationSource::cgmap
+            && cg_c->methylation_source == MethylationSource::cgmap
             && cg_c->methylation_probability == 0.125F,
         "defined CGmap value did not replace the Beta level");
     require(
         cg_g != catalog.sites().end()
-            && cg_g->source == MethylationSource::beta,
+            && cg_g->methylation_source == MethylationSource::beta,
         "CGmap na did not retain the Beta source");
     require(
         chg_c != catalog.sites().end()
-            && chg_c->source == MethylationSource::cgmap
+            && chg_c->methylation_source == MethylationSource::cgmap
             && chg_c->methylation_probability == 0.75F,
         "non-CpG CGmap value was not overlaid");
 
@@ -237,14 +237,14 @@ void test_cgmap_context_pool_and_beta_fallback()
                 site.reference_position));
         if (expected) {
             require(
-                site.source == MethylationSource::pooled_cgmap
+                site.methylation_source == MethylationSource::pooled_cgmap
                     && site.methylation_probability == *expected,
                 "reference catalog lost a typed CGmap pool draw");
             saw_pooled = true;
         } else {
             const ShapePair &shape = shape_for_test(site.context, configured);
             require(
-                site.source == MethylationSource::beta
+                site.methylation_source == MethylationSource::beta
                     && site.methylation_probability
                         == htsim::beta_sampler::sample_beta(
                             seed,

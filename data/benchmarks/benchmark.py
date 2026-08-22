@@ -17,7 +17,7 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Dict, Mapping, Optional, Tuple
+from collections.abc import Mapping
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -29,10 +29,11 @@ if (
     sys.path.insert(0, str(SOURCE_ROOT))
 
 from bsreadsim.cli import build_parser, build_run_document  # noqa: E402
-from bsreadsim.config import normalize_run_config  # noqa: E402
-from bsreadsim.manifest import verify_complete_manifest  # noqa: E402
-from bsreadsim.pipeline import resolve_core_executable, run_document  # noqa: E402
-from bsreadsim.preparation import materialize_master_seed  # noqa: E402
+from bsreadsim.run.config import normalize_run_config  # noqa: E402
+from bsreadsim.run.manifest import verify_complete_manifest  # noqa: E402
+from bsreadsim.native.launch import resolve_core_executable  # noqa: E402
+from bsreadsim.run.execute import run_document  # noqa: E402
+from bsreadsim.run.prepare import materialize_master_seed  # noqa: E402
 
 
 RUN_ID = "00000000-0000-4000-8000-0000000000b1"
@@ -41,9 +42,13 @@ RUN_ID = "00000000-0000-4000-8000-0000000000b1"
 def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--core", type=Path)
-    parser.add_argument("--mode", choices=("production", "debug"), default="production")
     parser.add_argument("--repetitions", type=int, default=5)
     parser.add_argument("--warmup", action="store_true")
+    parser.add_argument(
+        "--warmup-fragments",
+        type=int,
+        help="use this many read pairs for warmup; implies --warmup",
+    )
     parser.add_argument("--memory-sample-ms", type=int, default=25)
     parser.add_argument(
         "--workspace-root",
@@ -54,7 +59,7 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument(
         "run_arguments",
         nargs=argparse.REMAINDER,
-        help="BSReadSim run arguments after '--'; omit -o/--output, --core, and --mode",
+        help="BSReadSim run arguments after '--'; omit -o/--output and --core",
     )
     return parser.parse_args()
 
@@ -124,7 +129,7 @@ def _process_tree(root_pid: int):
         pending.extend(int(value) for value in children.split())
 
 
-def _process_memory(pid: int) -> Optional[Tuple[int, int]]:
+def _process_memory(pid: int) -> tuple[int, int] | None:
     rss_kib = None
     pss_kib = None
     try:
@@ -143,7 +148,7 @@ def _process_memory(pid: int) -> Optional[Tuple[int, int]]:
     return rss_kib, pss_kib
 
 
-def _resource_usage(kind: int) -> Dict[str, float]:
+def _resource_usage(kind: int) -> dict[str, float]:
     usage = resource.getrusage(kind)
     return {
         "user_seconds": usage.ru_utime,
@@ -153,7 +158,7 @@ def _resource_usage(kind: int) -> Dict[str, float]:
     }
 
 
-def _process_io() -> Dict[str, int]:
+def _process_io() -> dict[str, int]:
     try:
         lines = Path("/proc/self/io").read_text(encoding="ascii").splitlines()
     except (FileNotFoundError, PermissionError):
@@ -172,14 +177,11 @@ def _difference(after: Mapping[str, float], before: Mapping[str, float]):
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
     with path.open("rb") as source:
-        for block in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+        return hashlib.file_digest(source, "sha256").hexdigest()
 
 
-def _command(*arguments: object) -> Optional[str]:
+def _command(*arguments: object) -> str | None:
     try:
         completed = subprocess.run(
             [str(value) for value in arguments],
@@ -200,10 +202,43 @@ def _document_for_output(
     return document
 
 
+def _document_for_warmup(
+    template: Mapping[str, object],
+    output: Path,
+    fragments: int | None,
+) -> Mapping[str, object]:
+    document = _document_for_output(template, output)
+    if fragments is None:
+        return document
+    fragment_config = document.get("fragments")
+    if not isinstance(fragment_config, dict) or "read_pairs" not in fragment_config:
+        raise ValueError(
+            "--warmup-fragments requires a run configured with --read-pairs"
+        )
+    if fragment_config.get("depth") is not None:
+        raise ValueError(
+            "--warmup-fragments cannot replace a depth-based workload"
+        )
+    fragment_config["read_pairs"] = fragments
+    return document
+
+
+def _expected_output_roles(template: Mapping[str, object]) -> set[str]:
+    fragments = template.get("fragments")
+    output = template.get("output")
+    if not isinstance(fragments, Mapping) or not isinstance(output, Mapping):
+        raise ValueError("normalized benchmark template is incomplete")
+    if output.get("bam"):
+        return {"bam"}
+    roles = {"read1"}
+    if fragments.get("paired_end"):
+        roles.add("read2")
+    return roles
+
+
 def _measure(
     document: Mapping[str, object],
     core: Path,
-    mode: str,
     memory_sample_ms: int,
 ) -> Mapping[str, object]:
     self_before = _resource_usage(resource.RUSAGE_SELF)
@@ -219,7 +254,6 @@ def _measure(
             base_directory=Path.cwd(),
             core_executable=core,
             run_id=RUN_ID,
-            mode=mode,
         )
     finally:
         memory = None if monitor is None else monitor.stop()
@@ -228,6 +262,7 @@ def _measure(
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
     verify_complete_manifest(manifest)
     fragments = manifest["counts"]["core"]["fragment_count"]
+    reads = manifest["counts"]["core"]["mate_count"]
     outputs = [
         {
             "role": item.role,
@@ -240,7 +275,9 @@ def _measure(
     return {
         "wall_seconds": wall_seconds,
         "fragments_per_second": fragments / wall_seconds,
+        "reads_per_second": reads / wall_seconds,
         "fragments": fragments,
+        "reads": reads,
         "outputs": outputs,
         "output_bytes": sum(item["size_bytes"] for item in outputs),
         "core_counts": manifest["counts"]["core"],
@@ -276,14 +313,13 @@ def _direct_run_arguments(arguments: argparse.Namespace) -> list[str]:
         raise SystemExit("provide BSReadSim run arguments after '--'")
     for value in values:
         if (
-            value in {"-o", "--output", "--core", "--mode"}
+            value in {"-o", "--output", "--core"}
             or (value.startswith("-o") and not value.startswith("--"))
             or value.startswith("--output=")
             or value.startswith("--core=")
-            or value.startswith("--mode=")
         ):
             raise SystemExit(
-                "benchmark manages -o/--output, --core, and --mode"
+                "benchmark manages -o/--output and --core"
             )
     return values
 
@@ -292,6 +328,8 @@ def main() -> int:
     arguments = _arguments()
     if arguments.repetitions < 1:
         raise SystemExit("repetitions must be positive")
+    if arguments.warmup_fragments is not None and arguments.warmup_fragments < 1:
+        raise SystemExit("warmup-fragments must be positive")
     if arguments.memory_sample_ms < 0:
         raise SystemExit("memory-sample-ms must be non-negative")
 
@@ -314,18 +352,24 @@ def main() -> int:
         normalize_run_config(
             build_run_document(parsed_run, invocation_directory),
             invocation_directory,
-            mode=arguments.mode,
         )
     )
     template = loaded.as_dict()
-    template["output"].pop("truth")
     core = resolve_core_executable(arguments.core)
 
-    if arguments.warmup:
+    warmup = arguments.warmup or arguments.warmup_fragments is not None
+    if warmup:
+        try:
+            warmup_document = _document_for_warmup(
+                template,
+                workspace / "warmup-output",
+                arguments.warmup_fragments,
+            )
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
         _measure(
-            _document_for_output(template, workspace / "warmup-output"),
+            warmup_document,
             core,
-            arguments.mode,
             arguments.memory_sample_ms,
         )
 
@@ -338,7 +382,6 @@ def main() -> int:
                     workspace / "run-{}-output".format(index + 1),
                 ),
                 core,
-                arguments.mode,
                 arguments.memory_sample_ms,
             )
         )
@@ -346,30 +389,30 @@ def main() -> int:
     expected = _output_signature(measurements[0])
     if any(_output_signature(item) != expected for item in measurements[1:]):
         raise SystemExit("repetitions produced different counts or output bytes")
-    expected_roles = {"read1"}
-    if template["fragments"]["paired_end"]:
-        expected_roles.add("read2")
-    if arguments.mode == "debug":
-        expected_roles.add("truth")
+    expected_roles = _expected_output_roles(template)
     observed_roles = {item["role"] for item in measurements[0]["outputs"]}
     if observed_roles != expected_roles:
-        raise SystemExit("output roles disagree with the selected mode")
+        raise SystemExit("output roles disagree with the selected output policy")
 
     walls = [item["wall_seconds"] for item in measurements]
     throughputs = [item["fragments_per_second"] for item in measurements]
+    read_throughputs = [item["reads_per_second"] for item in measurements]
     memory_values = [
         item["process_tree_memory"]["peak_pss_kib"]
         for item in measurements
         if item["process_tree_memory"] is not None
     ]
     report = {
-        "schema": "bsreadsim-current-benchmark-1",
+        "schema": "bsreadsim-current-benchmark-2",
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "workspace": str(workspace),
         "run_arguments": run_arguments,
         "effective_seed": str(loaded.master_seed),
-        "mode": arguments.mode,
-        "warmup": arguments.warmup,
+        "output_policy": (
+            "bam" if template["output"].get("bam") else "fastq"
+        ),
+        "warmup": warmup,
+        "warmup_fragments": arguments.warmup_fragments,
         "repetitions": arguments.repetitions,
         "environment": {
             "python": sys.version,
@@ -387,6 +430,9 @@ def main() -> int:
             "median_fragments_per_second": statistics.median(throughputs),
             "minimum_fragments_per_second": min(throughputs),
             "maximum_fragments_per_second": max(throughputs),
+            "median_reads_per_second": statistics.median(read_throughputs),
+            "minimum_reads_per_second": min(read_throughputs),
+            "maximum_reads_per_second": max(read_throughputs),
             "peak_pss_kib": max(memory_values) if memory_values else None,
             "output_bytes": measurements[0]["output_bytes"],
         },

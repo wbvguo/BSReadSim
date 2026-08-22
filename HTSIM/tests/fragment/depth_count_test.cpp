@@ -39,8 +39,8 @@ void test_human_scale_and_pairing()
         read_pairs(20.0, UINT64_C(3100000000), 100U, false)
             == UINT32_C(620000000),
         "human-scale single-end depth conversion changed");
-    require(read_pairs(0.5, 1001U, 100U, false) == 5U,
-            "fractional depth did not use frozen floor semantics");
+    require(read_pairs(0.5, 1001U, 100U, false) == 6U,
+            "fractional depth did not use frozen ceil semantics");
     require(
         read_pairs(
             2.0,
@@ -71,9 +71,8 @@ void test_invalid_and_overflow_inputs()
     require_error(
         [] {read_pairs(1.0, 100U, 0U, false);},
         "zero read length was accepted");
-    require_error(
-        [] {read_pairs(0.001, 10U, 100U, true);},
-        "depth-derived zero count was accepted");
+    require(read_pairs(0.001, 10U, 100U, true) == 1U,
+            "positive depth did not ceil to one read pair");
     require_error(
         [] {
             read_pairs(

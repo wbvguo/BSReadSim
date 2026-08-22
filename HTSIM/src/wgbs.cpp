@@ -447,15 +447,69 @@ const crypto::Sha256Digest &WgbsGcProfile::file_sha256() const noexcept
     return file_sha256_;
 }
 
-WgbsGcTargetCalibration calibrate_gc_target(
-    const WgbsGcProfile &profile,
-    const std::vector<std::vector<std::uint32_t>> &contig_bin_counts)
+GcRankIndex::GcRankIndex(const model::Bases &contig_bases)
+{
+    if (contig_bases.size() > std::numeric_limits<std::uint32_t>::max()) {
+        throw CoverageProfileError("contig length exceeds uint32");
+    }
+    length_ = static_cast<std::uint32_t>(contig_bases.size());
+    gc_words_.assign((contig_bases.size() + 63U) / 64U, 0U);
+    for (std::size_t index = 0U; index < contig_bases.size(); ++index) {
+        if (contig_bases[index] == 1U || contig_bases[index] == 2U) {
+            gc_words_[index / 64U] |= UINT64_C(1) << (index % 64U);
+        }
+    }
+    gc_prefix_.reserve(gc_words_.size() + 1U);
+    gc_prefix_.push_back(0U);
+    for (const std::uint64_t word : gc_words_) {
+        const std::uint32_t word_count = population_count(word);
+        if (word_count > std::numeric_limits<std::uint32_t>::max()
+                - gc_prefix_.back()) {
+            throw CoverageProfileError("contig GC count exceeds uint32");
+        }
+        gc_prefix_.push_back(gc_prefix_.back() + word_count);
+    }
+}
+
+std::uint32_t GcRankIndex::length() const noexcept
+{
+    return length_;
+}
+
+std::uint32_t GcRankIndex::count(
+    std::uint32_t begin,
+    std::uint32_t end) const
+{
+    if (begin > end || end > length_) {
+        throw CoverageProfileError("GC interval is outside the contig");
+    }
+    const auto rank = [&](std::uint32_t offset) {
+        const std::size_t word = static_cast<std::size_t>(offset / 64U);
+        const unsigned bit = static_cast<unsigned>(offset % 64U);
+        std::uint32_t result = gc_prefix_.at(word);
+        if (bit != 0U) {
+            const std::uint64_t mask = (UINT64_C(1) << bit) - 1U;
+            result += population_count(gc_words_.at(word) & mask);
+        }
+        return result;
+    };
+    return rank(end) - rank(begin);
+}
+
+static WgbsGcTargetCalibration calibrate_target_probabilities(
+    const std::vector<double> &targets,
+    const std::vector<std::vector<std::uint32_t>> &contig_bin_counts,
+    UnreachableTargetPolicy unreachable_policy)
 {
     if (contig_bin_counts.empty()) {
         throw CoverageProfileError(
             "target calibration requires at least one contig");
     }
-    const std::size_t bins = profile.bin_count();
+    const std::size_t bins = targets.size();
+    if (bins < 2U) {
+        throw CoverageProfileError(
+            "target calibration requires at least two categories");
+    }
     std::vector<std::uint64_t> global_counts(bins, 0U);
     for (const auto &counts : contig_bin_counts) {
         if (counts.size() != bins) {
@@ -473,15 +527,25 @@ WgbsGcTargetCalibration calibrate_gc_target(
         }
     }
 
-    const auto &targets = profile.target_probabilities();
+    if (unreachable_policy != UnreachableTargetPolicy::reject
+        && unreachable_policy
+            != UnreachableTargetPolicy::drop_and_renormalize) {
+        throw CoverageProfileError(
+            "target calibration unreachable-bin policy is invalid");
+    }
+    WgbsGcTargetCalibration result;
     std::vector<double> ratios(bins, 0.0);
     double maximum_ratio = 0.0;
     for (std::size_t bin = 0U; bin < bins; ++bin) {
         if (targets[bin] == 0.0) {continue;}
         if (global_counts[bin] == 0U) {
-            throw CoverageProfileError(
-                "target profile bin " + std::to_string(bin)
-                + " has positive mass but no eligible fragment start");
+            if (unreachable_policy == UnreachableTargetPolicy::reject) {
+                throw CoverageProfileError(
+                    "target profile bin " + std::to_string(bin)
+                    + " has positive mass but no eligible fragment start");
+            }
+            result.dropped_target_probability += targets[bin];
+            continue;
         }
         ratios[bin] = targets[bin]
             / static_cast<double>(global_counts[bin]);
@@ -496,7 +560,6 @@ WgbsGcTargetCalibration calibrate_gc_target(
             "target profile has no reachable positive probability");
     }
 
-    WgbsGcTargetCalibration result;
     result.acceptance_probabilities.resize(bins, 0.0);
     for (std::size_t bin = 0U; bin < bins; ++bin) {
         result.acceptance_probabilities[bin] = ratios[bin] / maximum_ratio;
@@ -524,33 +587,44 @@ WgbsGcTargetCalibration calibrate_gc_target(
     return result;
 }
 
+WgbsGcTargetCalibration calibrate_gc_target(
+    const WgbsGcProfile &profile,
+    const std::vector<std::vector<std::uint32_t>> &contig_bin_counts,
+    UnreachableTargetPolicy unreachable_policy)
+{
+    return calibrate_target_probabilities(
+        profile.target_probabilities(),
+        contig_bin_counts,
+        unreachable_policy);
+}
+
+WgbsGcTargetCalibration calibrate_haplotype_gc_target(
+    const WgbsGcProfile &profile,
+    const std::vector<std::vector<std::uint32_t>> &contig_category_counts)
+{
+    std::vector<double> targets;
+    targets.reserve(profile.bin_count() * 2U);
+    for (std::uint8_t haplotype = 0U; haplotype < 2U; ++haplotype) {
+        (void)haplotype;
+        for (const double probability : profile.target_probabilities()) {
+            targets.push_back(probability * 0.5);
+        }
+    }
+    return calibrate_target_probabilities(
+        targets,
+        contig_category_counts,
+        UnreachableTargetPolicy::reject);
+}
+
 WgbsGcSampler::WgbsGcSampler(
     const model::Bases &contig_bases,
     const wgbs::FixedFragmentShape &shape,
     const WgbsGcProfile &profile)
-    : shape_(shape), valid_starts_(contig_bases, shape), profile_(profile)
+    : shape_(shape),
+      valid_starts_(contig_bases, shape),
+      profile_(profile),
+      gc_index_(contig_bases)
 {
-    if (contig_bases.size() > std::numeric_limits<std::uint32_t>::max()) {
-        throw CoverageProfileError("contig length exceeds uint32");
-    }
-    contig_length_ = static_cast<std::uint32_t>(contig_bases.size());
-    gc_words_.assign((contig_bases.size() + 63U) / 64U, 0U);
-    for (std::size_t index = 0; index < contig_bases.size(); ++index) {
-        if (contig_bases[index] == 1U || contig_bases[index] == 2U) {
-            gc_words_[index / 64U] |= UINT64_C(1) << (index % 64U);
-        }
-    }
-    gc_prefix_.reserve(gc_words_.size() + 1U);
-    gc_prefix_.push_back(0U);
-    for (const std::uint64_t word : gc_words_) {
-        const std::uint32_t count = population_count(word);
-        if (count > std::numeric_limits<std::uint32_t>::max()
-                - gc_prefix_.back()) {
-            throw CoverageProfileError("contig GC count exceeds uint32");
-        }
-        gc_prefix_.push_back(gc_prefix_.back() + count);
-    }
-
     bin_opportunity_counts_.assign(profile_.bin_count(), 0U);
     for (std::uint32_t start = 0U;
          start < valid_starts_.possible_start_count();
@@ -576,35 +650,15 @@ WgbsGcSampler::bin_opportunity_counts() const noexcept
     return bin_opportunity_counts_;
 }
 
-std::uint32_t WgbsGcSampler::gc_count(
-    std::uint32_t begin,
-    std::uint32_t end) const
-{
-    if (begin > end || end > contig_length_) {
-        throw CoverageProfileError("GC interval is outside the contig");
-    }
-    const auto rank = [&](std::uint32_t offset) {
-        const std::size_t word = static_cast<std::size_t>(offset / 64U);
-        const unsigned bit = static_cast<unsigned>(offset % 64U);
-        std::uint32_t result = gc_prefix_.at(word);
-        if (bit != 0U) {
-            const std::uint64_t mask = (UINT64_C(1) << bit) - 1U;
-            result += population_count(gc_words_.at(word) & mask);
-        }
-        return result;
-    };
-    return rank(end) - rank(begin);
-}
-
 std::uint32_t WgbsGcSampler::bin(std::uint32_t start) const
 {
     const std::uint64_t end =
         static_cast<std::uint64_t>(start) + shape_.insert_length;
-    if (end > contig_length_) {
+    if (end > gc_index_.length()) {
         throw CoverageProfileError("profiled fragment exceeds the contig");
     }
     return profile_.bin_for_counts(
-        gc_count(start, static_cast<std::uint32_t>(end)),
+        gc_index_.count(start, static_cast<std::uint32_t>(end)),
         shape_.insert_length);
 }
 
@@ -842,6 +896,116 @@ bool VariableWgbsSampler::valid_candidate(
     if (count_n(*bases_, start, read) > maximum_n_count_) {return false;}
     return !paired_end_
         || count_n(*bases_, start + insert - read, read) <= maximum_n_count_;
+}
+
+VariableWgbsGcSampler::VariableWgbsGcSampler(
+    const model::Bases &contig_bases,
+    std::uint32_t contig_index,
+    std::uint64_t master_seed,
+    const insert_length::Parameters &insert_parameters,
+    std::uint32_t read_length,
+    bool paired_end,
+    double max_ambiguous_fraction,
+    const WgbsGcProfile &profile,
+    const VariableWgbsOptions &options)
+    : proposals_(
+          contig_bases,
+          contig_index,
+          master_seed,
+          insert_parameters,
+          read_length,
+          paired_end,
+          max_ambiguous_fraction,
+          options),
+      profile_(profile),
+      gc_index_(contig_bases),
+      fragment_key_(rng::derive_key(
+          master_seed, rng::Stage::fragment, contig_index)),
+      maximum_attempts_(options.maximum_attempts_per_fragment)
+{
+}
+
+std::uint32_t VariableWgbsGcSampler::allocation_weight() const noexcept
+{
+    return proposals_.allocation_weight();
+}
+
+std::uint32_t VariableWgbsGcSampler::bin(
+    const VariableWgbsCandidate &candidate) const
+{
+    const std::uint64_t end =
+        static_cast<std::uint64_t>(candidate.reference_start)
+        + candidate.insert_length;
+    if (end > gc_index_.length()) {
+        throw CoverageProfileError("profiled fragment exceeds the contig");
+    }
+    return profile_.bin_for_counts(
+        gc_index_.count(
+            candidate.reference_start, static_cast<std::uint32_t>(end)),
+        candidate.insert_length);
+}
+
+VariableWgbsBatch VariableWgbsGcSampler::sample(
+    std::uint64_t first_candidate_ordinal,
+    std::uint32_t output_count,
+    const std::vector<double> &acceptance_probabilities) const
+{
+    if (acceptance_probabilities.size() != profile_.bin_count()) {
+        throw CoverageProfileError(
+            "calibrated acceptance bin count disagrees with its profile");
+    }
+    bool has_positive_acceptance = false;
+    for (const double probability : acceptance_probabilities) {
+        if (!std::isfinite(probability)
+            || probability < 0.0 || probability > 1.0) {
+            throw CoverageProfileError(
+                "calibrated acceptance probability is outside [0,1]");
+        }
+        has_positive_acceptance = has_positive_acceptance || probability > 0.0;
+    }
+    if (!has_positive_acceptance && output_count != 0U) {
+        throw CoverageProfileError(
+            "cannot sample without a positive GC acceptance probability");
+    }
+
+    VariableWgbsBatch result;
+    result.next_candidate_ordinal = first_candidate_ordinal;
+    result.candidates.reserve(output_count);
+    std::uint64_t candidate_ordinal = first_candidate_ordinal;
+    for (std::uint32_t output_index = 0U;
+         output_index < output_count;
+         ++output_index) {
+        bool accepted = false;
+        for (std::uint32_t attempt = 0U;
+             attempt < maximum_attempts_;
+             ++attempt) {
+            const auto candidate = proposals_.candidate_at(candidate_ordinal);
+            if (candidate
+                && rng::uniform01(fragment_key_, candidate_ordinal, UINT64_C(2))
+                    < acceptance_probabilities.at(bin(*candidate))) {
+                result.candidates.push_back(*candidate);
+                accepted = true;
+            }
+            if (candidate_ordinal == std::numeric_limits<std::uint64_t>::max()) {
+                throw VariableWgbsSamplingError(
+                    "profiled variable-insert candidate ordinal exceeds uint64");
+            }
+            ++candidate_ordinal;
+            if (accepted) {break;}
+            if (result.skipped_count
+                == std::numeric_limits<std::uint64_t>::max()) {
+                throw VariableWgbsSamplingError(
+                    "profiled variable-insert skipped count exceeds uint64");
+            }
+            ++result.skipped_count;
+        }
+        if (!accepted) {
+            throw VariableWgbsSamplingError(
+                "profiled variable-insert sampler exhausted its attempt cap");
+        }
+    }
+    result.next_candidate_ordinal = candidate_ordinal;
+    return result;
 }
 
 } // namespace htsim::wgbs
@@ -1195,7 +1359,7 @@ NRankIndex build_n_rank(
 {
     NRankIndex index;
     std::uint32_t cursor = 0U;
-    for (const variant::Event &event : variants.events()) {
+    for (const variant::Variant &event : variants.variants()) {
         if (!model::mask_contains(event.alt_haplotypes, haplotype)) {
             continue;
         }
@@ -1232,7 +1396,7 @@ public:
     BoundaryCursor(
         const variant::ContigVariants &variants,
         std::uint8_t haplotype)
-        : events_(&variants.events()), haplotype_(haplotype)
+        : variants_(&variants.variants()), haplotype_(haplotype)
     {}
 
     std::optional<std::uint64_t> before(std::uint32_t target)
@@ -1243,14 +1407,14 @@ public:
         }
         previous_target_ = target;
         while (reference_cursor_ < target) {
-            if (event_index_ < events_->size()) {
-                const variant::Event &event = events_->at(event_index_);
+            if (variant_index_ < variants_->size()) {
+                const variant::Variant &event = variants_->at(variant_index_);
                 if (event.reference_start < reference_cursor_) {
                     throw VariantStartIndexError(
                         "variant boundary cursor passed an event");
                 }
                 if (event.reference_start == reference_cursor_) {
-                    ++event_index_;
+                    ++variant_index_;
                     if (!model::mask_contains(
                             event.alt_haplotypes, haplotype_)) {
                         continue;
@@ -1289,20 +1453,20 @@ private:
         haplotype_cursor_ += increment;
     }
 
-    const std::vector<variant::Event> *events_;
+    const std::vector<variant::Variant> *variants_;
     std::uint8_t haplotype_ = 0U;
     std::uint32_t reference_cursor_ = 0U;
     std::uint32_t previous_target_ = 0U;
     std::uint64_t haplotype_cursor_ = 0U;
-    std::size_t event_index_ = 0U;
+    std::size_t variant_index_ = 0U;
 };
 
 std::uint32_t terminal_insertion_length(
     const variant::ContigVariants &variants,
     std::uint8_t haplotype)
 {
-    if (variants.events().empty()) {return 0U;}
-    const variant::Event &event = variants.events().back();
+    if (variants.variants().empty()) {return 0U;}
+    const variant::Variant &event = variants.variants().back();
     if (event.kind != model::VariantKind::insertion
         || event.reference_start != variants.reference_length()
         || !model::mask_contains(event.alt_haplotypes, haplotype)) {
@@ -1460,6 +1624,74 @@ void HaplotypeStartIndex::build_rank_index()
     }
     superblock_prefix_.push_back(prefix);
     valid_start_count_ = prefix;
+
+    physical_superblock_prefix_.reserve(superblock_count + 1U);
+    prefix = 0U;
+    for (std::size_t block = 0U; block < superblock_count; ++block) {
+        physical_superblock_prefix_.push_back(prefix);
+        const std::size_t begin = block * words_per_superblock;
+        const std::size_t end = std::min(
+            begin + words_per_superblock, haplotype_words_.size());
+        for (std::size_t word = begin; word < end; ++word) {
+            const std::uint32_t increment =
+                population_count(haplotype_words_[word]);
+            if (increment > std::numeric_limits<std::uint32_t>::max() - prefix) {
+                throw VariantStartIndexError(
+                    "physical haplotype candidate count exceeds uint32");
+            }
+            prefix += increment;
+        }
+    }
+    physical_superblock_prefix_.push_back(prefix);
+    physical_candidate_count_ = prefix;
+}
+
+std::uint32_t HaplotypeStartIndex::physical_candidate_count() const noexcept
+{
+    return physical_candidate_count_;
+}
+
+HaplotypeCandidate HaplotypeStartIndex::candidate_for_physical_rank(
+    std::uint32_t zero_based_rank) const
+{
+    if (zero_based_rank >= physical_candidate_count_) {
+        throw VariantStartIndexError("physical candidate rank is out of range");
+    }
+    const auto upper = std::upper_bound(
+        physical_superblock_prefix_.begin(),
+        physical_superblock_prefix_.end(),
+        zero_based_rank);
+    const std::size_t block = static_cast<std::size_t>(
+        (upper - physical_superblock_prefix_.begin()) - 1);
+    std::uint32_t observed = physical_superblock_prefix_[block];
+    const std::size_t begin = block * words_per_superblock;
+    const std::size_t end = std::min(
+        begin + words_per_superblock, haplotype_words_.size());
+    for (std::size_t word_index = begin; word_index < end; ++word_index) {
+        std::uint64_t word = haplotype_words_[word_index];
+        const std::uint32_t count = population_count(word);
+        if (zero_based_rank < observed + count) {
+            std::uint32_t within_word = zero_based_rank - observed;
+            while (within_word != 0U) {
+                word &= word - 1U;
+                --within_word;
+            }
+            const std::uint64_t bit =
+                static_cast<std::uint64_t>(word_index) * 64U
+                + least_set_bit_index(word);
+            const std::uint64_t start = bit / 2U;
+            if (start >= possible_start_count_) {
+                throw VariantStartIndexError(
+                    "physical candidate rank resolved outside the contig");
+            }
+            return {
+                static_cast<std::uint32_t>(start),
+                static_cast<std::uint8_t>(bit % 2U),
+            };
+        }
+        observed += count;
+    }
+    throw VariantStartIndexError("physical candidate rank was not resolved");
 }
 
 std::uint32_t HaplotypeStartIndex::start_for_rank(
@@ -1529,6 +1761,144 @@ std::vector<std::uint32_t> HaplotypeStartIndex::sample(
         starts.push_back(start_for_rank(static_cast<std::uint32_t>(rank)));
     }
     return starts;
+}
+
+HaplotypeGcSampler::HaplotypeGcSampler(
+    const reference::Contig &contig,
+    const variant::ContigVariants &variants,
+    const FixedFragmentShape &shape,
+    const WgbsGcProfile &profile)
+    : shape_(shape),
+      starts_(contig, variants, shape),
+      profile_(profile)
+{
+    category_opportunity_counts_.assign(profile_.bin_count() * 2U, 0U);
+    for (std::uint8_t haplotype = 0U; haplotype < 2U; ++haplotype) {
+        layouts_[haplotype] = std::make_unique<haplotype::HaplotypeLayout>(
+            contig, variants, haplotype, true);
+        gc_indices_[haplotype] = std::make_unique<GcRankIndex>(
+            layouts_[haplotype]->bases());
+    }
+    for (std::uint32_t rank = 0U;
+         rank < starts_.physical_candidate_count();
+         ++rank) {
+        std::uint32_t &count = category_opportunity_counts_.at(
+            category(starts_.candidate_for_physical_rank(rank)));
+        if (count == std::numeric_limits<std::uint32_t>::max()) {
+            throw CoverageProfileError(
+                "haplotype GC category opportunity count exceeds uint32");
+        }
+        ++count;
+    }
+}
+
+std::uint32_t HaplotypeGcSampler::physical_candidate_count() const noexcept
+{
+    return starts_.physical_candidate_count();
+}
+
+const std::vector<std::uint32_t> &
+HaplotypeGcSampler::category_opportunity_counts() const noexcept
+{
+    return category_opportunity_counts_;
+}
+
+std::uint32_t HaplotypeGcSampler::category(
+    const HaplotypeCandidate &candidate) const
+{
+    if (candidate.haplotype > 1U) {
+        throw CoverageProfileError("profiled haplotype candidate is invalid");
+    }
+    const auto &layout = *layouts_[candidate.haplotype];
+    const auto begin = layout.boundary_before_reference(
+        candidate.reference_start);
+    const std::uint32_t reference_end =
+        candidate.reference_start + shape_.insert_length;
+    const std::optional<std::uint32_t> projected_end =
+        reference_end == layout.reference_length()
+        ? std::optional<std::uint32_t>(layout.length())
+        : layout.boundary_before_reference(reference_end);
+    if (!begin || !projected_end || *projected_end <= *begin) {
+        throw CoverageProfileError(
+            "eligible haplotype GC candidate has invalid boundaries");
+    }
+    const std::uint32_t physical_length = *projected_end - *begin;
+    const std::uint32_t gc = gc_indices_[candidate.haplotype]->count(
+        *begin, *projected_end);
+    return static_cast<std::uint32_t>(candidate.haplotype)
+        * static_cast<std::uint32_t>(profile_.bin_count())
+        + profile_.bin_for_counts(gc, physical_length);
+}
+
+HaplotypeGcBatch HaplotypeGcSampler::sample(
+    std::uint32_t contig_index,
+    std::uint64_t master_seed,
+    std::uint64_t first_candidate_ordinal,
+    std::uint32_t output_count,
+    const std::vector<double> &acceptance_probabilities) const
+{
+    if (output_count == 0U) {return {};}
+    if (acceptance_probabilities.size()
+        != category_opportunity_counts_.size()) {
+        throw CoverageProfileError(
+            "haplotype GC acceptance categories disagree with opportunities");
+    }
+    bool reachable = false;
+    for (std::size_t index = 0U; index < acceptance_probabilities.size(); ++index) {
+        const double probability = acceptance_probabilities[index];
+        if (!std::isfinite(probability)
+            || probability < 0.0 || probability > 1.0) {
+            throw CoverageProfileError(
+                "haplotype GC acceptance probability is outside [0,1]");
+        }
+        reachable = reachable
+            || (probability > 0.0
+                && category_opportunity_counts_[index] > 0U);
+    }
+    if (!reachable || starts_.physical_candidate_count() == 0U) {
+        throw CoverageProfileError(
+            "cannot sample a haplotype GC domain without positive opportunity");
+    }
+    const std::uint64_t key =
+        rng::derive_key(master_seed, rng::Stage::fragment, contig_index);
+    HaplotypeGcBatch result;
+    result.candidates.reserve(output_count);
+    for (std::uint32_t output_index = 0U;
+         output_index < output_count;
+         ++output_index) {
+        const std::uint64_t ordinal = first_candidate_ordinal + output_index;
+        bool accepted = false;
+        for (std::uint32_t attempt = 0U;
+             attempt < maximum_attempts_per_fragment;
+             ++attempt) {
+            const std::uint64_t rank_local = 1U + 2U * attempt;
+            const std::uint64_t rank = rng::bounded_integer(
+                key,
+                ordinal,
+                rank_local,
+                starts_.physical_candidate_count());
+            const HaplotypeCandidate candidate =
+                starts_.candidate_for_physical_rank(
+                    static_cast<std::uint32_t>(rank));
+            if (rng::uniform01(key, ordinal, rank_local + 1U)
+                < acceptance_probabilities.at(category(candidate))) {
+                result.candidates.push_back(candidate);
+                accepted = true;
+                break;
+            }
+            if (result.skipped_count
+                == std::numeric_limits<std::uint64_t>::max()) {
+                throw CoverageProfileError(
+                    "haplotype GC skipped count exceeds uint64");
+            }
+            ++result.skipped_count;
+        }
+        if (!accepted) {
+            throw CoverageProfileError(
+                "haplotype GC sampler exhausted its attempt cap");
+        }
+    }
+    return result;
 }
 
 } // namespace htsim::wgbs

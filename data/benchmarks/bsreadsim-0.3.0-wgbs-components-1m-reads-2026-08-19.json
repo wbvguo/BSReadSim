@@ -1,0 +1,491 @@
+{
+  "created_at_utc": "2026-08-20T04:31:04.045248+00:00",
+  "environment": {
+    "core": "build/bin/htsim-core",
+    "core_sha256": "975fea49f2a39708dd60d104b18be4cf2c1e88c20c8d574c99afb91a9e0b3add",
+    "core_version": "htsim-core 0.3.0",
+    "git_commit": "7fd2301d4803fd470607a148402853443c3fd4bd",
+    "git_status": "",
+    "lscpu_json": "{\n   \"lscpu\": [\n      {\n         \"field\": \"Architecture:\",\n         \"data\": \"x86_64\"\n      },{\n         \"field\": \"CPU op-mode(s):\",\n         \"data\": \"32-bit, 64-bit\"\n      },{\n         \"field\": \"Address sizes:\",\n         \"data\": \"46 bits physical, 48 bits virtual\"\n      },{\n         \"field\": \"Byte Order:\",\n         \"data\": \"Little Endian\"\n      },{\n         \"field\": \"CPU(s):\",\n         \"data\": \"28\"\n      },{\n         \"field\": \"On-line CPU(s) list:\",\n         \"data\": \"0-27\"\n      },{\n         \"field\": \"Vendor ID:\",\n         \"data\": \"GenuineIntel\"\n      },{\n         \"field\": \"Model name:\",\n         \"data\": \"Intel(R) Core(TM) i7-14700K\"\n      },{\n         \"field\": \"CPU family:\",\n         \"data\": \"6\"\n      },{\n         \"field\": \"Model:\",\n         \"data\": \"183\"\n      },{\n         \"field\": \"Thread(s) per core:\",\n         \"data\": \"2\"\n      },{\n         \"field\": \"Core(s) per socket:\",\n         \"data\": \"14\"\n      },{\n         \"field\": \"Socket(s):\",\n         \"data\": \"1\"\n      },{\n         \"field\": \"Stepping:\",\n         \"data\": \"1\"\n      },{\n         \"field\": \"BogoMIPS:\",\n         \"data\": \"6835.19\"\n      },{\n         \"field\": \"Flags:\",\n         \"data\": \"fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology tsc_reliable nonstop_tsc cpuid tsc_known_freq pni pclmulqdq vmx ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch ssbd ibrs ibpb stibp ibrs_enhanced tpr_shadow ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid rdseed adx smap clflushopt clwb sha_ni xsaveopt xsavec xgetbv1 xsaves avx_vnni vnmi umip waitpkg gfni vaes vpclmulqdq rdpid movdiri movdir64b fsrm md_clear serialize flush_l1d arch_capabilities\"\n      },{\n         \"field\": \"Virtualization:\",\n         \"data\": \"VT-x\"\n      },{\n         \"field\": \"Hypervisor vendor:\",\n         \"data\": \"Microsoft\"\n      },{\n         \"field\": \"Virtualization type:\",\n         \"data\": \"full\"\n      },{\n         \"field\": \"L1d cache:\",\n         \"data\": \"672 KiB (14 instances)\"\n      },{\n         \"field\": \"L1i cache:\",\n         \"data\": \"448 KiB (14 instances)\"\n      },{\n         \"field\": \"L2 cache:\",\n         \"data\": \"28 MiB (14 instances)\"\n      },{\n         \"field\": \"L3 cache:\",\n         \"data\": \"33 MiB (1 instance)\"\n      },{\n         \"field\": \"NUMA node(s):\",\n         \"data\": \"1\"\n      },{\n         \"field\": \"NUMA node0 CPU(s):\",\n         \"data\": \"0-27\"\n      },{\n         \"field\": \"Vulnerability Gather data sampling:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Itlb multihit:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability L1tf:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Mds:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Meltdown:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Mmio stale data:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Reg file data sampling:\",\n         \"data\": \"Mitigation; Clear Register File\"\n      },{\n         \"field\": \"Vulnerability Retbleed:\",\n         \"data\": \"Mitigation; Enhanced IBRS\"\n      },{\n         \"field\": \"Vulnerability Spec rstack overflow:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Spec store bypass:\",\n         \"data\": \"Mitigation; Speculative Store Bypass disabled via prctl\"\n      },{\n         \"field\": \"Vulnerability Spectre v1:\",\n         \"data\": \"Mitigation; usercopy/swapgs barriers and __user pointer sanitization\"\n      },{\n         \"field\": \"Vulnerability Spectre v2:\",\n         \"data\": \"Mitigation; Enhanced / Automatic IBRS; IBPB conditional; RSB filling; PBRSB-eIBRS SW sequence; BHI BHI_DIS_S\"\n      },{\n         \"field\": \"Vulnerability Srbds:\",\n         \"data\": \"Not affected\"\n      },{\n         \"field\": \"Vulnerability Tsx async abort:\",\n         \"data\": \"Not affected\"\n      }\n   ]\n}",
+    "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "processor": "x86_64",
+    "python": "3.12.3 (main, Jun 19 2026, 12:46:00) [GCC 13.3.0]",
+    "python_native_extension": {
+      "path": "<temporary>/native/bsreadsim/_native.so",
+      "sha256": "ccde46f7159d01477d2298fc47158fba6a6fbd38af4fcbc02e292fa5742d881a"
+    }
+  },
+  "execution_lane": {
+    "affinity": [
+      0
+    ],
+    "logical_cpu": 0,
+    "paired_order": [
+      "uniform",
+      "profile",
+      "profile",
+      "uniform",
+      "uniform",
+      "profile"
+    ],
+    "workspace": "<temporary>/wgbs-components"
+  },
+  "lanes": {
+    "FASTQ-E2E": {
+      "measurements": [
+        {
+          "core_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "methylation_site_count": 81843071,
+            "per_contig_fragment_counts": [
+              500000
+            ],
+            "skipped_fragment_count": 82475,
+            "template_base_count": 200008688
+          },
+          "coverage": "uniform",
+          "cpu": {
+            "system_seconds": 0.7932549999999998,
+            "user_seconds": 25.201245999999998
+          },
+          "fragments_per_second": 19133.2507275409,
+          "manifest": "/tmp/bsreadsim-audit-7fd2301-01a01371/workspaces/paired-7t6ttff8/FASTQ-E2E-0-uniform/bench.manifest.json",
+          "order_index": 0,
+          "output_bytes": 69904614,
+          "outputs": [
+            {
+              "record_count": 500000,
+              "role": "read1",
+              "sha256": "09c89dfc3a88cb78c6978e2d549042d467cc3274bb4d417bea73ef919aa1327b",
+              "size_bytes": 34949628
+            },
+            {
+              "record_count": 500000,
+              "role": "read2",
+              "sha256": "92da8c0c5850de25172fe17429a341fa21b932fc482047638e3992b594cf659c",
+              "size_bytes": 34954986
+            }
+          ],
+          "pair_index": 0,
+          "python_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "records_by_role": {
+              "read1": 500000,
+              "read2": 500000
+            }
+          },
+          "stream_sha256": "6b6912326b898b8b9bf7726c058f95cad31c91c0a232d5a3aab43d5d53558228",
+          "wall_seconds": 26.132517005084082
+        },
+        {
+          "core_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "methylation_site_count": 89807531,
+            "per_contig_fragment_counts": [
+              500000
+            ],
+            "skipped_fragment_count": 2064079,
+            "template_base_count": 199982429
+          },
+          "coverage": "profile",
+          "cpu": {
+            "system_seconds": 0.7101259999999998,
+            "user_seconds": 28.098180999999997
+          },
+          "fragments_per_second": 17287.497583143046,
+          "manifest": "/tmp/bsreadsim-audit-7fd2301-01a01371/workspaces/paired-7t6ttff8/FASTQ-E2E-1-profile/bench.manifest.json",
+          "order_index": 1,
+          "output_bytes": 70214087,
+          "outputs": [
+            {
+              "record_count": 500000,
+              "role": "read1",
+              "sha256": "66449ccdd4ebd2f24eb7b9a4e7d52b7d879d07a051e9b71eddd651abbe0ac3bd",
+              "size_bytes": 35104996
+            },
+            {
+              "record_count": 500000,
+              "role": "read2",
+              "sha256": "be8ae616cf609fa60e414713e6278cd73e309d7d7ced4501acbef2ee3ec6213f",
+              "size_bytes": 35109091
+            }
+          ],
+          "pair_index": 0,
+          "python_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "records_by_role": {
+              "read1": 500000,
+              "read2": 500000
+            }
+          },
+          "stream_sha256": "f8cff3eba6e5c6c2d4af6316bc118e5cb92038ec829569373e2ba3ed4286afa7",
+          "wall_seconds": 28.92263600300066
+        },
+        {
+          "core_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "methylation_site_count": 89807531,
+            "per_contig_fragment_counts": [
+              500000
+            ],
+            "skipped_fragment_count": 2064079,
+            "template_base_count": 199982429
+          },
+          "coverage": "profile",
+          "cpu": {
+            "system_seconds": 0.7693210000000001,
+            "user_seconds": 28.25015400000001
+          },
+          "fragments_per_second": 17123.15858897634,
+          "manifest": "/tmp/bsreadsim-audit-7fd2301-01a01371/workspaces/paired-7t6ttff8/FASTQ-E2E-2-profile/bench.manifest.json",
+          "order_index": 2,
+          "output_bytes": 70214087,
+          "outputs": [
+            {
+              "record_count": 500000,
+              "role": "read1",
+              "sha256": "66449ccdd4ebd2f24eb7b9a4e7d52b7d879d07a051e9b71eddd651abbe0ac3bd",
+              "size_bytes": 35104996
+            },
+            {
+              "record_count": 500000,
+              "role": "read2",
+              "sha256": "be8ae616cf609fa60e414713e6278cd73e309d7d7ced4501acbef2ee3ec6213f",
+              "size_bytes": 35109091
+            }
+          ],
+          "pair_index": 1,
+          "python_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "records_by_role": {
+              "read1": 500000,
+              "read2": 500000
+            }
+          },
+          "stream_sha256": "86b09a9fcb72ba9e4f9a95efa43e6b3148fcd00d3a169ef0fbcc4fa929c2659c",
+          "wall_seconds": 29.200220123049803
+        },
+        {
+          "core_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "methylation_site_count": 81843071,
+            "per_contig_fragment_counts": [
+              500000
+            ],
+            "skipped_fragment_count": 82475,
+            "template_base_count": 200008688
+          },
+          "coverage": "uniform",
+          "cpu": {
+            "system_seconds": 0.7238540000000002,
+            "user_seconds": 25.08440200000001
+          },
+          "fragments_per_second": 19262.740681706182,
+          "manifest": "/tmp/bsreadsim-audit-7fd2301-01a01371/workspaces/paired-7t6ttff8/FASTQ-E2E-3-uniform/bench.manifest.json",
+          "order_index": 3,
+          "output_bytes": 69904614,
+          "outputs": [
+            {
+              "record_count": 500000,
+              "role": "read1",
+              "sha256": "09c89dfc3a88cb78c6978e2d549042d467cc3274bb4d417bea73ef919aa1327b",
+              "size_bytes": 34949628
+            },
+            {
+              "record_count": 500000,
+              "role": "read2",
+              "sha256": "92da8c0c5850de25172fe17429a341fa21b932fc482047638e3992b594cf659c",
+              "size_bytes": 34954986
+            }
+          ],
+          "pair_index": 1,
+          "python_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "records_by_role": {
+              "read1": 500000,
+              "read2": 500000
+            }
+          },
+          "stream_sha256": "b0a0c8fc2607ff771897be62fc4fd89f7a7741aa3a76d2f2fffd887629af3d81",
+          "wall_seconds": 25.956846341956407
+        },
+        {
+          "core_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "methylation_site_count": 81843071,
+            "per_contig_fragment_counts": [
+              500000
+            ],
+            "skipped_fragment_count": 82475,
+            "template_base_count": 200008688
+          },
+          "coverage": "uniform",
+          "cpu": {
+            "system_seconds": 0.6912179999999997,
+            "user_seconds": 25.46019899999999
+          },
+          "fragments_per_second": 19026.767898278868,
+          "manifest": "/tmp/bsreadsim-audit-7fd2301-01a01371/workspaces/paired-7t6ttff8/FASTQ-E2E-4-uniform/bench.manifest.json",
+          "order_index": 4,
+          "output_bytes": 69904614,
+          "outputs": [
+            {
+              "record_count": 500000,
+              "role": "read1",
+              "sha256": "09c89dfc3a88cb78c6978e2d549042d467cc3274bb4d417bea73ef919aa1327b",
+              "size_bytes": 34949628
+            },
+            {
+              "record_count": 500000,
+              "role": "read2",
+              "sha256": "92da8c0c5850de25172fe17429a341fa21b932fc482047638e3992b594cf659c",
+              "size_bytes": 34954986
+            }
+          ],
+          "pair_index": 2,
+          "python_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "records_by_role": {
+              "read1": 500000,
+              "read2": 500000
+            }
+          },
+          "stream_sha256": "72387fbf2be6817ad34b731fade6db1f9fe4f66cd9e1c80d6d8c188d6b19d298",
+          "wall_seconds": 26.278766980976798
+        },
+        {
+          "core_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "methylation_site_count": 89807531,
+            "per_contig_fragment_counts": [
+              500000
+            ],
+            "skipped_fragment_count": 2064079,
+            "template_base_count": 199982429
+          },
+          "coverage": "profile",
+          "cpu": {
+            "system_seconds": 0.8145850000000001,
+            "user_seconds": 28.026327999999978
+          },
+          "fragments_per_second": 17245.930451338416,
+          "manifest": "/tmp/bsreadsim-audit-7fd2301-01a01371/workspaces/paired-7t6ttff8/FASTQ-E2E-5-profile/bench.manifest.json",
+          "order_index": 5,
+          "output_bytes": 70214087,
+          "outputs": [
+            {
+              "record_count": 500000,
+              "role": "read1",
+              "sha256": "66449ccdd4ebd2f24eb7b9a4e7d52b7d879d07a051e9b71eddd651abbe0ac3bd",
+              "size_bytes": 35104996
+            },
+            {
+              "record_count": 500000,
+              "role": "read2",
+              "sha256": "be8ae616cf609fa60e414713e6278cd73e309d7d7ced4501acbef2ee3ec6213f",
+              "size_bytes": 35109091
+            }
+          ],
+          "pair_index": 2,
+          "python_counts": {
+            "fragment_count": 500000,
+            "mate_count": 1000000,
+            "records_by_role": {
+              "read1": 500000,
+              "read2": 500000
+            }
+          },
+          "stream_sha256": "8fb1d947f84a925d6d38847f88fe674139be3f1e2533b3dc9edfbaa6be767410",
+          "wall_seconds": 28.99234700098168
+        }
+      ],
+      "summary": {
+        "paired_ratios": [
+          {
+            "pair_index": 0,
+            "profile_to_uniform_throughput_ratio": 0.9035316491336712
+          },
+          {
+            "pair_index": 1,
+            "profile_to_uniform_throughput_ratio": 0.88892639276602
+          },
+          {
+            "pair_index": 2,
+            "profile_to_uniform_throughput_ratio": 0.9064035754017085
+          }
+        ],
+        "profile": {
+          "maximum_fragments_per_second": 17287.497583143046,
+          "median_fragments_per_second": 17245.930451338416,
+          "median_wall_seconds": 28.99234700098168,
+          "minimum_fragments_per_second": 17123.15858897634,
+          "output_bytes": 70214087
+        },
+        "profile_observed_proposal_acceptance": 0.1950017920664691,
+        "profile_throughput_change_percent": -9.864085842380288,
+        "profile_to_uniform_throughput_ratio": 0.9013591415761971,
+        "profile_wall_overhead_percent": 10.943568869930198,
+        "uniform": {
+          "maximum_fragments_per_second": 19262.740681706182,
+          "median_fragments_per_second": 19133.2507275409,
+          "median_wall_seconds": 26.132517005084082,
+          "minimum_fragments_per_second": 19026.767898278868,
+          "output_bytes": 69904614
+        }
+      }
+    },
+    "core-producer": {
+      "measurements": [
+        {
+          "coverage": "uniform",
+          "cpu": {
+            "system_seconds": 0.215928,
+            "user_seconds": 12.13528
+          },
+          "fragments_per_second": 40298.97904761483,
+          "order_index": 0,
+          "pair_index": 0,
+          "protocol_batch_fragments": 64,
+          "stdout_sink": "/dev/null",
+          "wall_seconds": 12.407262213993818
+        },
+        {
+          "coverage": "profile",
+          "cpu": {
+            "system_seconds": 0.26369300000000007,
+            "user_seconds": 14.402995
+          },
+          "fragments_per_second": 33912.92442457155,
+          "order_index": 1,
+          "pair_index": 0,
+          "protocol_batch_fragments": 64,
+          "stdout_sink": "/dev/null",
+          "wall_seconds": 14.743641501991078
+        },
+        {
+          "coverage": "profile",
+          "cpu": {
+            "system_seconds": 0.23995500000000003,
+            "user_seconds": 14.420611000000001
+          },
+          "fragments_per_second": 34009.91820691986,
+          "order_index": 2,
+          "pair_index": 1,
+          "protocol_batch_fragments": 64,
+          "stdout_sink": "/dev/null",
+          "wall_seconds": 14.70159372210037
+        },
+        {
+          "coverage": "uniform",
+          "cpu": {
+            "system_seconds": 0.2799499999999999,
+            "user_seconds": 12.082253999999992
+          },
+          "fragments_per_second": 40280.98659895506,
+          "order_index": 3,
+          "pair_index": 1,
+          "protocol_batch_fragments": 64,
+          "stdout_sink": "/dev/null",
+          "wall_seconds": 12.412804209045134
+        },
+        {
+          "coverage": "uniform",
+          "cpu": {
+            "system_seconds": 0.24363299999999977,
+            "user_seconds": 12.097787000000011
+          },
+          "fragments_per_second": 40342.0901350308,
+          "order_index": 4,
+          "pair_index": 2,
+          "protocol_batch_fragments": 64,
+          "stdout_sink": "/dev/null",
+          "wall_seconds": 12.394003343069926
+        },
+        {
+          "coverage": "profile",
+          "cpu": {
+            "system_seconds": 0.275817,
+            "user_seconds": 14.450495000000004
+          },
+          "fragments_per_second": 33764.666394043925,
+          "order_index": 5,
+          "pair_index": 2,
+          "protocol_batch_fragments": 64,
+          "stdout_sink": "/dev/null",
+          "wall_seconds": 14.808379687950946
+        }
+      ],
+      "summary": {
+        "paired_ratios": [
+          {
+            "pair_index": 0,
+            "profile_to_uniform_throughput_ratio": 0.8415330915580294
+          },
+          {
+            "pair_index": 1,
+            "profile_to_uniform_throughput_ratio": 0.8443169117362711
+          },
+          {
+            "pair_index": 2,
+            "profile_to_uniform_throughput_ratio": 0.8369587763308424
+          }
+        ],
+        "profile": {
+          "maximum_fragments_per_second": 34009.91820691986,
+          "median_fragments_per_second": 33912.92442457155,
+          "median_wall_seconds": 14.743641501991078,
+          "minimum_fragments_per_second": 33764.666394043925
+        },
+        "profile_throughput_change_percent": -15.846690844197065,
+        "profile_to_uniform_throughput_ratio": 0.8415330915580294,
+        "profile_wall_overhead_percent": 18.83073999485656,
+        "uniform": {
+          "maximum_fragments_per_second": 40342.0901350308,
+          "median_fragments_per_second": 40298.97904761483,
+          "median_wall_seconds": 12.407262213993818,
+          "minimum_fragments_per_second": 40280.98659895506
+        }
+      }
+    }
+  },
+  "schema": "bsreadsim-wgbs-coverage-paired-benchmark-1",
+  "workload": {
+    "chunk_size": 4096,
+    "compression": "gzip",
+    "core_workers": 1,
+    "error_rate": 0,
+    "fragments": 500000,
+    "gzip_level": 1,
+    "insert_max": 1000,
+    "insert_mean": 400,
+    "insert_min": 150,
+    "insert_stddev": 25.0,
+    "max_in_flight_fragments": 4096,
+    "mutation_rate": 0,
+    "paired_end": true,
+    "profile": "/mnt/c/wsl/dev/bsreadsim.dev/data/experiments/wgbs-gc-target-mock.tsv",
+    "profile_sha256": "4b4414bd17cd621e0623ea9f7312172646e6144942694b263f4af5737d4757c0",
+    "read_length": 150,
+    "reads": 1000000,
+    "reference": "<external-reference>/chr21.fa",
+    "reference_sha256": "393c1db4f23345d2a5600e43a7dd692505f76867f9a2ff3d853f8042ffb64c0d",
+    "warmup_fragments": 50000,
+    "workers": 1
+  },
+  "evidence": {
+    "source_report_sha256": "3b7212c0ac5d00b225a2bfa91ee48b25029ff699694802b8fbe42cb32a05be1b",
+    "source_commit_is_pre_squash_runtime": true,
+    "path_sanitization_only": true
+  }
+}

@@ -17,8 +17,8 @@ rows fail closed. The config declaration and content identifier are:
 
 | Model | `format` | `version` | content `schema` |
 | --- | --- | --- | --- |
-| quality | `json` | `quality-markov-v1` | `bsreadsim-quality-markov-v1` |
-| error | `json` | `quality-confusion-v1` | `bsreadsim-quality-confusion-v1` |
+| quality | `json` | `quality-markov-v1` | `quality-markov-v1` |
+| error | `json` | `quality-confusion-v1` | `quality-confusion-v1` |
 
 Each document has exactly `schema`, `quality_scores`, and `mates`. The quality
 scores are a strictly increasing, nonempty subset of integer Phred values

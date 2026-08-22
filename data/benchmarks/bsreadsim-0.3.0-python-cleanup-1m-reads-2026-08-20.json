@@ -1,0 +1,477 @@
+{
+  "artifact_identity": {
+    "bsreadsim_version": "0.3.0",
+    "core_sha256": "050829ea62ef517a0c16fd253e78164f612d4b31ca49be7fe5047bd7ac992108",
+    "core_version": "htsim-core 0.3.0",
+    "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "python": "3.12.3 (main, Jun 19 2026, 12:46:00) [GCC 13.3.0]"
+  },
+  "created_at_utc": "2026-08-20T17:41:36.927518+00:00",
+  "limitations": [
+    "The external chr21 reference used by the earlier report was unavailable.",
+    "This deterministic 50 Mb synthetic reference has a different methylation-site density, so its absolute rates must not be presented as a chr21 before/after speedup.",
+    "One formal repetition was measured after a 20,000-fragment warmup.",
+    "Component active spans are sampled process lifetimes and overlap."
+  ],
+  "one_logical_cpu_process_boundaries": {
+    "bam": {
+      "command": [
+        "taskset",
+        "-c",
+        "0",
+        "python3",
+        "-m",
+        "bsreadsim",
+        "run",
+        "--reference",
+        "/tmp/bsreadsim-benchmark-input/reference.fa",
+        "--output",
+        "/tmp/bsreadsim-components-bam-output",
+        "--read-pairs",
+        "500000",
+        "--seed",
+        "20260815",
+        "--read-length",
+        "150",
+        "--insert-min",
+        "150",
+        "--insert-mean",
+        "400",
+        "--insert-max",
+        "1000",
+        "--insert-stddev",
+        "25",
+        "--max-ambiguous-fraction",
+        "0.05",
+        "--mutation-rate",
+        "0",
+        "--error-rate",
+        "0",
+        "--workers",
+        "1",
+        "--core-workers",
+        "1",
+        "--chunk-size",
+        "4096",
+        "--max-in-flight-fragments",
+        "4096",
+        "--compression",
+        "gzip",
+        "--gzip-level",
+        "1",
+        "--prefix",
+        "bench-bam",
+        "--bam",
+        "--core",
+        "/tmp/bsreadsim-build/bin/htsim-core"
+      ],
+      "components": {
+        "bam_encoder": {
+          "active_wall_seconds_sampled": 32.37422609804198,
+          "cpu_seconds_sampled": 3.95,
+          "effective_reads_per_active_second": 30888.769262672224,
+          "effective_reads_per_cpu_second": 253164.5569620253,
+          "peak_pss_kib": 1301,
+          "peak_rss_kib": 4480,
+          "process_count": 1
+        },
+        "core_producer": {
+          "active_wall_seconds_sampled": 38.45306280707009,
+          "cpu_seconds_sampled": 17.1,
+          "effective_reads_per_active_second": 26005.730805301082,
+          "effective_reads_per_cpu_second": 58479.53216374268,
+          "peak_pss_kib": 418482,
+          "peak_rss_kib": 420936,
+          "process_count": 1
+        },
+        "python_pipeline": {
+          "active_wall_seconds_sampled": 38.866555531020275,
+          "cpu_seconds_sampled": 17.52,
+          "effective_reads_per_active_second": 25729.06156301598,
+          "effective_reads_per_cpu_second": 57077.625570776254,
+          "peak_pss_kib": 68447,
+          "peak_rss_kib": 79768,
+          "process_count": 1
+        }
+      },
+      "log": "/tmp/bsreadsim-components-bam.log",
+      "peak_process_tree_pss_kib": 451385,
+      "peak_process_tree_rss_kib": 465076,
+      "peak_processes": 3,
+      "reads": 1000000,
+      "reads_per_second": 25727.59158900025,
+      "returncode": 0,
+      "sample_interval_ms": 25,
+      "samples": 1433,
+      "wall_seconds": 38.868776214076206
+    },
+    "comparison": {
+      "bam_throughput_change_percent": -29.981459909994047,
+      "bam_to_fastq_throughput_ratio": 0.7001854009000595,
+      "bam_wall_overhead_percent": 42.81931595753654
+    },
+    "conditions": {
+      "affinity": "logical CPU 0",
+      "interpretation": "component active spans overlap and are not additive",
+      "sampling": "external /proc process-boundary sampling at 25 ms"
+    },
+    "fastq": {
+      "command": [
+        "taskset",
+        "-c",
+        "0",
+        "python3",
+        "-m",
+        "bsreadsim",
+        "run",
+        "--reference",
+        "/tmp/bsreadsim-benchmark-input/reference.fa",
+        "--output",
+        "/tmp/bsreadsim-components-fastq-output",
+        "--read-pairs",
+        "500000",
+        "--seed",
+        "20260815",
+        "--read-length",
+        "150",
+        "--insert-min",
+        "150",
+        "--insert-mean",
+        "400",
+        "--insert-max",
+        "1000",
+        "--insert-stddev",
+        "25",
+        "--max-ambiguous-fraction",
+        "0.05",
+        "--mutation-rate",
+        "0",
+        "--error-rate",
+        "0",
+        "--workers",
+        "1",
+        "--core-workers",
+        "1",
+        "--chunk-size",
+        "4096",
+        "--max-in-flight-fragments",
+        "4096",
+        "--compression",
+        "gzip",
+        "--gzip-level",
+        "1",
+        "--prefix",
+        "bench-fastq",
+        "--core",
+        "/tmp/bsreadsim-build/bin/htsim-core"
+      ],
+      "components": {
+        "core_producer": {
+          "active_wall_seconds_sampled": 26.930994846951215,
+          "cpu_seconds_sampled": 13.56,
+          "effective_reads_per_active_second": 37131.93685131195,
+          "effective_reads_per_cpu_second": 73746.31268436578,
+          "peak_pss_kib": 441075,
+          "peak_rss_kib": 443340,
+          "process_count": 1
+        },
+        "python_pipeline": {
+          "active_wall_seconds_sampled": 27.21349498196505,
+          "cpu_seconds_sampled": 13.43,
+          "effective_reads_per_active_second": 36746.47452165629,
+          "effective_reads_per_cpu_second": 74460.16381236039,
+          "peak_pss_kib": 67533,
+          "peak_rss_kib": 78632,
+          "process_count": 1
+        }
+      },
+      "log": "/tmp/bsreadsim-components-fastq.log",
+      "peak_process_tree_pss_kib": 473947,
+      "peak_process_tree_rss_kib": 487476,
+      "peak_processes": 2,
+      "reads": 1000000,
+      "reads_per_second": 36743.97031975887,
+      "returncode": 0,
+      "sample_interval_ms": 25,
+      "samples": 1016,
+      "wall_seconds": 27.215349655947648
+    }
+  },
+  "pipeline_parallel_measurements": {
+    "bam": {
+      "core_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "methylation_site_count": 80231805,
+        "per_contig_fragment_counts": [
+          500000
+        ],
+        "skipped_fragment_count": 0,
+        "template_base_count": 199995854
+      },
+      "fragments": 500000,
+      "fragments_per_second": 21166.61215178078,
+      "output_bytes": 154930525,
+      "outputs": [
+        {
+          "record_count": 1000000,
+          "role": "bam",
+          "sha256": "1b24fe2c82f5a6b38061ea227915e15b58fc316ee821b65de03e36ccb2416481",
+          "size_bytes": 154930525
+        }
+      ],
+      "process_io": {
+        "cancelled_write_bytes": 0,
+        "rchar": 2953940971,
+        "read_bytes": 0,
+        "syscr": 64727,
+        "syscw": 23965,
+        "wchar": 2243554944,
+        "write_bytes": 154939392
+      },
+      "process_tree_memory": {
+        "peak_processes": 3,
+        "peak_pss_kib": 439403,
+        "peak_rss_kib": 454356,
+        "sample_interval_ms": 25,
+        "samples": 855
+      },
+      "python_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "records_by_role": {
+          "bam": 1000000
+        }
+      },
+      "reads": 1000000,
+      "reads_per_second": 42333.22430356156,
+      "resource_usage": {
+        "children": {
+          "input_blocks": 0.0,
+          "output_blocks": 302608.0,
+          "system_seconds": 1.686277,
+          "user_seconds": 19.472556
+        },
+        "self": {
+          "input_blocks": 0.0,
+          "output_blocks": 8.0,
+          "system_seconds": 2.93484,
+          "user_seconds": 16.453644
+        }
+      },
+      "wall_seconds": 23.622108082985505
+    },
+    "comparison": {
+      "bam_minus_fastq_peak_pss_kib": 12481,
+      "bam_minus_fastq_peak_rss_kib": 12512,
+      "bam_throughput_change_percent": -18.02776945654149,
+      "bam_to_fastq_throughput_ratio": 0.8197223054345851,
+      "bam_wall_overhead_percent": 21.992532516220663
+    },
+    "conditions": {
+      "affinity": "inherited WSL affinity; producer and consumer may overlap on separate CPUs",
+      "bam_peak_processes": 3,
+      "fastq_peak_processes": 2
+    },
+    "fastq": {
+      "core_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "methylation_site_count": 80231805,
+        "per_contig_fragment_counts": [
+          500000
+        ],
+        "skipped_fragment_count": 0,
+        "template_base_count": 199995854
+      },
+      "fragments": 500000,
+      "fragments_per_second": 25821.686211843484,
+      "output_bytes": 70846725,
+      "outputs": [
+        {
+          "record_count": 500000,
+          "role": "read1",
+          "sha256": "5c716e22a6b0666a1e4a4626356abcfcf9b178a9ce041f2970fa8c157d5ab2f2",
+          "size_bytes": 35427325
+        },
+        {
+          "record_count": 500000,
+          "role": "read2",
+          "sha256": "259e11c1bf05be99da17e6974e2802e7a9d410a702aaa02530a590155f104e24",
+          "size_bytes": 35419400
+        }
+      ],
+      "process_io": {
+        "cancelled_write_bytes": 0,
+        "rchar": 1815719049,
+        "read_bytes": 0,
+        "syscr": 38546,
+        "syscw": 10505,
+        "wchar": 1176814056,
+        "write_bytes": 70864896
+      },
+      "process_tree_memory": {
+        "peak_processes": 2,
+        "peak_pss_kib": 426922,
+        "peak_rss_kib": 441844,
+        "sample_interval_ms": 25,
+        "samples": 712
+      },
+      "python_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "records_by_role": {
+          "read1": 500000,
+          "read2": 500000
+        }
+      },
+      "reads": 1000000,
+      "reads_per_second": 51643.37242368697,
+      "resource_usage": {
+        "children": {
+          "input_blocks": 0.0,
+          "output_blocks": 0.0,
+          "system_seconds": 0.580472,
+          "user_seconds": 13.116283
+        },
+        "self": {
+          "input_blocks": 0.0,
+          "output_blocks": 138408.0,
+          "system_seconds": 2.1696700000000004,
+          "user_seconds": 12.820364
+        }
+      },
+      "wall_seconds": 19.363568897009827
+    }
+  },
+  "schema": "bsreadsim-python-cleanup-benchmark-1",
+  "validation": {
+    "built_native_python_unittest": {
+      "failed": 0,
+      "passed": 232,
+      "skipped": 0
+    },
+    "ctest": {
+      "failed": 0,
+      "passed": 38
+    },
+    "native_protocol_differential": {
+      "accepted": 127,
+      "candidates": 2346,
+      "exact": true,
+      "native_sam_formatters": true
+    },
+    "one_cpu_bam": {
+      "core_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "methylation_site_count": 80231805,
+        "per_contig_fragment_counts": [
+          500000
+        ],
+        "skipped_fragment_count": 0,
+        "template_base_count": 199995854
+      },
+      "manifest": "bench-bam.manifest.json",
+      "outputs": [
+        {
+          "record_count": 1000000,
+          "role": "bam",
+          "sha256": "b15e6418da4fd2d3ee9ce3799e79a792ae371fc8952a81432b7be24fb056f9cc",
+          "size_bytes": 155131448
+        }
+      ],
+      "python_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "records_by_role": {
+          "bam": 1000000
+        }
+      },
+      "stream_sha256": "d7dcad978f3fcb534729aa92824755715d7e8c64b061f2817de32240327f26b1"
+    },
+    "one_cpu_fastq": {
+      "core_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "methylation_site_count": 80231805,
+        "per_contig_fragment_counts": [
+          500000
+        ],
+        "skipped_fragment_count": 0,
+        "template_base_count": 199995854
+      },
+      "manifest": "bench-fastq.manifest.json",
+      "outputs": [
+        {
+          "record_count": 500000,
+          "role": "read1",
+          "sha256": "5c716e22a6b0666a1e4a4626356abcfcf9b178a9ce041f2970fa8c157d5ab2f2",
+          "size_bytes": 35427325
+        },
+        {
+          "record_count": 500000,
+          "role": "read2",
+          "sha256": "259e11c1bf05be99da17e6974e2802e7a9d410a702aaa02530a590155f104e24",
+          "size_bytes": 35419400
+        }
+      ],
+      "python_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "records_by_role": {
+          "read1": 500000,
+          "read2": 500000
+        }
+      },
+      "stream_sha256": "b9d0b187bd615176d601d721cd11b8c06909c693f9e89091fe182157960f64a3"
+    },
+    "source_python_unittest": {
+      "failed": 0,
+      "passed": 232,
+      "skipped": 9
+    }
+  },
+  "workload": {
+    "chunk_size": 4096,
+    "compression": "gzip",
+    "core_workers": 1,
+    "error_rate": 0.0,
+    "formal_repetitions": 1,
+    "fragments": 500000,
+    "gzip_level": 1,
+    "insert_max": 1000,
+    "insert_mean": 400,
+    "insert_min": 150,
+    "insert_stddev": 25.0,
+    "max_in_flight_fragments": 4096,
+    "memory_sample_ms": 25,
+    "mutation_rate": 0.0,
+    "paired_end": true,
+    "read_length": 150,
+    "reads": 1000000,
+    "reference": {
+      "generator": {
+        "alphabet": "ACGT",
+        "line_width": 80,
+        "numpy_rng": "default_rng",
+        "pattern_bases": 1000000,
+        "pattern_repetitions": 50,
+        "probabilities": [
+          0.3,
+          0.2,
+          0.2,
+          0.3
+        ],
+        "seed": 20260820
+      },
+      "kind": "deterministic-synthetic",
+      "length": 50000000,
+      "sha256": "64321e9a6924e3ca99082111607969a0e17cb337a43548dbb46d561b0bdf0794",
+      "size_bytes": 50625014
+    },
+    "seed": 20260815,
+    "warmup_fragments": 20000,
+    "workers": 1
+  }
+}

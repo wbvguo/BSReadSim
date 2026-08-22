@@ -412,7 +412,7 @@ struct CatalogSite {
     std::uint32_t reference_position = 0;
     float methylation_probability = 0.0F;
     model::MethylationContext context = model::MethylationContext::cg_c;
-    model::MethylationSource source = model::MethylationSource::beta;
+    model::MethylationSource methylation_source = model::MethylationSource::beta;
 };
 
 static_assert(sizeof(CatalogSite) == 12U,
@@ -423,6 +423,9 @@ static_assert(sizeof(CatalogSite) == 12U,
 // genomic probability. The catalog owns no copy of the reference bases.
 class MethylationCatalog {
 public:
+    MethylationCatalog(
+        std::uint32_t reference_length,
+        std::vector<CatalogSite> sites);
     using const_iterator = std::vector<CatalogSite>::const_iterator;
 
     MethylationCatalog(
@@ -502,7 +505,7 @@ std::uint64_t insertion_origin_id(
 struct DiploidSite {
     std::uint64_t origin_id = 0;
     model::MethylationContext context = model::MethylationContext::cg_c;
-    model::MethylationSource source = model::MethylationSource::beta;
+    model::MethylationSource methylation_source = model::MethylationSource::beta;
     model::MethylationAllele allele = model::MethylationAllele::shared;
     float methylation_probability = 0.0F;
 };
@@ -517,6 +520,11 @@ static_assert(sizeof(DiploidSite) == 16U,
 // position/event arrays are materialized.
 class DiploidMethylationCatalog {
 public:
+    DiploidMethylationCatalog(
+        std::uint32_t contig_index,
+        std::uint32_t reference_length,
+        std::vector<DiploidSite> shared_sites,
+        std::array<std::vector<DiploidSite>, 2> haplotype_sites);
     DiploidMethylationCatalog(
         const reference::Contig &contig,
         const variant::ContigVariants &variants,
@@ -541,6 +549,71 @@ private:
     std::uint32_t reference_length_ = 0;
     std::vector<DiploidSite> shared_sites_;
     std::array<std::vector<DiploidSite>, 2> haplotype_sites_;
+};
+
+} // namespace htsim::methdb
+
+// ---- fixed snapshot --------------------------------------------------------
+
+namespace htsim::methdb {
+
+inline constexpr char methdb_snapshot_magic[] = "BSRMDB01";
+inline constexpr std::string_view methdb_snapshot_contract =
+    "bsreadsim-methdb-v1";
+
+class SnapshotError : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
+struct SnapshotContig {
+    std::string name;
+    std::uint32_t reference_length = 0;
+    crypto::Sha256Digest reference_sha256 = {};
+    bool diploid = false;
+    std::vector<CatalogSite> reference_sites;
+    std::vector<DiploidSite> shared_sites;
+    std::array<std::vector<DiploidSite>, 2> haplotype_sites;
+};
+
+class SnapshotWriter {
+public:
+    SnapshotWriter(
+        std::ostream &output,
+        const crypto::Sha256Digest &binding,
+        std::uint32_t contig_count);
+
+    void write_reference(
+        const reference::ContigMetadata &metadata,
+        const MethylationCatalog &catalog);
+    void write_diploid(
+        const reference::ContigMetadata &metadata,
+        const DiploidMethylationCatalog &catalog);
+    void finish();
+
+private:
+    std::ostream &output_;
+    std::uint32_t contig_count_ = 0;
+    std::uint32_t written_ = 0;
+    bool finished_ = false;
+};
+
+class Snapshot {
+public:
+    Snapshot(
+        const std::string &path,
+        const crypto::Sha256Digest &expected_file_sha256,
+        const crypto::Sha256Digest &expected_binding,
+        const std::vector<reference::ContigMetadata> &reference_catalog);
+
+    const SnapshotContig &contig(std::uint32_t contig_index) const;
+    const crypto::Sha256Digest &file_sha256() const noexcept {
+        return file_sha256_;
+    }
+
+private:
+    crypto::Sha256Digest file_sha256_ = {};
+    std::vector<SnapshotContig> contigs_;
 };
 
 } // namespace htsim::methdb

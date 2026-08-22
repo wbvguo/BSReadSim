@@ -11,7 +11,7 @@ before reading the reference or writing a protocol preamble.
 
 ## Execution-format envelope
 
-Python passes `--truth-columns none|full` and
+Python passes `--emit-details none|full` and
 `--protocol-batch-fragments U32` on every launch. The batch limit is restricted
 to `[1,64]`; a frame may contain fewer fragments when the payload-size bound is
 reached. Both options control transport work and backpressure only. They cannot
@@ -27,7 +27,11 @@ accepts a BGZF compression level in `[0,9]`. HTSlib parses every header and
 record and writes the final BGZF EOF block. This helper does not generate
 fragments, accept biological options, or choose a destination path; malformed
 SAM or an I/O/finalization error returns nonzero and aborts publication. See
-[truth-bam-v1.md](truth-bam-v1.md).
+[bam-v3.md](bam-v3.md).
+
+`htsim-core methdb-catalog [core contract options]` writes one fixed binary
+MethDB snapshot. Public `bsreadsim run --save-methdb PATH` exports it and then
+runs against that exact snapshot.
 
 `htsim-core rrbs-catalog [core contract options]` is the catalog-only envelope
 used by the direct `bsreadsim catalog rrbs -r ... --cut-site ...` command. The
@@ -44,6 +48,7 @@ Required options:
 - `--run-id UUID`
 - `--config-sha256 HEX64`
 - `--seed U64_DECIMAL`
+- `--catalog-seed U64_DECIMAL` (optional, default `0`)
 - `--reference PATH`
 - `--reference-sha256 HEX64`
 - `--technology WGBS|RRBS|TBS`
@@ -51,9 +56,11 @@ Required options:
 Optional inputs use paired path and digest options: `--vcf PATH
 --vcf-sha256 HEX64`, `--cgmap PATH --cgmap-sha256 HEX64`, `--bed-methyl PATH
 --bed-methyl-sha256 HEX64`, `--asm PATH --asm-sha256 HEX64`, and `--asm-bed
-PATH --asm-bed-sha256 HEX64`. A path and its digest MUST appear together.
+PATH --asm-bed-sha256 HEX64`, and `--methdb PATH --methdb-sha256 HEX64`.
+A path and its digest MUST appear together.
 CGmap and bedMethyl are mutually exclusive; ASM and ASM BED are mutually
 exclusive. Either ASM form requires `--vcf`.
+MethDB is mutually exclusive with all methylation overlays and CGmap pooling.
 
 ## Fragment projection
 
@@ -82,9 +89,9 @@ Every configured read length MUST be less than or equal to `--insert-min`, so
 every sampled template can supply a complete mate without implicit adapter or
 read-through sequence.
 
-At the current released checkpoint, `--depth` is supported for WGBS only and
-is converted to a fragment count entirely inside C++ according to
-[depth-count-v1.md](depth-count-v1.md). RRBS and TBS require `--read-pairs`.
+`--depth` is converted to a fragment count entirely inside C++ according to
+[depth-count-v2.md](depth-count-v2.md). RRBS uses the eligible restriction
+region union and TBS uses the normalized target BED union.
 
 RRBS requires one or more repeated `--rrbs-cut-site MOTIF` options and accepts
 an optional `--rrbs-candidate-bed PATH`. That path deliberately has no paired
@@ -100,7 +107,9 @@ use the addressed variable-insert contracts in
 [variable-wgbs-v1.md](variable-wgbs-v1.md) and, for typed VCF/de novo catalogs,
 [variable-haplotype-wgbs-v1.md](variable-haplotype-wgbs-v1.md). Typed VCF
 catalogs retain optional CGmap and ASM overlays on that variable-span path.
-Target-GC WGBS is a deliberately narrower fixed-insert, reference-only path.
+Target-GC WGBS remains reference-only. Fixed inserts use exact opportunity
+calibration; variable inserts use the documented deterministic `insert_mean`
+proxy and preserve the configured clamped-normal insert proposal.
 TBS center dispersion may be any finite non-negative value and follows the
 addressed normal/rejection contract in [tbs-catalog-v1.md](tbs-catalog-v1.md).
 
@@ -108,8 +117,8 @@ Coverage is projected with `--coverage uniform|profile|target-score`.
 Artifact-backed WGBS profile coverage requires `--coverage-profile PATH
 --coverage-profile-format FORMAT --coverage-profile-version VERSION
 --coverage-profile-sha256 HEX64`, with format `tsv` and version
-`wgbs-gc-target-v1`, following
-[coverage-profile-target-v1.md](coverage-profile-target-v1.md).
+`wgbs-gc-target-v2`, following
+[coverage-profile-target-v2.md](coverage-profile-target-v2.md).
 
 RRBS profile coverage instead requires `--rrbs-candidate-bed PATH` and forbids
 all four WGBS profile-artifact options. The BED score supplies each fragment's
@@ -195,6 +204,6 @@ protocol event representation as verified VCF events.
 
 No Python-only publication or sequencing option (conversion, quality, error,
 Python worker, output destination, or compression) may cross this boundary.
-`--truth-columns` declares an
+`--emit-details` declares an
 authenticated transport capability; it is not itself an output-publication
 request.

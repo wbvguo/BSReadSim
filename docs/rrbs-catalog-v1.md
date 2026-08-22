@@ -65,7 +65,7 @@ haplotypes. A physical candidate then carries exactly bit 1 or bit 2. The mask
 is availability metadata, never a zero-based protocol haplotype; conversion to
 protocol 0/1 occurs only after validation.
 
-An indel can make the physical template length differ from its reference truth
+An indel can make the physical template length differ from its reference details
 envelope. Complete insertions and deletions are retained as typed events. A cut
 strictly inside an inserted ALT string is omitted because the protocol identifies
 the insertion as one indivisible event; it is never silently truncated.

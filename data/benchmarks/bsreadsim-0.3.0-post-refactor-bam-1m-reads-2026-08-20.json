@@ -1,0 +1,456 @@
+{
+  "artifact_identity": {
+    "core_sha256": "11c6b9ea701ba912350b1a071855c8814d299585e96acc55552fe8a5ef9064d4",
+    "core_version": "htsim-core 0.3.0",
+    "native_capabilities": {
+      "bam_column_formatter": true,
+      "bam_typed_formatter": true,
+      "common_column_pack": true,
+      "fastq_formatter": true,
+      "protocol_decode": true,
+      "protocol_validator": true,
+      "rng": true
+    },
+    "native_extension_sha256": "7e75ddb364a37281283a9704518049637f29fbc03fb844dcdb3b2afa599a95d6",
+    "reference_sha256": "393c1db4f23345d2a5600e43a7dd692505f76867f9a2ff3d853f8042ffb64c0d",
+    "version": "0.3.0",
+    "wheel_sha256": "b39c2c3837bcc5d610f59bcd5ec1ad45e0e0247c2f9457e013de4d43d4cc8d77"
+  },
+  "components": {
+    "core_producer": {
+      "fragments_per_second": 26725.519893354784,
+      "process_tree_memory": {
+        "peak_processes": 2,
+        "peak_pss_kib": 274398,
+        "peak_rss_kib": 289432,
+        "sample_interval_ms": 25,
+        "samples": 683
+      },
+      "protocol_batch_fragments": 64,
+      "reads_per_second": 53451.03978670957,
+      "resource_usage": {
+        "children": {
+          "input_blocks": 0.0,
+          "output_blocks": 0.0,
+          "system_seconds": 0.947537,
+          "user_seconds": 15.301549
+        }
+      },
+      "sink": "/dev/null",
+      "truth_columns": "full",
+      "wall_seconds": 18.708709951955825
+    },
+    "instrumented_boundaries": {
+      "exclusive_or_inclusive_boundaries": {
+        "common_column_decode": {
+          "calls": 7813,
+          "reads_per_timed_second": 718350.0465554252,
+          "seconds": 1.392078979872167
+        },
+        "orchestration_wait_finalize": {
+          "calls": 1,
+          "reads_per_timed_second": 42617.37864258879,
+          "seconds": 23.464606032823212
+        },
+        "output_write": {
+          "calls": 7813,
+          "reads_per_timed_second": 110224.35933698082,
+          "seconds": 9.072404738981277
+        },
+        "protocol_decode": {
+          "calls": 7813,
+          "reads_per_timed_second": 815696.1009362538,
+          "seconds": 1.2259467697003856
+        },
+        "read_process_total": {
+          "calls": 7813,
+          "reads_per_timed_second": 100698.8215640077,
+          "seconds": 9.930602806154639
+        },
+        "sam_format": {
+          "calls": 7813,
+          "reads_per_timed_second": 860748.2177871788,
+          "seconds": 1.16177992511075
+        },
+        "worker_boundary_overhead": {
+          "calls": 7813,
+          "reads_per_timed_second": 2909703.632982576,
+          "seconds": 0.343677613302134
+        },
+        "worker_total": {
+          "calls": 7813,
+          "reads_per_timed_second": 71153.68393943134,
+          "seconds": 14.054086094140075
+        }
+      },
+      "interpretation": "read_process_total and worker_total are inclusive; nested hotspots are diagnostic and must not be added to their parents. Memory is one concurrent process-tree peak, not attributable per substage.",
+      "measurement": {
+        "core_counts": {
+          "fragment_count": 500000,
+          "mate_count": 1000000,
+          "methylation_site_count": 81843071,
+          "per_contig_fragment_counts": [
+            500000
+          ],
+          "skipped_fragment_count": 82475,
+          "template_base_count": 200008688
+        },
+        "fragments": 500000,
+        "fragments_per_second": 10731.664065317842,
+        "output_bytes": 150888034,
+        "outputs": [
+          {
+            "record_count": 1000000,
+            "role": "bam",
+            "sha256": "8b91041e16b46d91a641d7a5f1b0fd63ab920cd320073dff5733f4cfa1575740",
+            "size_bytes": 150888034
+          }
+        ],
+        "process_tree_memory": {
+          "peak_processes": 3,
+          "peak_pss_kib": 313803,
+          "peak_rss_kib": 332384,
+          "sample_interval_ms": 25,
+          "samples": 1359
+        },
+        "python_counts": {
+          "fragment_count": 500000,
+          "mate_count": 1000000,
+          "records_by_role": {
+            "bam": 1000000
+          }
+        },
+        "reads": 1000000,
+        "reads_per_second": 21463.328130635684,
+        "resource_usage": {
+          "children": {
+            "input_blocks": 0.0,
+            "output_blocks": 294720.0,
+            "system_seconds": 2.045096,
+            "user_seconds": 20.31626
+          },
+          "self": {
+            "input_blocks": 0.0,
+            "output_blocks": 8.0,
+            "system_seconds": 5.798914,
+            "user_seconds": 18.144865
+          }
+        },
+        "wall_seconds": 46.591096865944564
+      },
+      "nested_process_hotspots": {
+        "bisulfite_helpers": {
+          "members": [
+            "bisulfite_mode",
+            "bisulfite_conversion_rng"
+          ],
+          "reads_per_timed_second": 1465497.1133370888,
+          "seconds": 0.6823623130330816
+        },
+        "fragment_vectorized_inline": {
+          "calls": 7813,
+          "reads_per_timed_second": 143207.20465995025,
+          "seconds": 6.982888901256956
+        },
+        "methylation_state": {
+          "calls": 7813,
+          "reads_per_timed_second": 522481.3064563947,
+          "seconds": 1.9139440734870732
+        },
+        "sequencing_helpers": {
+          "members": [
+            "mate_template_projection",
+            "sequencing_error"
+          ],
+          "reads_per_timed_second": 4856035.332497199,
+          "seconds": 0.20592930889688432
+        },
+        "variant_truth_projection": {
+          "calls": 7813,
+          "reads_per_timed_second": 6873881.68695502,
+          "seconds": 0.14547820948064327
+        }
+      }
+    },
+    "bam_end_to_end": {
+      "core_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "methylation_site_count": 81843071,
+        "per_contig_fragment_counts": [
+          500000
+        ],
+        "skipped_fragment_count": 82475,
+        "template_base_count": 200008688
+      },
+      "fragments": 500000,
+      "fragments_per_second": 10552.689835250421,
+      "output_bytes": 150888035,
+      "outputs": [
+        {
+          "record_count": 1000000,
+          "role": "bam",
+          "sha256": "d597c139826932fce4de2d89fe9f64592974e441cd11d884a002a9f31f58ff4d",
+          "size_bytes": 150888035
+        }
+      ],
+      "process_tree_memory": {
+        "peak_processes": 3,
+        "peak_pss_kib": 317252,
+        "peak_rss_kib": 336256,
+        "sample_interval_ms": 25,
+        "samples": 1547
+      },
+      "python_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "records_by_role": {
+          "bam": 1000000
+        }
+      },
+      "reads": 1000000,
+      "reads_per_second": 21105.379670500843,
+      "resource_usage": {
+        "children": {
+          "input_blocks": 0.0,
+          "output_blocks": 294720.0,
+          "system_seconds": 1.8842619999999999,
+          "user_seconds": 19.266455999999998
+        },
+        "self": {
+          "input_blocks": 0.0,
+          "output_blocks": 8.0,
+          "system_seconds": 3.868646,
+          "user_seconds": 18.495455999999997
+        }
+      },
+      "wall_seconds": 47.38128456403501
+    }
+  },
+  "created_at_utc": "2026-08-20T11:01:36.861699+00:00",
+  "environment": {
+    "affinity": "CPU 0",
+    "logical_cpu": 0,
+    "memory_sample_ms": 25,
+    "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "python": "3.12.3 (main, Jun 19 2026, 12:46:00) [GCC 13.3.0]"
+  },
+  "limitations": [
+    "Formal end-to-end and core lanes each use one measured repetition after warm caches; this is a functional/performance checkpoint, not a distributional release gate.",
+    "Substage timers are perf_counter wrappers at batch/function boundaries and the profiled total is not the authoritative uninstrumented wall time.",
+    "The older 14.1k-read/s report emitted two FASTQs plus an earlier smaller BAM, so it is not a same-format baseline for this annotated BAM-only contract.",
+    "Sequencing-error hotspot timing uses error_rate=0 and is therefore a control-path cost, not a nonzero-error workload estimate."
+  ],
+  "optimization_evidence": {
+    "bam_only_without_internal_fastq": {
+      "core_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "methylation_site_count": 81843071,
+        "per_contig_fragment_counts": [
+          500000
+        ],
+        "skipped_fragment_count": 82475,
+        "template_base_count": 200008688
+      },
+      "fragments": 500000,
+      "fragments_per_second": 5871.6132414358135,
+      "output_bytes": 150888033,
+      "outputs": [
+        {
+          "record_count": 1000000,
+          "role": "bam",
+          "sha256": "cd7b8a76dda1592e0e68b33bdc2104f688252d01dcd67ad0a8b9db135da9d84e",
+          "size_bytes": 150888033
+        }
+      ],
+      "process_tree_memory": {
+        "peak_processes": 3,
+        "peak_pss_kib": 286363,
+        "peak_rss_kib": 305304,
+        "sample_interval_ms": 25,
+        "samples": 2827
+      },
+      "python_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "records_by_role": {
+          "bam": 1000000
+        }
+      },
+      "reads": 1000000,
+      "reads_per_second": 11743.226482871627,
+      "resource_usage": {
+        "children": {
+          "input_blocks": 0.0,
+          "output_blocks": 294736.0,
+          "system_seconds": 2.2804800000000003,
+          "user_seconds": 20.41339
+        },
+        "self": {
+          "input_blocks": 0.0,
+          "output_blocks": 8.0,
+          "system_seconds": 7.328149,
+          "user_seconds": 48.105104
+        }
+      },
+      "wall_seconds": 85.15547251503449
+    },
+    "final_columnar_64": {
+      "core_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "methylation_site_count": 81843071,
+        "per_contig_fragment_counts": [
+          500000
+        ],
+        "skipped_fragment_count": 82475,
+        "template_base_count": 200008688
+      },
+      "fragments": 500000,
+      "fragments_per_second": 10552.689835250421,
+      "output_bytes": 150888035,
+      "outputs": [
+        {
+          "record_count": 1000000,
+          "role": "bam",
+          "sha256": "d597c139826932fce4de2d89fe9f64592974e441cd11d884a002a9f31f58ff4d",
+          "size_bytes": 150888035
+        }
+      ],
+      "process_tree_memory": {
+        "peak_processes": 3,
+        "peak_pss_kib": 317252,
+        "peak_rss_kib": 336256,
+        "sample_interval_ms": 25,
+        "samples": 1547
+      },
+      "python_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "records_by_role": {
+          "bam": 1000000
+        }
+      },
+      "reads": 1000000,
+      "reads_per_second": 21105.379670500843,
+      "resource_usage": {
+        "children": {
+          "input_blocks": 0.0,
+          "output_blocks": 294720.0,
+          "system_seconds": 1.8842619999999999,
+          "user_seconds": 19.266455999999998
+        },
+        "self": {
+          "input_blocks": 0.0,
+          "output_blocks": 8.0,
+          "system_seconds": 3.868646,
+          "user_seconds": 18.495455999999997
+        }
+      },
+      "wall_seconds": 47.38128456403501
+    },
+    "initial_refactor": {
+      "core_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "methylation_site_count": 81843071,
+        "per_contig_fragment_counts": [
+          500000
+        ],
+        "skipped_fragment_count": 82475,
+        "template_base_count": 200008688
+      },
+      "fragments": 500000,
+      "fragments_per_second": 5270.459123290431,
+      "output_bytes": 150888033,
+      "outputs": [
+        {
+          "record_count": 1000000,
+          "role": "bam",
+          "sha256": "94e723275174dc312b940ee55bbd83e1ff341202285b9ea7d888034e4698f722",
+          "size_bytes": 150888033
+        }
+      ],
+      "process_tree_memory": {
+        "peak_processes": 3,
+        "peak_pss_kib": 316397,
+        "peak_rss_kib": 343260,
+        "sample_interval_ms": 25,
+        "samples": 3092
+      },
+      "python_counts": {
+        "fragment_count": 500000,
+        "mate_count": 1000000,
+        "records_by_role": {
+          "bam": 1000000
+        }
+      },
+      "reads": 1000000,
+      "reads_per_second": 10540.918246580863,
+      "resource_usage": {
+        "children": {
+          "input_blocks": 0.0,
+          "output_blocks": 294736.0,
+          "system_seconds": 2.947171,
+          "user_seconds": 20.294951
+        },
+        "self": {
+          "input_blocks": 0.0,
+          "output_blocks": 8.0,
+          "system_seconds": 9.509659,
+          "user_seconds": 49.346562999999996
+        }
+      },
+      "wall_seconds": 94.86839539092034
+    },
+    "initial_to_final_peak_pss_change_kib": 855,
+    "initial_to_final_throughput_gain_percent": 100.22335034565661,
+    "initial_to_final_throughput_speedup": 2.002233503456566,
+    "initial_to_final_wall_reduction_percent": 50.05577529925232
+  },
+  "schema": "bsreadsim-post-refactor-components-1",
+  "semantic_gates": {
+    "bam_record_count": 1000000,
+    "bam_record_stream_sha256": "683612fb0f21d6a127aefc2fdebcd8c5f61d2878681f1999951d351a54851fac",
+    "bam_record_stream_uncompressed_bytes": 536676808,
+    "batch_8_vs_64_record_stream_equal": true,
+    "core_python_counts_match": true,
+    "header_difference_explanation": "Temporary output directory is part of normalized config identity, so BSREADSIM_CONFIG_SHA256 and whole-file BAM SHA differ across isolated runs; the complete BAM record stream after the header/reference dictionary is byte-identical.",
+    "manifest_verified": true,
+    "output_role_set": [
+      "bam"
+    ],
+    "source_python_tests": {
+      "passed": 232,
+      "ran": 232,
+      "skipped": 9,
+      "status": "pass"
+    }
+  },
+  "workload": {
+    "chunk_size": 4096,
+    "compression": "gzip",
+    "core_workers": 1,
+    "error_rate": 0.0,
+    "formal_repetitions": 1,
+    "gzip_level": 1,
+    "insert_max": 1000,
+    "insert_mean": 400,
+    "insert_min": 150,
+    "insert_stddev": 25.0,
+    "max_in_flight_fragments": 4096,
+    "mutation_rate": 0.0,
+    "output_policy": "bam_only",
+    "paired_end": true,
+    "protocol_batch_fragments": 64,
+    "read_length": 150,
+    "read_pairs": 500000,
+    "reads": 1000000,
+    "seed": 20260815,
+    "technology": "WGBS",
+    "fragment_summary": false,
+    "warmup_fragments": 20000,
+    "workers": 1
+  }
+}

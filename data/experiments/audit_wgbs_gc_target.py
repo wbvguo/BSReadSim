@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Audit one completed fixed-insert WGBS target run by replaying its core stream.
+"""Audit one completed WGBS target run by replaying its core stream.
 
 The FASTQ sequence is not used for GC auditing because bisulfite conversion
 changes C to T.  Instead, the script reconstructs the manifest's exact
@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import csv
 from dataclasses import dataclass
 import gzip
 import hashlib
@@ -22,7 +23,8 @@ from pathlib import Path
 import re
 import sys
 import time
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 import numpy as np
 
@@ -32,15 +34,15 @@ SOURCE_ROOT = REPOSITORY_ROOT / "src"
 if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
 
-from bsreadsim.config import normalize_run_config  # noqa: E402
-from bsreadsim.core_argv import build_core_argv  # noqa: E402
-from bsreadsim.core_process import CoreProcess  # noqa: E402
-from bsreadsim.manifest import (  # noqa: E402
+from bsreadsim.run.config import normalize_run_config  # noqa: E402
+from bsreadsim.native.launch import build_core_argv  # noqa: E402
+from bsreadsim.native.subprocess import CoreProcess  # noqa: E402
+from bsreadsim.run.manifest import (  # noqa: E402
     validate_header_projection,
     verify_complete_manifest,
 )
-from bsreadsim.preparation import PreparedRun, prepare_run  # noqa: E402
-from bsreadsim.runtime import resolve_core_executable  # noqa: E402
+from bsreadsim.run.prepare import PreparedRun, prepare_run  # noqa: E402
+from bsreadsim.native.launch import resolve_core_executable  # noqa: E402
 
 
 _NUMBER = re.compile(
@@ -49,13 +51,15 @@ _NUMBER = re.compile(
 
 
 class AuditError(RuntimeError):
-    """The run cannot support an exact fixed-insert GC audit."""
+    """The run cannot support a reference-only GC audit."""
 
 
 @dataclass(frozen=True)
 class CandidateSpace:
     contig_name: str
     contig_length: int
+    calibration_length: int
+    gc_prefix: np.ndarray
     bin_by_start: np.ndarray
     candidate_counts: np.ndarray
 
@@ -70,7 +74,7 @@ def _mapping(value: object, name: str) -> Mapping[str, Any]:
     return value
 
 
-def _load_manifest(path: Path) -> Dict[str, Any]:
+def _load_manifest(path: Path) -> dict[str, Any]:
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
@@ -88,7 +92,7 @@ def _prepare_manifest_run(manifest: Mapping[str, Any]) -> PreparedRun:
     if not isinstance(output, dict) or output.get("truth") != "none":
         raise AuditError("the audit requires a completed production run")
     output.pop("truth")
-    loaded = normalize_run_config(normalized, Path("/"), mode="production")
+    loaded = normalize_run_config(normalized, Path("/"))
     if loaded.sha256 != config_section.get("sha256"):
         raise AuditError("reconstructed normalized config SHA-256 changed")
     prepared = prepare_run(loaded)
@@ -117,7 +121,7 @@ def _prepare_manifest_run(manifest: Mapping[str, Any]) -> PreparedRun:
     return prepared
 
 
-def _decoded_bytes(path: Path) -> Tuple[bytes, bytes]:
+def _decoded_bytes(path: Path) -> tuple[bytes, bytes]:
     try:
         raw = path.read_bytes()
         decoded = gzip.decompress(raw) if raw.startswith(b"\x1f\x8b") else raw
@@ -154,10 +158,10 @@ def _load_profile(path: Path, expected_sha256: str) -> np.ndarray:
     return probabilities
 
 
-def _load_single_fasta(path: Path) -> Tuple[str, bytes]:
+def _load_single_fasta(path: Path) -> tuple[str, bytes]:
     _, decoded = _decoded_bytes(path)
     name = None
-    sequence_parts = []  # type: List[bytes]
+    sequence_parts = []  # type: list[bytes]
     for line_number, line in enumerate(decoded.splitlines(), 1):
         if line.startswith(b">"):
             if name is not None:
@@ -187,7 +191,7 @@ def _load_single_fasta(path: Path) -> Tuple[str, bytes]:
 
 def _bin_for_gc_counts(
     gc_counts: np.ndarray,
-    fragment_length: int,
+    fragment_length: Any,
     bin_count: int,
 ) -> np.ndarray:
     product = gc_counts.astype(np.uint64, copy=False) * np.uint64(bin_count - 1)
@@ -211,17 +215,16 @@ def _candidate_space(
     if read_length_1 != read_length_2:
         raise AuditError("the current GC audit requires equal mate lengths")
     insert_min = int(fragments["insert_min"])
-    if not (
-        insert_min == int(fragments["insert_mean"])
-        == int(fragments["insert_max"])
-        and float(fragments["insert_stddev"]) == 0.0
-    ):
-        raise AuditError("the current GC audit requires one fixed insert length")
+    insert_mean = int(fragments["insert_mean"])
+    insert_max = int(fragments["insert_max"])
+    if not insert_min <= insert_mean <= insert_max:
+        raise AuditError("insert length parameters are inconsistent")
+    calibration_length = insert_mean
 
     contig_name, sequence = _load_single_fasta(reference_path)
     contig_length = len(sequence)
-    if insert_min > contig_length:
-        raise AuditError("insert length exceeds the reference")
+    if calibration_length > contig_length:
+        raise AuditError("mean insert length exceeds the reference")
     encoded = np.frombuffer(sequence, dtype=np.uint8)
     gc_mask = (encoded == ord("G")) | (encoded == ord("C"))
     n_mask = encoded == ord("N")
@@ -232,7 +235,7 @@ def _candidate_space(
     np.cumsum(gc_mask, dtype=np.uint32, out=gc_prefix[1:])
     np.cumsum(n_mask, dtype=np.uint32, out=n_prefix[1:])
 
-    possible = contig_length - insert_min + 1
+    possible = contig_length - calibration_length + 1
     bin_dtype = (
         np.uint8
         if bin_count <= 256
@@ -245,7 +248,7 @@ def _candidate_space(
     maximum_n = math.floor(
         float(fragments["max_ambiguous_fraction"]) * read_length_1
     )
-    second_offset = insert_min - read_length_2
+    second_offset = calibration_length - read_length_2
 
     for begin in range(0, possible, chunk_starts):
         end = min(begin + chunk_starts, possible)
@@ -256,18 +259,20 @@ def _candidate_space(
             n_prefix[second_starts + read_length_2] - n_prefix[second_starts]
         )
         valid = (first_n <= maximum_n) & (second_n <= maximum_n)
-        gc_counts = gc_prefix[starts + insert_min] - gc_prefix[starts]
-        bins = _bin_for_gc_counts(gc_counts, insert_min, bin_count)
+        gc_counts = gc_prefix[starts + calibration_length] - gc_prefix[starts]
+        bins = _bin_for_gc_counts(gc_counts, calibration_length, bin_count)
         bin_by_start[begin:end] = bins.astype(bin_dtype, copy=False)
         candidate_counts += np.bincount(
             bins[valid].astype(np.int64, copy=False), minlength=bin_count
         ).astype(np.uint64, copy=False)
 
     if int(candidate_counts.sum()) == 0:
-        raise AuditError("reference has no eligible fixed-insert starts")
+        raise AuditError("reference has no eligible mean-insert starts")
     return CandidateSpace(
         contig_name=contig_name,
         contig_length=contig_length,
+        calibration_length=calibration_length,
+        gc_prefix=gc_prefix,
         bin_by_start=bin_by_start,
         candidate_counts=candidate_counts,
     )
@@ -279,11 +284,12 @@ def _replay_core_histogram(
     core: Path,
     candidates: CandidateSpace,
     bin_count: int,
-) -> Tuple[np.ndarray, Mapping[str, Any]]:
+) -> tuple[np.ndarray, np.ndarray, Mapping[str, Any]]:
     config = prepared.config.normalized
     fragments = _mapping(config["fragments"], "config.fragments")
     execution = _mapping(config["execution"], "config.execution")
-    insert_length = int(fragments["insert_min"])
+    insert_min = int(fragments["insert_min"])
+    insert_max = int(fragments["insert_max"])
     protocol_batch_fragments = min(
         64, int(execution["max_in_flight_fragments"])
     )
@@ -296,16 +302,26 @@ def _replay_core_histogram(
     )
 
     observed = np.zeros(bin_count, dtype=np.uint64)
+    observed_inserts = np.zeros(insert_max - insert_min + 1, dtype=np.uint64)
     start_buffer = np.empty(1024 * 1024, dtype=np.uint32)
+    length_buffer = np.empty(len(start_buffer), dtype=np.uint32)
     buffered = 0
 
     def flush() -> None:
         nonlocal buffered
         if buffered == 0:
             return
-        bins = candidates.bin_by_start[start_buffer[:buffered]]
+        starts = start_buffer[:buffered].astype(np.uint64, copy=False)
+        lengths = length_buffer[:buffered].astype(np.uint64, copy=False)
+        ends = starts + lengths
+        gc_counts = candidates.gc_prefix[ends] - candidates.gc_prefix[starts]
+        bins = _bin_for_gc_counts(gc_counts, lengths, bin_count)
         observed[:] += np.bincount(
             bins.astype(np.int64, copy=False), minlength=bin_count
+        ).astype(np.uint64, copy=False)
+        observed_inserts[:] += np.bincount(
+            (lengths - insert_min).astype(np.int64, copy=False),
+            minlength=len(observed_inserts),
         ).astype(np.uint64, copy=False)
         buffered = 0
 
@@ -332,18 +348,27 @@ def _replay_core_histogram(
             ends = np.frombuffer(batch.reference_ends.raw, dtype="<u4")
             contigs = np.frombuffer(batch.contig_indices.raw, dtype="<u4")
             offsets = np.frombuffer(batch.template_offsets.raw, dtype="<u4")
+            reference_lengths = (
+                ends.astype(np.uint64) - starts.astype(np.uint64)
+            )
+            template_lengths = np.diff(offsets.astype(np.uint64))
             if (
                 np.any(contigs != 0)
-                or np.any(ends.astype(np.uint64) - starts != insert_length)
-                or np.any(np.diff(offsets.astype(np.uint64)) != insert_length)
-                or np.any(starts >= len(candidates.bin_by_start))
+                or np.any(ends < starts)
+                or np.any(reference_lengths < insert_min)
+                or np.any(reference_lengths > insert_max)
+                or np.any(template_lengths != reference_lengths)
+                or np.any(ends > candidates.contig_length)
             ):
-                raise AuditError("replayed fragment batch violates fixed-insert audit")
+                raise AuditError("replayed fragment batch violates insert audit")
             copied = 0
             while copied < len(starts):
                 available = len(start_buffer) - buffered
                 take = min(available, len(starts) - copied)
                 start_buffer[buffered : buffered + take] = starts[copied : copied + take]
+                length_buffer[buffered : buffered + take] = reference_lengths[
+                    copied : copied + take
+                ]
                 buffered += take
                 copied += take
                 if buffered == len(start_buffer):
@@ -365,7 +390,7 @@ def _replay_core_histogram(
         or int(observed.sum()) != trailer.fragment_count
     ):
         raise AuditError("replayed fragment accounting differs from manifest")
-    return observed, {
+    return observed, observed_inserts, {
         "stream_sha256": observed_stream,
         "fragment_count": trailer.fragment_count,
         "skipped_fragment_count": trailer.skipped_fragment_count,
@@ -381,29 +406,47 @@ def _distribution_rows(
     probabilities: np.ndarray,
     candidates: np.ndarray,
     observed: np.ndarray,
-) -> Tuple[List[Dict[str, Any]], Dict[str, float]]:
+    uniform_observed: np.ndarray | None = None,
+    *,
+    project_unreachable: bool = False,
+) -> tuple[list[dict[str, Any]], dict[str, float]]:
     candidate_total = int(candidates.sum())
     observed_total = int(observed.sum())
     candidate_distribution = candidates.astype(np.float64) / candidate_total
     target = probabilities / float(math.fsum(probabilities))
     unreachable = (target > 0.0) & (candidates == 0)
-    if np.any(unreachable):
+    if np.any(unreachable) and not project_unreachable:
         raise AuditError(
             "positive target bin {} has no eligible fragment start".format(
                 int(np.flatnonzero(unreachable)[0])
             )
         )
+    projected_target = target.copy()
+    projected_target[unreachable] = 0.0
+    projected_total = float(math.fsum(projected_target))
+    if projected_total <= 0.0:
+        raise AuditError("target has no reachable positive probability")
+    projected_target /= projected_total
     ratios = np.divide(
-        target,
+        projected_target,
         candidates,
         out=np.zeros_like(target),
         where=candidates > 0,
     )
     calibrated_acceptance = ratios / float(ratios.max())
     observed_distribution = observed.astype(np.float64) / observed_total
+    if uniform_observed is not None:
+        uniform_total = int(uniform_observed.sum())
+        if uniform_total == 0:
+            raise AuditError("uniform baseline contains no fragments")
+        uniform_distribution = (
+            uniform_observed.astype(np.float64) / uniform_total
+        )
+    else:
+        uniform_distribution = None
     overall_coverage = observed_total / candidate_total
 
-    rows = []  # type: List[Dict[str, Any]]
+    rows = []  # type: list[dict[str, Any]]
     last_bin = len(probabilities) - 1
     for index in range(len(probabilities)):
         candidate_count = int(candidates[index])
@@ -411,31 +454,35 @@ def _distribution_rows(
         bin_coverage = (
             observed_count / candidate_count if candidate_count else None
         )
-        rows.append(
-            {
-                "bin": index,
-                "gc_ratio_center": index / last_bin,
-                "input_target_probability": float(probabilities[index]),
-                "normalized_target_probability": float(target[index]),
-                "eligible_start_count": candidate_count,
-                "eligible_start_probability": float(candidate_distribution[index]),
-                "calibrated_acceptance_probability": float(
-                    calibrated_acceptance[index]
-                ),
-                "expected_fragment_probability": float(target[index]),
-                "observed_fragment_count": observed_count,
-                "observed_fragment_probability": float(
-                    observed_distribution[index]
-                ),
-                "mean_fragments_per_eligible_start": bin_coverage,
-                "relative_bin_coverage": (
-                    None if bin_coverage is None else bin_coverage / overall_coverage
-                ),
-                "observed_minus_expected": float(
-                    observed_distribution[index] - target[index]
-                ),
-            }
-        )
+        row = {
+            "bin": index,
+            "gc_ratio_center": index / last_bin,
+            "input_target_probability": float(probabilities[index]),
+            "normalized_target_probability": float(target[index]),
+            "eligible_start_count": candidate_count,
+            "eligible_start_probability": float(candidate_distribution[index]),
+            "calibrated_acceptance_probability": float(
+                calibrated_acceptance[index]
+            ),
+            "expected_fragment_probability": float(projected_target[index]),
+            "observed_fragment_count": observed_count,
+            "observed_fragment_probability": float(
+                observed_distribution[index]
+            ),
+            "mean_fragments_per_eligible_start": bin_coverage,
+            "relative_bin_coverage": (
+                None if bin_coverage is None else bin_coverage / overall_coverage
+            ),
+            "observed_minus_expected": float(
+                observed_distribution[index] - projected_target[index]
+            ),
+        }
+        if uniform_distribution is not None:
+            row["uniform_fragment_count"] = int(uniform_observed[index])
+            row["uniform_fragment_probability"] = float(
+                uniform_distribution[index]
+            )
+        rows.append(row)
 
     target_overlap = _overlap(target, observed_distribution)
     metrics = {
@@ -451,24 +498,112 @@ def _distribution_rows(
             np.dot(candidate_distribution, calibrated_acceptance)
         ),
     }
+    if uniform_distribution is not None:
+        metrics.update(
+            {
+                "target_vs_uniform_overlap": _overlap(
+                    target, uniform_distribution
+                ),
+                "profile_vs_uniform_overlap": _overlap(
+                    observed_distribution, uniform_distribution
+                ),
+            }
+        )
+    if project_unreachable:
+        projected_overlap = _overlap(projected_target, observed_distribution)
+        metrics.update(
+            {
+                "dropped_target_probability": float(target[unreachable].sum()),
+                "projected_target_vs_observed_overlap": projected_overlap,
+                "projected_target_vs_observed_total_variation": (
+                    1.0 - projected_overlap
+                ),
+                "projected_target_vs_observed_max_abs_error": float(
+                    np.max(np.abs(projected_target - observed_distribution))
+                ),
+            }
+        )
     return rows, metrics
 
 
-def _write_tsv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
+def _insert_metrics(
+    insert_min: int,
+    profile_counts: np.ndarray,
+    uniform_counts: np.ndarray,
+) -> tuple[list[dict[str, Any]], dict[str, float]]:
+    profile_total = int(profile_counts.sum())
+    uniform_total = int(uniform_counts.sum())
+    if profile_total == 0 or uniform_total == 0:
+        raise AuditError("insert audit requires non-empty profile and uniform runs")
+    profile = profile_counts.astype(np.float64) / profile_total
+    uniform = uniform_counts.astype(np.float64) / uniform_total
+    lengths = np.arange(
+        insert_min,
+        insert_min + len(profile_counts),
+        dtype=np.float64,
+    )
+    if len(profile) != len(uniform):
+        raise AuditError("profile and uniform insert domains disagree")
+    profile_mean = float(np.dot(lengths, profile))
+    uniform_mean = float(np.dot(lengths, uniform))
+    profile_stddev = float(
+        math.sqrt(np.dot((lengths - profile_mean) ** 2, profile))
+    )
+    uniform_stddev = float(
+        math.sqrt(np.dot((lengths - uniform_mean) ** 2, uniform))
+    )
+    rows = [
+        {
+            "insert_length": int(length),
+            "profile_count": int(profile_counts[index]),
+            "profile_probability": float(profile[index]),
+            "uniform_count": int(uniform_counts[index]),
+            "uniform_probability": float(uniform[index]),
+        }
+        for index, length in enumerate(lengths)
+        if profile_counts[index] != 0 or uniform_counts[index] != 0
+    ]
+    overlap = _overlap(profile, uniform)
+    return rows, {
+        "profile_vs_uniform_insert_overlap": overlap,
+        "profile_vs_uniform_insert_total_variation": 1.0 - overlap,
+        "profile_insert_mean": profile_mean,
+        "uniform_insert_mean": uniform_mean,
+        "profile_minus_uniform_insert_mean": profile_mean - uniform_mean,
+        "profile_insert_stddev": profile_stddev,
+        "uniform_insert_stddev": uniform_stddev,
+        "profile_minus_uniform_insert_stddev": (
+            profile_stddev - uniform_stddev
+        ),
+    }
+
+
+def _write_tsv(
+    path: Path,
+    rows: Sequence[Mapping[str, Any]],
+) -> None:
     fields = tuple(rows[0])
     with path.open("w", encoding="utf-8", newline="") as output:
-        output.write("\t".join(fields) + "\n")
+        writer = csv.DictWriter(
+            output,
+            fieldnames=fields,
+            delimiter="\t",
+            lineterminator="\n",
+        )
+        writer.writeheader()
         for row in rows:
-            values = []
-            for field in fields:
-                value = row[field]
-                if value is None:
-                    values.append("NA")
-                elif isinstance(value, float):
-                    values.append("{:.12g}".format(value))
-                else:
-                    values.append(str(value))
-            output.write("\t".join(values) + "\n")
+            writer.writerow(
+                {
+                    field: (
+                        "NA"
+                        if row[field] is None
+                        else "{:.12g}".format(row[field])
+                        if isinstance(row[field], float)
+                        else row[field]
+                    )
+                    for field in fields
+                }
+            )
 
 
 def _write_plot(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
@@ -501,6 +636,14 @@ def _write_plot(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
         linewidth=1.5,
         linestyle="--",
     )
+    if "uniform_fragment_probability" in rows[0]:
+        axis.plot(
+            x,
+            [row["uniform_fragment_probability"] for row in rows],
+            label="observed variable-insert uniform output",
+            linewidth=1.25,
+            linestyle=":",
+        )
     axis.set_xlabel("fragment GC ratio (%)")
     axis.set_ylabel("probability mass per bin")
     axis.set_title("WGBS target GC-distribution audit")
@@ -514,6 +657,11 @@ def _write_plot(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument(
+        "--baseline-manifest",
+        type=Path,
+        help="matching uniform run used to quantify insert-distribution drift",
+    )
     parser.add_argument("--core", type=Path)
     parser.add_argument("--output-tsv", type=Path, required=True)
     parser.add_argument("--output-json", type=Path, required=True)
@@ -522,7 +670,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     if arguments.candidate_chunk_starts <= 0:
         raise AuditError("--candidate-chunk-starts must be positive")
@@ -550,6 +698,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     profile = _load_profile(Path(artifact["path"]), str(artifact["sha256"]))
     fragments = _mapping(config["fragments"], "config.fragments")
+    variable_insert = (
+        int(fragments["insert_min"]) != int(fragments["insert_mean"])
+        or int(fragments["insert_min"]) != int(fragments["insert_max"])
+        or float(fragments["insert_stddev"]) != 0.0
+    )
     candidate_started = time.perf_counter()
     candidates = _candidate_space(
         Path(config["reference"]),
@@ -561,17 +714,76 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     core = resolve_core_executable(arguments.core)
     replay_started = time.perf_counter()
-    observed, replay = _replay_core_histogram(
+    observed, observed_inserts, replay = _replay_core_histogram(
         manifest, prepared, core, candidates, len(profile)
     )
     replay_seconds = time.perf_counter() - replay_started
+    baseline_manifest_path = None
+    baseline_replay = None
+    uniform_observed = None
+    uniform_inserts = None
+    baseline_seconds = 0.0
+    if arguments.baseline_manifest is not None:
+        baseline_manifest_path = (
+            arguments.baseline_manifest.expanduser().resolve(strict=True)
+        )
+        baseline_manifest = _load_manifest(baseline_manifest_path)
+        baseline_prepared = _prepare_manifest_run(baseline_manifest)
+        baseline_config = baseline_prepared.config.normalized
+        baseline_coverage = _mapping(
+            baseline_config["coverage"], "baseline.config.coverage"
+        )
+        if baseline_config.get("technology") != "WGBS" or (
+            baseline_coverage.get("kind") != "uniform"
+        ):
+            raise AuditError("baseline manifest is not uniform WGBS")
+        if (
+            baseline_config["fragments"] != config["fragments"]
+            or baseline_config["seed"] != config["seed"]
+            or baseline_config["mutation"] != config["mutation"]
+            or baseline_prepared.file_for_role("reference").sha256
+            != prepared.file_for_role("reference").sha256
+        ):
+            raise AuditError(
+                "uniform baseline does not match target run fragments, seed, mutation, and reference"
+            )
+        baseline_started = time.perf_counter()
+        uniform_observed, uniform_inserts, baseline_replay = (
+            _replay_core_histogram(
+                baseline_manifest,
+                baseline_prepared,
+                core,
+                candidates,
+                len(profile),
+            )
+        )
+        baseline_seconds = time.perf_counter() - baseline_started
     rows, metrics = _distribution_rows(
-        profile, candidates.candidate_counts, observed
+        profile,
+        candidates.candidate_counts,
+        observed,
+        uniform_observed,
+        project_unreachable=variable_insert,
     )
     attempts = replay["fragment_count"] + replay["skipped_fragment_count"]
     metrics["observed_proposal_acceptance"] = (
         replay["fragment_count"] / attempts
     )
+    insert_rows = None
+    if uniform_inserts is not None and baseline_replay is not None:
+        insert_rows, insert_summary = _insert_metrics(
+            int(fragments["insert_min"]),
+            observed_inserts,
+            uniform_inserts,
+        )
+        metrics.update(insert_summary)
+        baseline_attempts = (
+            baseline_replay["fragment_count"]
+            + baseline_replay["skipped_fragment_count"]
+        )
+        metrics["uniform_observed_proposal_acceptance"] = (
+            baseline_replay["fragment_count"] / baseline_attempts
+        )
 
     output_tsv = arguments.output_tsv.expanduser().resolve(strict=False)
     output_json = arguments.output_json.expanduser().resolve(strict=False)
@@ -588,8 +800,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         plot = None
 
     summary = {
-        "experiment_schema_version": "1.0",
+        "experiment_schema_version": "1.1",
         "source_manifest": str(manifest_path),
+        "source_baseline_manifest": (
+            None
+            if baseline_manifest_path is None
+            else str(baseline_manifest_path)
+        ),
         "run_id": manifest["run_id"],
         "reference": {
             "path": config["reference"],
@@ -607,7 +824,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "depth": fragments.get("depth"),
             "read_length_1": fragments["read_length_1"],
             "read_length_2": fragments["read_length_2"],
-            "insert_length": fragments["insert_min"],
+            "insert_min": fragments["insert_min"],
+            "insert_mean": fragments["insert_mean"],
+            "insert_max": fragments["insert_max"],
+            "insert_stddev": fragments["insert_stddev"],
+            "calibration_insert_length": candidates.calibration_length,
             "max_ambiguous_fraction": fragments["max_ambiguous_fraction"],
             "master_seed": config["seed"],
             "workers": _mapping(config["execution"], "config.execution")[
@@ -624,11 +845,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "protocol_batch_fragments": replay["protocol_batch_fragments"],
             "stream_sha256": replay["stream_sha256"],
             "stream_matches_fastq_run": True,
+            "uniform_baseline": baseline_replay,
         },
         "metrics": metrics,
+        "insert_distribution": insert_rows,
         "timing_seconds": {
             "candidate_histogram": candidate_seconds,
             "core_replay": replay_seconds,
+            "uniform_core_replay": baseline_seconds,
             "total": time.perf_counter() - started,
         },
         "outputs": {

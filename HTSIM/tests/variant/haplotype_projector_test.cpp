@@ -21,7 +21,7 @@ using htsim::model::Bases;
 using htsim::model::VariantKind;
 using htsim::reference::Contig;
 using htsim::variant::ContigVariants;
-using htsim::variant::Event;
+using htsim::variant::Variant;
 
 void require(bool condition, const std::string &message)
 {
@@ -80,7 +80,7 @@ Contig make_contig(const std::string &sequence)
     return contig;
 }
 
-std::vector<Event> mixed_events()
+std::vector<Variant> mixed_events()
 {
     return {
         {0, 1, 2, VariantKind::snv, encode("C"), encode("T"),
@@ -108,26 +108,26 @@ void test_haplotype_projection_and_provenance()
     require(haplotype_0.reference_positions
                 == std::vector<std::int64_t>({1, 2, 3, -1, -1, 4, 5, 8, 9}),
             "haplotype-0 reference positions changed");
-    require(haplotype_0.base_event_ids
+    require(haplotype_0.base_variant_indices
                 == std::vector<std::uint32_t>({
                     0,
-                    htsim::model::no_variant_event,
-                    htsim::model::no_variant_event,
+                    htsim::model::no_variant_index,
+                    htsim::model::no_variant_index,
                     1,
                     1,
-                    htsim::model::no_variant_event,
-                    htsim::model::no_variant_event,
-                    htsim::model::no_variant_event,
-                    htsim::model::no_variant_event,
+                    htsim::model::no_variant_index,
+                    htsim::model::no_variant_index,
+                    htsim::model::no_variant_index,
+                    htsim::model::no_variant_index,
                 }),
             "haplotype-0 base provenance changed");
-    require(haplotype_0.variant_events.size() == 3U
-                && haplotype_0.variant_events[0].event_id == 0U
-                && haplotype_0.variant_events[0].phased_haplotype == 0U
-                && haplotype_0.variant_events[1].event_id == 1U
-                && haplotype_0.variant_events[1].phased_haplotype == 255U
-                && haplotype_0.variant_events[2].event_id == 2U
-                && haplotype_0.variant_events[2].kind == VariantKind::deletion,
+    require(haplotype_0.variants.size() == 3U
+                && haplotype_0.variants[0].index == 0U
+                && haplotype_0.variants[0].phased_haplotype == 0U
+                && haplotype_0.variants[1].index == 1U
+                && haplotype_0.variants[1].phased_haplotype == 255U
+                && haplotype_0.variants[2].index == 2U
+                && haplotype_0.variants[2].kind == VariantKind::deletion,
             "haplotype-0 event provenance changed");
 
     const ProjectedInterval haplotype_1 =
@@ -136,17 +136,17 @@ void test_haplotype_projection_and_provenance()
                 && haplotype_1.haplotype == 1U
                 && haplotype_1.template_bases == encode("CGTGGACGTAA"),
             "haplotype-1 sequence projection changed");
-    require(haplotype_1.variant_events.size() == 2U
-                && haplotype_1.variant_events[0].event_id == 1U
-                && haplotype_1.variant_events[1].event_id == 3U
-                && haplotype_1.variant_events[1].phased_haplotype == 1U,
+    require(haplotype_1.variants.size() == 2U
+                && haplotype_1.variants[0].index == 1U
+                && haplotype_1.variants[1].index == 3U
+                && haplotype_1.variants[1].phased_haplotype == 1U,
             "sparse per-contig event ids or phase changed");
 }
 
 void test_insertion_boundary_ownership()
 {
     const Contig contig = make_contig("ACGT");
-    const std::vector<Event> events = {
+    const std::vector<Variant> events = {
         {0, 0, 0, VariantKind::insertion, {}, encode("T"),
          HaplotypeMask::both},
         {0, 2, 2, VariantKind::insertion, {}, encode("G"),
@@ -160,15 +160,15 @@ void test_insertion_boundary_ownership()
     const auto right =
         htsim::haplotype::project_interval(contig, variants, 0, 2, 4);
     require(left.template_bases == encode("TAC")
-                && left.variant_events.size() == 1U
-                && left.variant_events[0].event_id == 0U,
+                && left.variants.size() == 1U
+                && left.variants[0].index == 0U,
             "start or internal-end insertion ownership changed");
     require(right.template_bases == encode("GGTA")
                 && right.reference_positions
                     == std::vector<std::int64_t>({-1, 2, 3, -1})
-                && right.variant_events.size() == 2U
-                && right.variant_events[0].event_id == 1U
-                && right.variant_events[1].event_id == 2U,
+                && right.variants.size() == 2U
+                && right.variants[0].index == 1U
+                && right.variants[1].index == 2U,
             "internal-start or terminal insertion ownership changed");
 
 }
@@ -176,7 +176,7 @@ void test_insertion_boundary_ownership()
 void test_inactive_and_partial_events()
 {
     const Contig contig = make_contig("ACGTAC");
-    const std::vector<Event> events = {
+    const std::vector<Variant> events = {
         {0, 1, 4, VariantKind::deletion, encode("CGT"), {},
          HaplotypeMask::haplotype_1},
     };
@@ -184,7 +184,7 @@ void test_inactive_and_partial_events()
     const auto inactive =
         htsim::haplotype::project_interval(contig, variants, 1, 2, 5);
     require(inactive.template_bases == encode("GTA")
-                && inactive.variant_events.empty(),
+                && inactive.variants.empty(),
             "inactive haplotype event changed the reference sequence");
     require_failure(
         [&] {

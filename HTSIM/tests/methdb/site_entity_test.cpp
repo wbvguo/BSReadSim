@@ -89,7 +89,7 @@ void test_invalid_values_fail_closed()
     require_error(
         [] {
             (void)insertion_site_entity(
-                htsim::model::no_variant_event,
+                htsim::model::no_variant_index,
                 0U,
                 HaplotypeMask::both,
                 0U);
