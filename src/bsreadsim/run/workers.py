@@ -15,7 +15,7 @@ from multiprocessing import shared_memory
 from ..output.fastq import format_fragment_records_trusted
 from ..process.batch import FragmentSummary
 from ..process.config import ProcessConfig
-from ..native.protocol import Header, decode_batch_payload
+from ..htsim.protocol import Header, decode_batch_payload
 from ..process.fragment import (
     decode_common_numpy_batch,
     decode_fragments,

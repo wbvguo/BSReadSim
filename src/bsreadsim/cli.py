@@ -124,12 +124,12 @@ def _add_direct_run_arguments(parser: argparse.ArgumentParser) -> None:
     )
     asm_input = biology.add_mutually_exclusive_group()
     asm_input.add_argument(
-        "--asm", type=Path, help="HTSIM allele-specific methylation input"
+        "--asm", type=Path, help="htsim allele-specific methylation input"
     )
     asm_input.add_argument(
         "--asm-bed",
         type=Path,
-        help="HTSIM ASM BED6+6 allele-specific methylation input",
+        help="htsim ASM BED6+6 allele-specific methylation input",
     )
     biology.add_argument(
         "--cut-site",
@@ -316,7 +316,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bsreadsim",
         description=(
-            "Generate biological fragments with HTSIM and apply BSReadSim "
+            "Generate biological fragments with htsim and apply BSReadSim "
             "bisulfite conversion and sequencing effects."
         ),
     )
@@ -340,7 +340,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     catalog_parser = commands.add_parser(
         "catalog",
-        help="export a native fragment-candidate catalog",
+        help="export an htsim fragment-candidate catalog",
     )
     catalog_commands = catalog_parser.add_subparsers(
         dest="catalog_technology", required=True
@@ -349,7 +349,7 @@ def build_parser() -> argparse.ArgumentParser:
         "rrbs",
         help="export exact RRBS candidates directly from CLI arguments",
         description=(
-            "Export the native RRBS candidate BED directly; no JSON "
+            "Export the htsim RRBS candidate BED directly; no JSON "
             "configuration file is read or written."
         ),
     )
@@ -445,7 +445,7 @@ def build_rrbs_catalog_document(
         "paired_end": not arguments.single_end,
         "read_length_1": arguments.read_length,
         **_insert_parameters(arguments),
-        # The native config contract requires a count even though catalog-only
+        # The htsim config contract requires a count even though catalog-only
         # generation never samples or emits protocol fragments.
         "read_pairs": 1,
         "max_ambiguous_fraction": arguments.max_ambiguous_fraction,
@@ -744,8 +744,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         export_methdb_catalog,
         export_rrbs_catalog,
     )
-    from .native.launch import CoreArgvError
-    from .native.subprocess import CoreProcessError
+    from .htsim.launch import CoreArgvError
+    from .htsim.subprocess import CoreProcessError
     from .run.manifest import ManifestError
     from .output import OutputError
     from .run.execute import PipelineError, run_document

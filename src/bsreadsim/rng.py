@@ -8,8 +8,8 @@ state, so scheduling and chunking cannot change a result.
 from enum import IntEnum
 import math
 
-from ._native import bernoulli as _native_bernoulli
-from ._native import u64 as _native_u64
+from ._cext import bernoulli as _cext_bernoulli
+from ._cext import u64 as _cext_u64
 
 RNG_CONTRACT = "philox4x32-10+philox-domain-v2"
 
@@ -141,7 +141,7 @@ def _u64_unchecked(
     key: int, entity_ordinal: int, local_index: int, pair: int = 0
 ) -> int:
     """Return a Philox u64 for already validated internal arguments."""
-    return _native_u64(key, entity_ordinal, local_index, pair)
+    return _cext_u64(key, entity_ordinal, local_index, pair)
 
 
 def uniform01(
@@ -186,7 +186,7 @@ def _bernoulli_unchecked(
         return False
     if probability == 1.0:
         return True
-    return _native_bernoulli(
+    return _cext_bernoulli(
         key,
         entity_ordinal,
         local_index,

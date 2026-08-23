@@ -54,7 +54,7 @@ from .sequencing import (
     _mate_template_offsets,
 )
 from ..rng import RNGStage, _bernoulli_unchecked as bernoulli, derive_key
-from ..native.protocol import (
+from ..htsim.protocol import (
     DecodedBatchView,
     Header,
 )
@@ -73,10 +73,10 @@ _ALTERNATIVE_BASES = np.asarray(
     ((1, 2, 3), (0, 2, 3), (0, 1, 3), (0, 1, 2)),
     dtype=np.uint8,
 )
-from .._native import (
-    decode_protocol_fragments as _native_decode_fragments,
-    format_fastq_batch as _native_format_fastq_batch,
-    pack_protocol_common_columns as _native_pack_common_columns,
+from .._cext import (
+    decode_protocol_fragments as _cext_decode_fragments,
+    format_fastq_batch as _cext_format_fastq_batch,
+    pack_protocol_common_columns as _cext_pack_common_columns,
 )
 
 
@@ -153,7 +153,7 @@ def decode_fragments(
     batch: DecodedBatchView,
     header: Header,
 ) -> tuple[Fragment, ...]:
-    """Reconstruct typed processing values through the required native adapter."""
+    """Reconstruct typed processing values through the required C extension."""
 
     if not isinstance(batch, DecodedBatchView):
         raise ProcessError("batch must be a decoded protocol batch")
@@ -211,7 +211,7 @@ def decode_fragments(
             details.variant_alt_bases.raw,
         )
     try:
-        return _native_decode_fragments(
+        return _cext_decode_fragments(
             common_columns,
             has_details,
             batch.first_fragment_ordinal,
@@ -259,7 +259,7 @@ def decode_common_numpy_batch(
     )
     try:
         ordinals, contig_names, model_columns, fragment_columns = (
-            _native_pack_common_columns(
+            _cext_pack_common_columns(
                 common_columns,
                 batch.first_fragment_ordinal,
                 tuple(contig.name for contig in header.contigs),
@@ -722,9 +722,9 @@ def encode_fastq_batch(
         retain_sequences=retain_sequences,
     )
     if not isinstance(result, EncodedFastqBatch):
-        raise ProcessError("native FASTQ formatter returned an invalid batch")
+        raise ProcessError("C-extension FASTQ formatter returned an invalid batch")
     if paired_end != (result.read2 is not None):
-        raise ProcessError("native FASTQ formatter changed mate cardinality")
+        raise ProcessError("C-extension FASTQ formatter changed mate cardinality")
     return result
 
 
@@ -994,7 +994,7 @@ def _generate_columnar_read_batch(
         )
     if format_fastq:
         try:
-            read1, read2, record_lengths = _native_format_fastq_batch(
+            read1, read2, record_lengths = _cext_format_fastq_batch(
                 model.contig_names,
                 model.fragment_ordinal_bytes,
                 batch.mate_offsets,

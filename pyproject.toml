@@ -25,6 +25,7 @@ package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
+namespaces = false
 
 [tool.setuptools.package-data]
 bsreadsim = ["run-config.schema.json", "_licenses/*.txt"]

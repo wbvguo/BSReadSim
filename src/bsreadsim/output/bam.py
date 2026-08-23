@@ -28,11 +28,11 @@ from ..process.batch import (
     format_fragment_identifier,
 )
 
-from ..native.protocol import Header
+from ..htsim.protocol import Header
 from .errors import OutputError
 
-from .._native import format_sam_batch as _native_format_sam_batch
-from .._native import format_sam_columns as _native_format_sam_columns
+from .._cext import format_sam_batch as _cext_format_sam_batch
+from .._cext import format_sam_columns as _cext_format_sam_columns
 
 
 BAM_CONTRACT = "bsreadsim-bam-v3"
@@ -245,7 +245,7 @@ def format_sam_batch(
     include_fragment_summary: bool = False,
     include_fragment_realization: bool = False,
 ) -> tuple[bytes, tuple[int, ...]]:
-    """Format one trusted worker batch with the required native encoder."""
+    """Format one trusted worker batch with the required C-extension encoder."""
 
     if not isinstance(fragments, tuple) or not fragments:
         raise BamError("details SAM batch must be a non-empty tuple")
@@ -269,7 +269,7 @@ def format_sam_batch(
             include_fragment_realization=include_fragment_realization,
         )
     )
-    return _native_format_sam_batch(
+    return _cext_format_sam_batch(
         fragments,
         paired_end,
         read_group_id,
@@ -330,7 +330,7 @@ def format_sam_columns(
         details.variant_template_starts.raw,
         details.variant_template_ends.raw,
     )
-    return _native_format_sam_columns(
+    return _cext_format_sam_columns(
         tuple(header.contigs[index].name for index in batch.contig_indices),
         columns,
         formatted.mate_sequences,

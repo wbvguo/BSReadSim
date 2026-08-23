@@ -23,7 +23,7 @@ from .batch import (
 )
 from ..rng import RNGStage, derive_key
 
-from .._native import sample_bernoulli_sites as _native_sample_bernoulli_sites
+from .._cext import sample_bernoulli_sites as _cext_sample_bernoulli_sites
 
 if TYPE_CHECKING:
     from .config import ProcessConfig
@@ -87,14 +87,14 @@ def _sample_methylation_values_bernoulli(
         fragment.contig_index,
     )
     try:
-        return _native_sample_bernoulli_sites(
+        return _cext_sample_bernoulli_sites(
             fragment.methylation_sites,
             key,
             fragment.fragment_ordinal,
         )
     except (TypeError, ValueError, OverflowError) as error:
         raise ProcessError(
-            "native Bernoulli site sampling failed: {}".format(error)
+            "C-extension Bernoulli site sampling failed: {}".format(error)
         ) from error
 
 
@@ -164,14 +164,4 @@ def _sample_site_states_bernoulli(
         )
     result.flags.writeable = False
     return result
-
-
-assign_methylation = _sample_methylation_values
-assign_methylation_batch = _sample_methylation_batch_values
-
-__all__ = [
-    "BernoulliStateModel",
-    "MethylationStateModel",
-    "assign_methylation",
-    "assign_methylation_batch",
-]
+__all__ = ["BernoulliStateModel", "MethylationStateModel"]

@@ -9,7 +9,7 @@ import struct
 
 import numpy as np
 
-from .._native import philox_pairs as _native_philox_pairs
+from .._cext import philox_pairs as _cext_philox_pairs
 
 NO_VARIANT_INDEX = 0xFFFFFFFF
 _COLUMN_U64 = struct.Struct("<Q")
@@ -325,7 +325,7 @@ class BaseState:
 
 @dataclass(frozen=True)
 class _CompactBaseStates:
-    """Worker-only columnar base state for native detail formatting.
+    """Worker-only columnar base state for C-extension detail formatting.
 
     Keeping one immutable column per field avoids allocating one 12-field
     Python dataclass for every read base. The public ``process_fragment`` path
@@ -697,7 +697,7 @@ def _philox_pairs(
         raise ProcessError("NumPy Philox counter columns must have one shape")
     entity = np.ascontiguousarray(entity)
     local = np.ascontiguousarray(local)
-    pair_0_data, pair_1_data = _native_philox_pairs(key, entity, local)
+    pair_0_data, pair_1_data = _cext_philox_pairs(key, entity, local)
     pair_0 = np.frombuffer(pair_0_data, dtype=_UINT64).reshape(entity.shape)
     pair_1 = np.frombuffer(pair_1_data, dtype=_UINT64).reshape(entity.shape)
     pair_0.flags.writeable = False

@@ -32,7 +32,7 @@ from .batch import (
 if TYPE_CHECKING:
     from .config import ProcessConfig
 
-from .._native import apply_uniform_errors as _native_apply_uniform_errors
+from .._cext import apply_uniform_errors as _cext_apply_uniform_errors
 
 _COMPLEMENT = (3, 2, 1, 0, 4)
 _BASE_TEXT_TRANSLATION = bytes.maketrans(bytes(range(5)), b"ACGTN")
@@ -755,7 +755,7 @@ def _apply_errors(
         fragment.contig_index,
     )
     try:
-        sampled_bases, sampled_flags = _native_apply_uniform_errors(
+        sampled_bases, sampled_flags = _cext_apply_uniform_errors(
             quality.converted.bases,
             key,
             fragment.fragment_ordinal,
@@ -764,7 +764,7 @@ def _apply_errors(
         )
     except (TypeError, ValueError, OverflowError) as error:
         raise ProcessError(
-            "native uniform sequencing-error sampling failed: {}".format(error)
+            "C-extension uniform sequencing-error sampling failed: {}".format(error)
         ) from error
     return _ErroredMate(
         quality,

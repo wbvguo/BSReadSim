@@ -1,4 +1,4 @@
-"""Native immutable-catalog orchestration."""
+"""Immutable catalog orchestration through the htsim core."""
 
 from __future__ import annotations
 from contextlib import suppress
@@ -9,7 +9,7 @@ import subprocess
 from collections.abc import Mapping
 import uuid
 
-from ..native.launch import CoreExecutableError, build_core_argv, resolve_core_executable
+from ..htsim.launch import CoreExecutableError, build_core_argv, resolve_core_executable
 from .config import normalize_run_config
 from .prepare import prepare_run
 
@@ -18,7 +18,7 @@ PathLike = str | os.PathLike
 
 
 class CatalogError(RuntimeError):
-    """A native candidate catalog could not be exported safely."""
+    """An htsim candidate catalog could not be exported safely."""
 
 
 def export_rrbs_catalog(
@@ -28,7 +28,7 @@ def export_rrbs_catalog(
     base_directory: PathLike = ".",
     core_executable: PathLike | None = None,
 ) -> Path:
-    """Export the exact native RRBS candidate table to a new plain BED file."""
+    """Export the exact htsim RRBS candidate table to a new plain BED file."""
 
     loaded = normalize_run_config(document, base_directory)
     normalized = loaded.normalized
@@ -124,7 +124,7 @@ def _export_catalog(
         if completed.returncode != 0:
             detail = completed.stderr.decode("utf-8", errors="replace").strip()
             raise CatalogError(
-                "native {} export failed{}".format(
+                "htsim {} export failed{}".format(
                     label,
                     ": " + detail if detail else ""
                 )

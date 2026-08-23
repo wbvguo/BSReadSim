@@ -24,7 +24,7 @@ CORE_FILENAME = "htsim-core.exe" if os.name == "nt" else "htsim-core"
 
 
 class BinaryDistribution(Distribution):
-    """Mark wheels as platform-specific because they contain a native core."""
+    """Mark wheels as platform-specific because they contain compiled code."""
 
     def has_ext_modules(self):
         return True
@@ -45,9 +45,9 @@ class BuildPythonWithCore(build_py):
             )
 
         build_command = self.get_finalized_command("build")
-        native_root = Path(build_command.build_temp).resolve() / "htsim-core"
-        build_directory = native_root / "build"
-        install_directory = native_root / "install"
+        core_build_root = Path(build_command.build_temp).resolve() / "htsim-core"
+        build_directory = core_build_root / "build"
+        install_directory = core_build_root / "install"
         build_directory.mkdir(parents=True, exist_ok=True)
         install_directory.mkdir(parents=True, exist_ok=True)
 
@@ -96,7 +96,7 @@ class BuildPythonWithCore(build_py):
                 "CMake did not install the expected core: {}".format(built_core)
             )
         package_core = (
-            Path(self.build_lib) / "bsreadsim" / "native" / CORE_FILENAME
+            Path(self.build_lib) / "bsreadsim" / "htsim" / CORE_FILENAME
         )
         package_core.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(str(built_core), str(package_core))
@@ -111,10 +111,10 @@ class BuildPythonWithCore(build_py):
         license_directory = Path(self.build_lib) / "bsreadsim" / "_licenses"
         license_directory.mkdir(parents=True, exist_ok=True)
         third_party_licenses = (
-            (SOURCE_ROOT / "HTSLIB" / "LICENSE", "HTSlib.txt"),
+            (SOURCE_ROOT / "htslib" / "LICENSE", "HTSlib.txt"),
             (
                 SOURCE_ROOT
-                / "HTSLIB"
+                / "htslib"
                 / "htscodecs"
                 / "LICENSE.md",
                 "htscodecs.txt",
@@ -182,12 +182,12 @@ setup(
     distclass=BinaryDistribution,
     ext_modules=[
         Extension(
-            "bsreadsim._native",
-            depends=["src/bsreadsim/_native_protocol_types.h"],
+            "bsreadsim._cext",
+            depends=["src/bsreadsim/cext/api.h"],
             sources=[
-                "src/bsreadsim/_native.c",
-                "src/bsreadsim/_protocol_validate.c",
-                "src/bsreadsim/_sam_native.c",
+                "src/bsreadsim/cext/module.c",
+                "src/bsreadsim/cext/protocol.c",
+                "src/bsreadsim/cext/sam.c",
             ],
         )
     ],

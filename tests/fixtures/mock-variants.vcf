@@ -1,0 +1,4 @@
+##fileformat=VCFv4.3
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	SAMPLE
+chrMock	6	.	G	GTT	.	PASS	.	GT	1|0
+chrMock	16	.	T	TCC	.	PASS	.	GT	1|0

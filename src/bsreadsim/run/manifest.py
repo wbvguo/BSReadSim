@@ -15,7 +15,7 @@ from ..output.bam import BAM_CONTRACT, BAM_MAPQ
 from .config import RUN_CONFIG_SCHEMA_VERSION
 from ..output import OutputFileSummary, OutputSummary
 from .prepare import FileDigest, PreparedRun
-from ..native.protocol import (
+from ..htsim.protocol import (
     AmbiguityPolicy,
     BaseEncoding,
     PROTOCOL_MAJOR,

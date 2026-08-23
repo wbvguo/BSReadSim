@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "fixtures": [
+    {
+      "file": "header-none.hex",
+      "format": "htsim-binary-frame",
+      "contract_version": "2.1",
+      "valid": true,
+      "purpose": "Frozen stream preamble and header frame without annotations."
+    },
+    {
+      "file": "batch-none.hex",
+      "format": "htsim-binary-frame",
+      "contract_version": "2.1",
+      "valid": true,
+      "purpose": "Frozen two-fragment batch without annotations."
+    },
+    {
+      "file": "batch-full.hex",
+      "format": "htsim-binary-frame",
+      "contract_version": "2.1",
+      "valid": true,
+      "purpose": "Frozen annotated batch covering SNV, insertion, deletion, and N columns."
+    },
+    {
+      "file": "trailer-none.hex",
+      "format": "htsim-binary-frame",
+      "contract_version": "2.1",
+      "valid": true,
+      "purpose": "Frozen successful trailer for the unannotated stream."
+    },
+    {
+      "file": "error.hex",
+      "format": "htsim-binary-frame",
+      "contract_version": "2.1",
+      "valid": true,
+      "expected_result": "terminal-error-1204",
+      "purpose": "Validly encoded terminal error frame used to verify rejection behavior."
+    },
+    {
+      "file": "mock-reference.fa",
+      "format": "fasta",
+      "valid": true,
+      "purpose": "Small reference containing RRBS cut sites and TBS target loci."
+    },
+    {
+      "file": "mock-targets.bed",
+      "format": "bed6",
+      "valid": true,
+      "purpose": "Small forward, reverse, and unknown-strand TBS target set."
+    },
+    {
+      "file": "mock-variants.vcf",
+      "format": "vcf",
+      "valid": true,
+      "purpose": "Small phased-variant input for technology integration tests."
+    },
+    {
+      "file": "wgbs-gc-target-mock.tsv",
+      "format": "coverage-profile-tsv",
+      "valid": true,
+      "purpose": "Small normalized target-GC distribution for WGBS tests."
+    },
+    {
+      "file": "truncated-stream.hex",
+      "format": "htsim-binary-stream",
+      "valid": false,
+      "expected_result": "truncated-stream-error",
+      "purpose": "Truncated binary stream used to verify fail-closed decoding."
+    },
+    {
+      "file": "invalid-quality-model.json",
+      "format": "quality-markov-json",
+      "valid": false,
+      "expected_result": "model-schema-error",
+      "purpose": "Structurally incomplete sequencing model used to verify schema rejection."
+    }
+  ]
+}

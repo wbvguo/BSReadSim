@@ -8,7 +8,7 @@ The module is the sole runtime owner of the component boundary:
   and publishes FASTQ or annotated BAM plus a manifest transactionally.
 
 For a single worker, every policy uses the raw-payload batch core inline from
-one reusable local slot. Eligible FASTQ and BAM blocks take its native column
+one reusable local slot. Eligible FASTQ and BAM blocks take its C-extension column
 and NumPy branch; other policies use the general typed-object path
 inside the same core. With multiple workers, the supervisor remains the sole
 stdout reader and dispatches CRC-verified payload batches through bounded
@@ -40,8 +40,8 @@ from .config import (
     WGBS_GC_PROFILE_VERSION,
     normalize_run_config,
 )
-from ..native.launch import build_core_argv
-from ..native.subprocess import CoreProcess
+from ..htsim.launch import build_core_argv
+from ..htsim.subprocess import CoreProcess
 from .manifest import (
     CompleteManifest,
     build_complete_manifest,
@@ -77,11 +77,11 @@ from .prepare import (
     snapshot_prepared_file,
 )
 from ..process.batch import FragmentSummary
-from ..native.protocol import (
+from ..htsim.protocol import (
     Header,
     Trailer,
 )
-from ..native.launch import (
+from ..htsim.launch import (
     CoreExecutableError,
     resolve_core_executable as _resolve_core_executable,
 )

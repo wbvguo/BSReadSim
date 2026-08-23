@@ -127,8 +127,3 @@ def _draw_fragment_base_bernoulli(
             np.bool_, copy=False
         )
     return result
-
-
-convert_fragment = _convert_fragment
-
-__all__ = ["convert_fragment"]

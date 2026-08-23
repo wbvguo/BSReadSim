@@ -1,16 +1,19 @@
 include CMakeLists.txt
+include mkdocs.yml
+include requirements-docs.txt
 include .gitmodules
-include docs/bam-v2.md
-include docs/read-name-v2.md
-recursive-include HTSIM/src *.cpp *.h
-graft HTSLIB
-exclude HTSLIB/.git
-exclude HTSLIB/htscodecs/.git
-prune HTSLIB/.github
-prune HTSLIB/ref_cache
-prune HTSLIB/samples
-prune HTSLIB/test
-prune HTSLIB/htscodecs/.github
-prune HTSLIB/htscodecs/javascript
-prune HTSLIB/htscodecs/tests
+graft docs
+graft data
+recursive-include htsim/src *.cpp *.h
+graft htslib
+exclude htslib/.git
+exclude htslib/htscodecs/.git
+prune htslib/.github
+prune htslib/ref_cache
+prune htslib/samples
+prune htslib/test
+prune htslib/htscodecs/.github
+prune htslib/htscodecs/javascript
+prune htslib/htscodecs/tests
+prune htsim/tests
 prune tests

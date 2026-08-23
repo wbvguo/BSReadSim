@@ -1,4 +1,4 @@
-[submodule "HTSLIB"]
-	path = HTSLIB
+[submodule "htslib"]
+	path = htslib
 	url = https://github.com/samtools/htslib.git
 	shallow = true
