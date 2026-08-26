@@ -12,10 +12,8 @@ from bsreadsim.process.sequencing import (
     MAX_MODEL_BYTES,
     QUALITY_CONFUSION_FORMAT,
     QUALITY_CONFUSION_SCHEMA,
-    QUALITY_CONFUSION_VERSION,
     QUALITY_MARKOV_FORMAT,
     QUALITY_MARKOV_SCHEMA,
-    QUALITY_MARKOV_VERSION,
     QualityMarkovModel,
     SequencingModelError,
     parse_quality_confusion,
@@ -110,8 +108,7 @@ def _payload(document: dict) -> bytes:
 class QualityMarkovModelTests(unittest.TestCase):
     def test_contract_identifiers_are_frozen(self) -> None:
         self.assertEqual(QUALITY_MARKOV_FORMAT, "json")
-        self.assertEqual(QUALITY_MARKOV_VERSION, "quality-markov-v1")
-        self.assertEqual(QUALITY_MARKOV_SCHEMA, "quality-markov-v1")
+        self.assertEqual(QUALITY_MARKOV_SCHEMA, "quality-markov")
 
     def test_first_five_cycles_then_transition_have_a_frozen_vector(self) -> None:
         model = parse_quality_markov(_payload(_quality_document()))
@@ -191,10 +188,9 @@ class QualityMarkovModelTests(unittest.TestCase):
 class QualityConfusionModelTests(unittest.TestCase):
     def test_contract_identifiers_are_frozen(self) -> None:
         self.assertEqual(QUALITY_CONFUSION_FORMAT, "json")
-        self.assertEqual(QUALITY_CONFUSION_VERSION, "quality-confusion-v1")
         self.assertEqual(
             QUALITY_CONFUSION_SCHEMA,
-            "quality-confusion-v1",
+            "quality-confusion",
         )
 
     def test_quality_specific_calls_have_a_frozen_vector(self) -> None:
@@ -249,7 +245,9 @@ class QualityConfusionModelTests(unittest.TestCase):
                 (30,),
             )[0]
             observed[called] += 1
-        for actual, expected in zip(observed, (0.1, 0.2, 0.3, 0.4)):
+        for actual, expected in zip(
+            observed, (0.1, 0.2, 0.3, 0.4), strict=True
+        ):
             self.assertAlmostEqual(actual / 10000, expected, delta=0.02)
 
         malformed = _confusion_document()
@@ -259,7 +257,7 @@ class QualityConfusionModelTests(unittest.TestCase):
 
 
 class StrictJsonTests(unittest.TestCase):
-    def test_versioned_invalid_fixture_is_rejected(self) -> None:
+    def test_frozen_invalid_fixture_is_rejected(self) -> None:
         payload = (FIXTURE_ROOT / "invalid-quality-model.json").read_bytes()
         with self.assertRaisesRegex(SequencingModelError, "exactly R1 and R2"):
             parse_quality_markov(payload)

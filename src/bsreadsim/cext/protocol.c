@@ -1755,7 +1755,7 @@ make_mate(
             if (has_anchor && candidate != anchor) {
                 PyErr_SetString(
                     PyExc_ValueError,
-                    "insertion-only v2 mate has ambiguous reference anchors"
+                    "insertion-only mate has ambiguous reference anchors"
                 );
                 goto done;
             }
@@ -1765,7 +1765,7 @@ make_mate(
         if (!has_anchor) {
             PyErr_SetString(
                 PyExc_ValueError,
-                "insertion-only v2 mate has no reference anchor"
+                "insertion-only mate has no reference anchor"
             );
             goto done;
         }

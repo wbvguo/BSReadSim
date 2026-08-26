@@ -7,11 +7,13 @@ import io
 import json
 import hashlib
 from pathlib import Path
+import shlex
 import sys
 import tempfile
 from types import SimpleNamespace
 
 from bsreadsim.cli import main as cli_main
+from bsreadsim.htsim.protocol import PROTOCOL_VERSION
 from bsreadsim.run.manifest import verify_complete_manifest
 
 
@@ -22,7 +24,7 @@ def quality_model() -> bytes:
     }
     return json.dumps(
         {
-            "schema": "quality-markov-v1",
+            "schema": "quality-markov",
             "quality_scores": [10, 30],
             "mates": [mate, mate],
         },
@@ -41,7 +43,7 @@ def error_model() -> bytes:
     mate = {"base_transition_counts": [rotate, rotate]}
     return json.dumps(
         {
-            "schema": "quality-confusion-v1",
+            "schema": "quality-confusion",
             "quality_scores": [10, 30],
             "mates": [mate, mate],
         },
@@ -68,6 +70,7 @@ def _run_cli(
 ):
     arguments = [
         "run",
+        "wgbs",
         "-r", str(root / "tiny.fa"),
         "-o", str(root / name),
         "-n", "7",
@@ -76,11 +79,12 @@ def _run_cli(
         "--indel-fraction", "0.15",
         "--indel-extension-probability", "0.3",
         "--read-length", "3",
-        "--insert-size", "5",
+        "--insert-mean", "5",
+        "--insert-sd", "0",
         "--max-ambiguous-fraction", "0",
-        "--beta-cg", "2", "5",
-        "--beta-chg", "3", "4",
-        "--beta-chh", "5", "2",
+        "--beta-cg", "2,5",
+        "--beta-chg", "3,4",
+        "--beta-chh", "5,2",
         "--conversion-rate", "0.73",
         "--undirectional",
         "--workers", str(workers),
@@ -88,7 +92,7 @@ def _run_cli(
         "--chunk-size", "3",
         "--max-in-flight-fragments", "2",
         "--prefix", "sample",
-        "--compression", "none",
+        "--format", "fastq",
         "--core", str(core),
     ]
     if advanced:
@@ -107,13 +111,21 @@ def _run_cli(
     if status != 0:
         raise SystemExit("direct CLI failed: {}".format(stderr.getvalue().strip()))
     manifest_path = Path(stdout.getvalue().strip()).resolve(strict=True)
-    document = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_text = manifest_path.read_text(encoding="utf-8")
+    document = json.loads(manifest_text)
     verify_complete_manifest(document)
-    if document["versions"]["protocol"] != "2.1":
+    if not manifest_text.startswith("{\n  \"command\": {"):
+        raise SystemExit("CLI manifest is not pretty-printed JSON")
+    if shlex.split(document["command"]["user_command"]) != [
+        "bsreadsim",
+        *arguments,
+    ]:
+        raise SystemExit("CLI manifest did not preserve argv")
+    if document["details"]["protocol_version"] != PROTOCOL_VERSION:
         raise SystemExit("manifest recorded the wrong observed protocol")
-    counts = document["counts"]["python"]
-    if counts["fragment_count"] != 7 or counts["mate_count"] != 14:
-        raise SystemExit("v2 pipeline accounting changed")
+    summary = document["summary"]
+    if summary["fragment_count"] != 7 or summary["read_count"] != 14:
+        raise SystemExit("pipeline accounting changed")
     return SimpleNamespace(manifest_path=manifest_path)
 
 
@@ -141,6 +153,7 @@ def run_direct_profile_cli(core: Path, root: Path) -> None:
         status = cli_main(
             [
                 "run",
+                "wgbs",
                 "-r", str(root / "tiny.fa"),
                 "-o", str(output),
                 "-n", "7",
@@ -150,9 +163,9 @@ def run_direct_profile_cli(core: Path, root: Path) -> None:
                 "--insert-min", "3",
                 "--insert-mean", "5",
                 "--insert-max", "8",
-                "--insert-stddev", "1",
+                "--insert-sd", "1",
                 "--max-ambiguous-fraction", "0",
-                "--coverage-profile", str(profile_path),
+                "--gc-profile", str(profile_path),
                 "--error-rate", "0",
                 "--workers", "1",
                 "--core", str(core),
@@ -163,21 +176,21 @@ def run_direct_profile_cli(core: Path, root: Path) -> None:
     manifest_path = Path(stdout.getvalue().strip())
     document = json.loads(manifest_path.read_text(encoding="utf-8"))
     verify_complete_manifest(document)
-    normalized = document["config"]["normalized"]
-    artifact = normalized["coverage"]["artifact"]
-    if normalized["coverage"]["kind"] != "profile":
+    effective = document["details"]["configuration"]
+    artifact = effective["coverage"]["artifact"]
+    if effective["coverage"]["type"] != "profile":
         raise SystemExit("direct CLI lost profile coverage")
     if artifact["sha256"] != hashlib.sha256(profile_bytes).hexdigest():
         raise SystemExit("direct CLI recorded the wrong profile digest")
-    fragments = normalized["fragments"]
+    fragments = effective["fragments"]
     if (
         fragments["insert_min"] != 3
         or fragments["insert_mean"] != 5
         or fragments["insert_max"] != 8
-        or fragments["insert_stddev"] != 1.0
+        or fragments["insert_sd"] != 1.0
     ):
         raise SystemExit("direct profile CLI changed variable insert parameters")
-    if document["counts"]["core"]["fragment_count"] != 7:
+    if document["summary"]["fragment_count"] != 7:
         raise SystemExit("direct profile CLI emitted the wrong fragment count")
     if {item["role"] for item in document["outputs"]} != {"read1", "read2"}:
         raise SystemExit("direct profile CLI did not remain FASTQ-only")
@@ -187,7 +200,7 @@ def main() -> None:
     if len(sys.argv) != 2:
         raise SystemExit("usage: check_pipeline_e2e.py CORE")
     core = Path(sys.argv[1]).resolve()
-    with tempfile.TemporaryDirectory(prefix="bsreadsim-pipeline-v2-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="bsreadsim-pipeline-") as temporary:
         root = Path(temporary)
         (root / "tiny.fa").write_bytes(
             b">chrTiny\nACGTNCGCGTACGTCGCGTACGTNCGCGTACGT\n"
@@ -215,7 +228,7 @@ def main() -> None:
                 result.manifest_path.read_text(encoding="utf-8")
             )
             verify_complete_manifest(document)
-            if document["versions"]["protocol"] != "2.1":
+            if document["details"]["protocol_version"] != PROTOCOL_VERSION:
                 raise SystemExit("advanced manifest protocol is wrong")
         if data_files(root / "advanced-inline") != data_files(root / "advanced-pool"):
             raise SystemExit("general typed path changed advanced FASTQ bytes")

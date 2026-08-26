@@ -18,18 +18,18 @@ from bsreadsim.run.prepare import (
 
 def base_config() -> dict:
     return {
-        "schema_version": "1.1",
         "reference": "reference.fa",
         "inputs": {},
         "technology": "WGBS",
         "mutation": {},
+        "seeds": {"mutation": "0", "phasing": "0", "methylation": "0"},
         "fragments": {
             "paired_end": False,
             "read_length_1": 4,
             "insert_min": 4,
             "insert_mean": 6,
             "insert_max": 10,
-            "read_pairs": 2,
+            "count": 2,
         },
         "methylation": {
             "beta": {
@@ -107,8 +107,6 @@ class PreparationTests(unittest.TestCase):
             "kind": "profile",
             "artifact": {
                 "path": "coverage.json",
-                "format": "json",
-                "version": "1",
                 "sha256": hashlib.sha256(model_bytes).hexdigest(),
             },
         }
@@ -134,8 +132,6 @@ class PreparationTests(unittest.TestCase):
             "kind": "profile",
             "artifact": {
                 "path": "coverage.json",
-                "format": "json",
-                "version": "1",
                 "sha256": "0" * 64,
             },
         }
@@ -162,7 +158,7 @@ class PreparationTests(unittest.TestCase):
                     prepare_run(loaded, entropy=lambda bits: 1, hash_chunk_size=value)
 
     def test_prepared_model_can_be_revalidated_into_an_exact_snapshot(self) -> None:
-        model_bytes = b'{"schema":"model-v1"}\n'
+        model_bytes = b'{"schema":"model"}\n'
         model_path = self.base_directory / "quality.json"
         model_path.write_bytes(model_bytes)
         document = base_config()
@@ -170,8 +166,6 @@ class PreparationTests(unittest.TestCase):
             "kind": "markov",
             "artifact": {
                 "path": "quality.json",
-                "format": "json",
-                "version": "quality-markov-v1",
                 "sha256": hashlib.sha256(model_bytes).hexdigest(),
             },
         }

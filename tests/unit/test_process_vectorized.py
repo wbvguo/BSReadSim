@@ -51,14 +51,18 @@ class NumpyProcessTests(unittest.TestCase):
                 pair0.tolist(),
                 [
                     _u64_unchecked(key, int(entity), int(local), 0)
-                    for entity, local in zip(entities, local_indices)
+                    for entity, local in zip(
+                        entities, local_indices, strict=True
+                    )
                 ],
             )
             self.assertEqual(
                 pair1.tolist(),
                 [
                     _u64_unchecked(key, int(entity), int(local), 1)
-                    for entity, local in zip(entities, local_indices)
+                    for entity, local in zip(
+                        entities, local_indices, strict=True
+                    )
                 ],
             )
 
@@ -69,19 +73,23 @@ class NumpyProcessTests(unittest.TestCase):
             np.arange(96, dtype=np.uint64).reshape(12, 8)[:, 1::2]
             * np.uint64(17)
         )
-        key = 0xFEDCBA9876543210
+        key = 0xFEDCBA9876543210  # gitleaks:allow -- deterministic RNG key
         observed = _philox_pairs(key, entities, local_indices)
         expected_0 = np.asarray(
             [
                 _u64_unchecked(key, int(entity), int(local), 0)
-                for entity, local in zip(entities.flat, local_indices.flat)
+                for entity, local in zip(
+                    entities.flat, local_indices.flat, strict=True
+                )
             ],
             dtype=np.uint64,
         ).reshape(entities.shape)
         expected_1 = np.asarray(
             [
                 _u64_unchecked(key, int(entity), int(local), 1)
-                for entity, local in zip(entities.flat, local_indices.flat)
+                for entity, local in zip(
+                    entities.flat, local_indices.flat, strict=True
+                )
             ],
             dtype=np.uint64,
         ).reshape(entities.shape)

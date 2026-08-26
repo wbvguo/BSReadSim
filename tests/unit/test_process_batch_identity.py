@@ -13,7 +13,7 @@ from bsreadsim.process.batch import (
 
 class ReadNameTests(unittest.TestCase):
     def test_contract_uses_variable_width_lowercase_hexadecimal(self) -> None:
-        self.assertEqual(READ_NAME_CONTRACT, "bsreadsim-read-name-v2")
+        self.assertEqual(READ_NAME_CONTRACT, "bsreadsim-read-name")
         self.assertEqual(
             format_fragment_identifier("chr1", 0, 1, 0x2A),
             "chr1:1-1:2a",

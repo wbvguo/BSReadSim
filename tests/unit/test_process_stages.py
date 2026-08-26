@@ -49,7 +49,7 @@ def advanced_quality_model():
     return parse_quality_markov(
         json.dumps(
             {
-                "schema": "quality-markov-v1",
+                "schema": "quality-markov",
                 "quality_scores": [10, 30],
                 "mates": [mate, mate],
             },
@@ -76,7 +76,7 @@ def advanced_error_model():
     return parse_quality_confusion(
         json.dumps(
             {
-                "schema": "quality-confusion-v1",
+                "schema": "quality-confusion",
                 "quality_scores": [10, 30],
                 "mates": [mate, mate],
             },
@@ -311,6 +311,37 @@ class UniformProcessTests(unittest.TestCase):
         )
         self.assertTrue(all(mate.base_states == () for mate in fastq_only.mates))
         self.assertEqual(fastq_only.site_states, ())
+
+    def test_standard_processing_skips_methylation_and_conversion(self) -> None:
+        fragment = make_fragment(paired_end=True, probabilities=(0.0, 0.0))
+        config = ProcessConfig(
+            master_seed=7,
+            directional=False,
+            conversion_rate=1.0,
+            quality=UniformQuality(30),
+            error=UniformError(0.0),
+            bisulfite=False,
+        )
+
+        result = process_fragment_batch((fragment,), ("chr1",), config)[0]
+
+        self.assertEqual(result.site_states, ())
+        self.assertIs(result.fragment_conversion_mode, ConversionMode.NONE)
+        self.assertEqual(
+            tuple(mate.sequence for mate in result.mates),
+            ("ACCGT", "CGACG"),
+        )
+        for mate in result.mates:
+            self.assertIs(mate.conversion_mode, ConversionMode.NONE)
+            self.assertTrue(
+                all(
+                    state.methylated is None
+                    and not state.conversion_attempted
+                    and not state.conversion_succeeded
+                    and state.oriented_base == state.post_conversion_base
+                    for state in mate.base_states
+                )
+            )
 
     def test_single_end_probability_boundaries(self) -> None:
         result = process_fragment(
@@ -659,7 +690,7 @@ class UniformProcessTests(unittest.TestCase):
 
     def test_state_model_plugin_boundary_drives_the_typed_path(self) -> None:
         class AllMethylatedModel:
-            contract = "test-all-methylated-v1"
+            contract = "test-all-methylated"
 
             def sample_fragment(self, fragment, config):
                 return (True,) * len(fragment.methylation_sites)

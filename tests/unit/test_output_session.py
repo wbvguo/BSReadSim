@@ -19,22 +19,16 @@ from bsreadsim.output.fastq import (
     format_fragment_records_trusted,
 )
 from tests.helpers.process_support import UniformProcessConfig, process_fragment
-from bsreadsim.run.manifest import MANIFEST_SCHEMA_VERSION
+from bsreadsim.run.manifest import MANIFEST_VERSION
 from tests.unit.test_process_stages import make_fragment
 
 
 def manifest_json(summary):
     document = {
-        "counts": {
-            "python": {
-                "fragment_count": summary.fragment_count,
-                "mate_count": summary.mate_count,
-                "records_by_role": {
-                    item.role: item.record_count for item in summary.files
-                },
-            }
+        "details": {
+            "reproducibility": {"scope": "output component test"},
         },
-        "manifest_schema_version": MANIFEST_SCHEMA_VERSION,
+        "version": MANIFEST_VERSION,
         "outputs": [
             {
                 "path": str(item.path),
@@ -45,18 +39,21 @@ def manifest_json(summary):
             }
             for item in summary.files
         ],
-        "reproducibility": {"scope": "output component test"},
         "status": "complete",
+        "summary": {
+            "fragment_count": summary.fragment_count,
+            "output_file_count": len(summary.files),
+            "output_size_bytes": sum(item.size_bytes for item in summary.files),
+            "read_count": summary.mate_count,
+        },
     }
     identity = json.dumps(
-        document, allow_nan=False, separators=(",", ":"), sort_keys=True
+        document, allow_nan=False, indent=2, sort_keys=True
     )
-    document["reproducibility"]["sha256"] = hashlib.sha256(
+    document["details"]["reproducibility"]["sha256"] = hashlib.sha256(
         identity.encode("utf-8")
     ).hexdigest()
-    return json.dumps(
-        document, allow_nan=False, separators=(",", ":"), sort_keys=True
-    )
+    return json.dumps(document, allow_nan=False, indent=2, sort_keys=True)
 
 
 def processed(
@@ -90,7 +87,7 @@ class OutputSessionTests(unittest.TestCase):
             "directory": self.directory,
             "prefix": "sample",
             "paired_end": False,
-            "compression": "none",
+            "format": "fastq",
         }
         values.update(overrides)
         return OutputConfig(**values)
@@ -196,6 +193,28 @@ class OutputSessionTests(unittest.TestCase):
         read2 = (self.directory / "sample.R2.fastq").read_text(encoding="utf-8")
         self.assertTrue(read2.startswith("@chr1:101-108:0/2\nCGACA\n"))
 
+    def test_truth_artifact_is_committed_with_reads_and_manifest(self) -> None:
+        source = self.directory / "private.methdb"
+        source.write_bytes(b"methdb-test")
+        with OutputSession(self.config()) as transaction:
+            transaction.write_fragment(processed())
+            transaction.add_artifact(
+                "truth.methdb",
+                source,
+                Path("truth/sample.methdb"),
+                record_count=7,
+            )
+            summary = transaction.finalize()
+            self.assertFalse((self.directory / "truth/sample.methdb").exists())
+            transaction.commit(manifest_json(summary))
+
+        truth = summary.file_for_role("truth.methdb")
+        self.assertEqual(truth.record_count, 7)
+        self.assertEqual(truth.sha256, hashlib.sha256(b"methdb-test").hexdigest())
+        self.assertEqual(
+            (self.directory / "truth/sample.methdb").read_bytes(), b"methdb-test"
+        )
+
     def test_bam_is_streamed_and_counted_per_mate(self) -> None:
         program = (
             "import sys; value=sys.stdin.buffer.read(); "
@@ -203,7 +222,8 @@ class OutputSessionTests(unittest.TestCase):
         )
         config = self.config(
             paired_end=True,
-            bam=self.bam_config(program),
+            format="bam",
+            bam_config=self.bam_config(program),
         )
         with OutputSession(config) as transaction:
             transaction.write_fragment(processed(paired_end=True))
@@ -222,7 +242,8 @@ class OutputSessionTests(unittest.TestCase):
         program = "import sys; sys.stdin.buffer.read(); raise SystemExit(9)"
         transaction = OutputSession(
             self.config(
-                    bam=self.bam_config(program),
+                format="bam",
+                bam_config=self.bam_config(program),
             )
         )
         transaction.write_fragment(processed())
@@ -273,7 +294,7 @@ class OutputSessionTests(unittest.TestCase):
                 directory=directory,
                 prefix="same",
                 paired_end=False,
-                compression="gzip",
+                format="fastq.gz",
             )
             with OutputSession(config) as transaction:
                 transaction.write_fragment(processed())
@@ -298,7 +319,7 @@ class OutputSessionTests(unittest.TestCase):
                 directory=directory,
                 prefix="same",
                 paired_end=False,
-                compression="gzip",
+                format="fastq.gz",
                 gzip_level=level,
                 )
             with OutputSession(config) as transaction:
@@ -327,7 +348,7 @@ class OutputSessionTests(unittest.TestCase):
                 directory=directories[0],
                 prefix="same",
                 paired_end=True,
-                compression="gzip",
+                format="fastq.gz",
             )
         ) as transaction:
             for fragment in fragments:
@@ -348,7 +369,7 @@ class OutputSessionTests(unittest.TestCase):
                 directory=directories[1],
                 prefix="same",
                 paired_end=True,
-                compression="gzip",
+                format="fastq.gz",
             )
         ) as transaction:
             transaction.write_formatted_batch(
@@ -419,12 +440,12 @@ class OutputSessionTests(unittest.TestCase):
         summary = transaction.finalize()
         document = json.loads(manifest_json(summary))
         document["outputs"][0]["sha256"] = "0" * 64
-        document["reproducibility"].pop("sha256")
-        identity = json.dumps(document, separators=(",", ":"), sort_keys=True)
-        document["reproducibility"]["sha256"] = hashlib.sha256(
+        document["details"]["reproducibility"].pop("sha256")
+        identity = json.dumps(document, indent=2, sort_keys=True)
+        document["details"]["reproducibility"]["sha256"] = hashlib.sha256(
             identity.encode("utf-8")
         ).hexdigest()
-        tampered = json.dumps(document, separators=(",", ":"), sort_keys=True)
+        tampered = json.dumps(document, indent=2, sort_keys=True)
 
         with self.assertRaisesRegex(OutputError, "staged outputs"):
             transaction.commit(tampered)

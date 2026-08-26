@@ -41,9 +41,9 @@ class OutputConfig:
     directory: Path
     prefix: str
     paired_end: bool
-    compression: str = "gzip"
+    format: str = "fastq.gz"
     gzip_level: int = 6
-    bam: BamConfig | None = None
+    bam_config: BamConfig | None = None
 
     def __post_init__(self) -> None:
         directory = Path(self.directory)
@@ -57,18 +57,20 @@ class OutputConfig:
             raise OutputError("output prefix contains unsupported characters")
         if not isinstance(self.paired_end, bool):
             raise OutputError("paired_end must be a boolean")
-        if self.compression not in ("none", "gzip"):
-            raise OutputError("compression must be 'none' or 'gzip'")
+        if self.format not in ("fastq", "fastq.gz", "bam"):
+            raise OutputError("format must be 'fastq', 'fastq.gz', or 'bam'")
         if (
             isinstance(self.gzip_level, bool)
             or not isinstance(self.gzip_level, int)
             or not 0 <= self.gzip_level <= 9
         ):
             raise OutputError("gzip_level must be an integer in [0, 9]")
-        if self.bam is not None and not isinstance(
-            self.bam, BamConfig
+        if self.bam_config is not None and not isinstance(
+            self.bam_config, BamConfig
         ):
-            raise OutputError("bam must be a BamConfig or None")
+            raise OutputError("bam_config must be a BamConfig or None")
+        if (self.format == "bam") != (self.bam_config is not None):
+            raise OutputError("format bam requires exactly one BAM writer policy")
         object.__setattr__(self, "directory", directory)
 
 
@@ -189,6 +191,8 @@ class OutputSession:
         self._expected_ordinal = 0
         self._mate_count = 0
         self._published = []  # type: list[Path]
+        self._created_directories = []  # type: list[Path]
+        self._artifact_counts = {}  # type: dict[str, int]
         try:
             config.directory.mkdir(parents=True, exist_ok=True)
             if not config.directory.is_dir():
@@ -208,16 +212,18 @@ class OutputSession:
             )
             self._require_destinations_absent()
             self._streams = {}  # type: dict[str, _BinaryOutput | BamOutput]
-            for role, (staged_path, final_path) in self._paths.items():
+            for role, (staged_path, _final_path) in self._paths.items():
                 if role == "bam":
-                    if config.bam is None:
+                    if config.bam_config is None:
                         raise OutputError("BAM path has no writer policy")
                     self._streams[role] = BamOutput(
-                        staged_path, config.bam
+                        staged_path, config.bam_config
                     )
                 else:
                     self._streams[role] = _BinaryOutput(
-                        staged_path, config.compression, config.gzip_level
+                        staged_path,
+                        "gzip" if config.format == "fastq.gz" else "none",
+                        config.gzip_level,
                     )
         except Exception:
             for stream in getattr(self, "_streams", {}).values():
@@ -261,16 +267,16 @@ class OutputSession:
                 self._streams["read1"].write_bytes(read1)
                 if read2 is not None and "read2" in self._streams:
                     self._streams["read2"].write_bytes(read2)
-            if self.config.bam is not None:
+            if self.config.bam_config is not None:
                 bam_records = format_sam_fragment(
                     fragment,
                     paired_end=self.config.paired_end,
-                    read_group_id=self.config.bam.read_group_id,
-                    contig_length=self.config.bam.reference_length(
+                    read_group_id=self.config.bam_config.read_group_id,
+                    contig_length=self.config.bam_config.reference_length(
                         fragment.contig_name
                     ),
                     include_fragment_summary=(
-                        self.config.bam.fragment_summary
+                        self.config.bam_config.fragment_summary
                     ),
                 )
                 self._streams["bam"].write_bytes(b"".join(bam_records))
@@ -279,6 +285,51 @@ class OutputSession:
         except Exception:
             self.abort()
             raise
+
+    def add_artifact(
+        self,
+        role: str,
+        source_path: Path,
+        relative_path: Path,
+        *,
+        record_count: int,
+    ) -> None:
+        """Move one completed auxiliary artifact into this transaction."""
+        self._require_state("open")
+        if role not in ("truth.methdb", "truth.vcf"):
+            raise OutputError("unsupported transactional artifact role")
+        if role in self._paths:
+            raise OutputError("duplicate transactional artifact role: {}".format(role))
+        if (
+            isinstance(record_count, bool)
+            or not isinstance(record_count, int)
+            or record_count < 0
+        ):
+            raise OutputError("artifact record_count must be a non-negative integer")
+        relative = Path(relative_path)
+        if (
+            relative.is_absolute()
+            or len(relative.parts) != 2
+            or relative.parts[0] != "truth"
+            or not relative.name.startswith(self.config.prefix + ".")
+        ):
+            raise OutputError("artifact path must be truth/PREFIX.NAME")
+        source = Path(source_path)
+        if not source.is_file():
+            raise OutputError("transactional artifact source is not a file")
+        staged = self._staging_directory / relative
+        final = self.config.directory / relative
+        if os.path.lexists(final):
+            raise OutputError("output destination already exists: {}".format(final))
+        staged.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.replace(source, staged)
+        except OSError as error:
+            raise OutputError(
+                "cannot stage transactional artifact {}: {}".format(role, error)
+            ) from error
+        self._paths[role] = (staged, final)
+        self._artifact_counts[role] = record_count
 
     def write_formatted_batch(
         self,
@@ -325,7 +376,7 @@ class OutputSession:
             elif read1_view is not None or read2_view is not None:
                 raise OutputError("BAM-only batch contains unpublished FASTQ bytes")
 
-            alignment_enabled = self.config.bam is not None
+            alignment_enabled = self.config.bam_config is not None
             alignment_view = None
             if alignment is not None:
                 alignment_view = _byte_view("formatted details alignment", alignment)
@@ -448,6 +499,15 @@ class OutputSession:
             self._require_destinations_absent()
             for role in self._ordered_roles():
                 staged_path, final_path = self._paths[role]
+                if not final_path.parent.exists():
+                    final_path.parent.mkdir()
+                    self._created_directories.append(final_path.parent)
+                elif not final_path.parent.is_dir():
+                    raise OutputError(
+                        "output parent is not a directory: {}".format(
+                            final_path.parent
+                        )
+                    )
                 os.link(staged_path, final_path)
                 self._published.append(final_path)
             os.link(staged_manifest, final_manifest)
@@ -455,7 +515,7 @@ class OutputSession:
             for staged_path, _ in self._paths.values():
                 staged_path.unlink()
             staged_manifest.unlink()
-            self._staging_directory.rmdir()
+            shutil.rmtree(self._staging_directory)
             self._state = "committed"
             return self._summary
         except Exception as error:
@@ -476,19 +536,23 @@ class OutputSession:
             with suppress(FileNotFoundError):
                 final_path.unlink()
         self._published.clear()
+        for directory in reversed(self._created_directories):
+            with suppress(OSError):
+                directory.rmdir()
+        self._created_directories.clear()
         shutil.rmtree(self._staging_directory, ignore_errors=True)
         self._state = "aborted"
 
     def _build_paths(self) -> dict[str, tuple[Path, Path]]:
-        suffix = ".gz" if self.config.compression == "gzip" else ""
+        suffix = ".gz" if self.config.format == "fastq.gz" else ""
         names = {}
-        if self.config.bam is None:
+        if self.config.bam_config is None:
             names["read1"] = "{}.R1.fastq{}".format(
                 self.config.prefix, suffix
             )
-        if self.config.bam is not None:
+        if self.config.bam_config is not None:
             names["bam"] = "{}.bam".format(self.config.prefix)
-        if self.config.paired_end and self.config.bam is None:
+        if self.config.paired_end and self.config.bam_config is None:
             names["read2"] = "{}.R2.fastq{}".format(self.config.prefix, suffix)
         return {
             role: (
@@ -500,12 +564,15 @@ class OutputSession:
 
     def _ordered_roles(self) -> tuple[str, ...]:
         roles = []
-        if self.config.bam is None:
+        if self.config.bam_config is None:
             roles.append("read1")
             if self.config.paired_end:
                 roles.append("read2")
-        if self.config.bam is not None:
+        if self.config.bam_config is not None:
             roles.append("bam")
+        roles.extend(
+            role for role in ("truth.methdb", "truth.vcf") if role in self._paths
+        )
         return tuple(roles)
 
     def _require_destinations_absent(self) -> None:
@@ -525,7 +592,7 @@ class OutputSession:
         _validate_processed_fragment(
             fragment,
             self.config.paired_end,
-            require_base_states=self.config.bam is not None,
+            require_base_states=self.config.bam_config is not None,
         )
         if fragment.fragment_ordinal != self._expected_ordinal:
             raise OutputError("processed fragments must start at zero and be consecutive")
@@ -547,19 +614,26 @@ class OutputSession:
         summaries = []
         for role in self._ordered_roles():
             _, final_path = self._paths[role]
-            stream = self._streams[role]
-            record_count = (
-                self._mate_count
-                if role == "bam"
-                else self._expected_ordinal
-            )
+            stream = self._streams.get(role)
+            if stream is None:
+                staged_path, _ = self._paths[role]
+                size_bytes, sha256 = _file_identity(staged_path)
+                record_count = self._artifact_counts[role]
+            else:
+                size_bytes = stream.size_bytes
+                sha256 = stream.sha256
+                record_count = (
+                    self._mate_count
+                    if role == "bam"
+                    else self._expected_ordinal
+                )
             summaries.append(
                 OutputFileSummary(
                     role=role,
                     path=final_path,
-                    size_bytes=stream.size_bytes,
+                    size_bytes=size_bytes,
                     record_count=record_count,
-                    sha256=stream.sha256,
+                    sha256=sha256,
                 )
             )
         return tuple(summaries)
@@ -581,6 +655,22 @@ def _byte_view(name: str, value: BytesLike) -> memoryview:
     return view
 
 
+def _file_identity(path: Path) -> tuple[int, str]:
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with path.open("rb") as source:
+            while True:
+                block = source.read(1024 * 1024)
+                if not block:
+                    break
+                digest.update(block)
+                size += len(block)
+    except OSError as error:
+        raise OutputError("cannot identify staged artifact: {}".format(error)) from error
+    return size, digest.hexdigest()
+
+
 def _validate_manifest_json(
     manifest_json: str, summary: OutputSummary
 ) -> bytes:
@@ -596,11 +686,11 @@ def _validate_manifest_json(
         document,
         allow_nan=False,
         ensure_ascii=False,
-        separators=(",", ":"),
+        indent=2,
         sort_keys=True,
     )
     if manifest_json != canonical:
-        raise OutputError("manifest_json must use canonical compact JSON encoding")
+        raise OutputError("manifest_json must use canonical pretty JSON encoding")
     expected_outputs = {
         item.role: {
             "path": str(item.path),
@@ -625,15 +715,14 @@ def _validate_manifest_json(
     ):
         raise OutputError("commit manifest does not identify the staged outputs")
 
-    counts = document.get("counts")
-    python_counts = counts.get("python") if isinstance(counts, dict) else None
-    expected_counts = {
-        "fragment_count": summary.fragment_count,
-        "mate_count": summary.mate_count,
-        "records_by_role": {
-            item.role: item.record_count for item in summary.files
-        },
-    }
-    if python_counts != expected_counts:
-        raise OutputError("commit manifest Python counts disagree with staged outputs")
+    manifest_summary = document.get("summary")
+    if (
+        not isinstance(manifest_summary, dict)
+        or manifest_summary.get("fragment_count") != summary.fragment_count
+        or manifest_summary.get("read_count") != summary.mate_count
+        or manifest_summary.get("output_file_count") != len(summary.files)
+        or manifest_summary.get("output_size_bytes")
+        != sum(item.size_bytes for item in summary.files)
+    ):
+        raise OutputError("commit manifest summary disagrees with staged outputs")
     return manifest_json.encode("utf-8") + b"\n"

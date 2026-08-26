@@ -19,6 +19,17 @@ from bsreadsim.htsim.protocol import (
     Trailer,
 )
 
+MAX_FRAME_PAYLOAD = _protocol.MAX_FRAME_PAYLOAD
+DETAILS_PRESENT = _protocol.DETAILS_PRESENT
+_Encoder = _protocol._Encoder
+_F32 = _protocol._F32
+_U32 = _protocol._U32
+_U64 = _protocol._U64
+_U8 = _protocol._U8
+_validate_batch = _protocol._validate_batch
+_validate_header = _protocol._validate_header
+_validate_trailer = _protocol._validate_trailer
+
 
 def _encode_frame(
     frame_type: FrameType,
@@ -224,28 +235,11 @@ __all__ = ["ProtocolWriter", "encode_stream", "read_stream"]
 
 
 # Test-only protocol reference encoders.
-from bsreadsim.htsim import protocol as _protocol_reference
-FragmentBatch = _protocol_reference.FragmentBatch
-Header = _protocol_reference.Header
-MAX_FRAME_PAYLOAD = _protocol_reference.MAX_FRAME_PAYLOAD
-ProtocolError = _protocol_reference.ProtocolError
-DETAILS_PRESENT = _protocol_reference.DETAILS_PRESENT
-Trailer = _protocol_reference.Trailer
-_Encoder = _protocol_reference._Encoder
-_F32 = _protocol_reference._F32
-_U32 = _protocol_reference._U32
-_U64 = _protocol_reference._U64
-_U8 = _protocol_reference._U8
-_validate_batch = _protocol_reference._validate_batch
-_validate_header = _protocol_reference._validate_header
-_validate_trailer = _protocol_reference._validate_trailer
-
 def _encode_header_payload(header: Header) -> bytes:
     _validate_header(header)
     encoder = _Encoder()
     encoder.string(header.run_id)
     encoder.string(header.core_version)
-    encoder.string(header.config_schema_version)
     encoder.string(header.rng_contract)
     encoder.u64(header.master_seed)
     encoder.raw(header.normalized_config_sha256)

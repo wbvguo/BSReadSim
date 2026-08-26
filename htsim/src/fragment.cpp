@@ -177,7 +177,7 @@ std::vector<std::uint32_t> largest_remainder_real(
 
 namespace htsim::depth_count {
 
-std::uint32_t read_pairs(
+std::uint32_t fragments(
     double depth,
     std::uint64_t effective_reference_bases,
     std::uint32_t read_length,

@@ -11,7 +11,7 @@ import math
 from ._cext import bernoulli as _cext_bernoulli
 from ._cext import u64 as _cext_u64
 
-RNG_CONTRACT = "philox4x32-10+philox-domain-v2"
+RNG_CONTRACT = "philox4x32-10+philox-domain"
 
 
 class RNGStage(IntEnum):

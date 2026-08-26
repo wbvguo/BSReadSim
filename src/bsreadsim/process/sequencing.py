@@ -48,6 +48,8 @@ _THREE_WAY_THRESHOLD_2 = np.uint64(12297829382473034411)
 
 
 def _opposite_mode(mode: ConversionMode) -> ConversionMode:
+    if mode is ConversionMode.NONE:
+        return ConversionMode.NONE
     return (
         ConversionMode.G2A
         if mode is ConversionMode.C2T
@@ -57,19 +59,13 @@ def _opposite_mode(mode: ConversionMode) -> ConversionMode:
 QUALITY_MARKOV_FORMAT = "json"
 
 
-QUALITY_MARKOV_VERSION = "quality-markov-v1"
-
-
-QUALITY_MARKOV_SCHEMA = QUALITY_MARKOV_VERSION
+QUALITY_MARKOV_SCHEMA = "quality-markov"
 
 
 QUALITY_CONFUSION_FORMAT = "json"
 
 
-QUALITY_CONFUSION_VERSION = "quality-confusion-v1"
-
-
-QUALITY_CONFUSION_SCHEMA = QUALITY_CONFUSION_VERSION
+QUALITY_CONFUSION_SCHEMA = "quality-confusion"
 
 
 QUALITY_INITIAL_CYCLES = 5
@@ -88,7 +84,7 @@ _BASE_COUNT = 4
 
 
 class SequencingModelError(ValueError):
-    """A model artifact or sampling request violates the v1 contract."""
+    """A model artifact or sampling request violates the current contract."""
 
 
 @dataclass(frozen=True)
@@ -268,7 +264,9 @@ class QualityConfusionModel:
             score: index for index, score in enumerate(self.quality_scores)
         }
         result = []
-        for read_offset, (base, quality) in enumerate(zip(bases, qualities)):
+        for read_offset, (base, quality) in enumerate(
+            zip(bases, qualities, strict=True)
+        ):
             _require_base(base)
             _require_quality_value(quality)
             try:
@@ -293,7 +291,7 @@ class QualityConfusionModel:
 
 
 def parse_quality_markov(payload: bytes) -> QualityMarkovModel:
-    """Decode one strict ``quality-markov-v1`` JSON document."""
+    """Decode one strict ``quality-markov`` JSON document."""
     document = _parse_document(payload)
     _require_keys(
         document,
@@ -314,7 +312,7 @@ def parse_quality_markov(payload: bytes) -> QualityMarkovModel:
 
 
 def parse_quality_confusion(payload: bytes) -> QualityConfusionModel:
-    """Decode one strict ``quality-confusion-v1`` JSON document."""
+    """Decode one strict ``quality-confusion`` JSON document."""
     document = _parse_document(payload)
     _require_keys(
         document,
@@ -504,7 +502,7 @@ def _parse_document(payload: bytes) -> Mapping[str, object]:
     if not isinstance(payload, bytes):
         raise SequencingModelError("model payload must be bytes")
     if len(payload) == 0 or len(payload) > MAX_MODEL_BYTES:
-        raise SequencingModelError("model payload size is outside the v1 limit")
+        raise SequencingModelError("model payload size is outside the limit")
     try:
         text = payload.decode("utf-8")
     except UnicodeDecodeError as error:
@@ -680,7 +678,13 @@ def _derive_mates(
             (site_ref.read_offset, site_ref.site_index)
             for site_ref in mate.site_refs
         }
-        if len(actual_refs) != len(mate.site_refs) or actual_refs != expected_refs:
+        if (
+            converted.conversion_mode is not ConversionMode.NONE
+            and (
+                len(actual_refs) != len(mate.site_refs)
+                or actual_refs != expected_refs
+            )
+        ):
             raise ProcessError(
                 "mate site references disagree with fragment site projection"
             )
@@ -745,7 +749,9 @@ def _apply_errors(
             bytes(sampled),
             tuple(
                 before != after
-                for before, after in zip(quality.converted.bases, sampled)
+                for before, after in zip(
+                    quality.converted.bases, sampled, strict=True
+                )
             ),
         )
 
@@ -920,11 +926,9 @@ __all__ = [
     "MAX_MODEL_BYTES",
     "QUALITY_CONFUSION_FORMAT",
     "QUALITY_CONFUSION_SCHEMA",
-    "QUALITY_CONFUSION_VERSION",
     "QUALITY_INITIAL_CYCLES",
     "QUALITY_MARKOV_FORMAT",
     "QUALITY_MARKOV_SCHEMA",
-    "QUALITY_MARKOV_VERSION",
     "QualityConfusionModel",
     "QualityMarkovModel",
     "SequencingModelError",

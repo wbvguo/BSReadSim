@@ -1,38 +1,32 @@
 {
-  "schema_version": 1,
   "fixtures": [
     {
       "file": "header-none.hex",
       "format": "htsim-binary-frame",
-      "contract_version": "2.1",
       "valid": true,
       "purpose": "Frozen stream preamble and header frame without annotations."
     },
     {
       "file": "batch-none.hex",
       "format": "htsim-binary-frame",
-      "contract_version": "2.1",
       "valid": true,
       "purpose": "Frozen two-fragment batch without annotations."
     },
     {
       "file": "batch-full.hex",
       "format": "htsim-binary-frame",
-      "contract_version": "2.1",
       "valid": true,
       "purpose": "Frozen annotated batch covering SNV, insertion, deletion, and N columns."
     },
     {
       "file": "trailer-none.hex",
       "format": "htsim-binary-frame",
-      "contract_version": "2.1",
       "valid": true,
       "purpose": "Frozen successful trailer for the unannotated stream."
     },
     {
       "file": "error.hex",
       "format": "htsim-binary-frame",
-      "contract_version": "2.1",
       "valid": true,
       "expected_result": "terminal-error-1204",
       "purpose": "Validly encoded terminal error frame used to verify rejection behavior."

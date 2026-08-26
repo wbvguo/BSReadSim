@@ -11,7 +11,7 @@
 namespace {
 
 using htsim::depth_count::DepthCountError;
-using htsim::depth_count::read_pairs;
+using htsim::depth_count::fragments;
 
 void require(bool condition, const std::string &message)
 {
@@ -32,17 +32,17 @@ void require_error(Operation operation, const std::string &message)
 void test_human_scale_and_pairing()
 {
     require(
-        read_pairs(20.0, UINT64_C(3100000000), 100U, true)
+        fragments(20.0, UINT64_C(3100000000), 100U, true)
             == UINT32_C(310000000),
         "human-scale paired-end depth conversion changed");
     require(
-        read_pairs(20.0, UINT64_C(3100000000), 100U, false)
+        fragments(20.0, UINT64_C(3100000000), 100U, false)
             == UINT32_C(620000000),
         "human-scale single-end depth conversion changed");
-    require(read_pairs(0.5, 1001U, 100U, false) == 6U,
+    require(fragments(0.5, 1001U, 100U, false) == 6U,
             "fractional depth did not use frozen ceil semantics");
     require(
-        read_pairs(
+        fragments(
             2.0,
             std::numeric_limits<std::uint32_t>::max(),
             2U,
@@ -54,11 +54,11 @@ void test_human_scale_and_pairing()
 void test_invalid_and_overflow_inputs()
 {
     require_error(
-        [] {read_pairs(0.0, 100U, 10U, false);},
+        [] {fragments(0.0, 100U, 10U, false);},
         "zero depth was accepted");
     require_error(
         [] {
-            read_pairs(
+            fragments(
                 std::numeric_limits<double>::quiet_NaN(),
                 100U,
                 10U,
@@ -66,16 +66,16 @@ void test_invalid_and_overflow_inputs()
         },
         "NaN depth was accepted");
     require_error(
-        [] {read_pairs(1.0, 0U, 10U, false);},
+        [] {fragments(1.0, 0U, 10U, false);},
         "zero effective reference length was accepted");
     require_error(
-        [] {read_pairs(1.0, 100U, 0U, false);},
+        [] {fragments(1.0, 100U, 0U, false);},
         "zero read length was accepted");
-    require(read_pairs(0.001, 10U, 100U, true) == 1U,
+    require(fragments(0.001, 10U, 100U, true) == 1U,
             "positive depth did not ceil to one read pair");
     require_error(
         [] {
-            read_pairs(
+            fragments(
                 1.0,
                 std::numeric_limits<std::uint64_t>::max(),
                 1U,
@@ -91,7 +91,7 @@ void test_rounding_mode_is_part_of_the_contract()
     require(std::fesetround(FE_DOWNWARD) == 0,
             "cannot set downward rounding mode");
     require_error(
-        [] {read_pairs(1.0, 100U, 10U, false);},
+        [] {fragments(1.0, 100U, 10U, false);},
         "non-nearest rounding mode was accepted");
     require(std::fesetround(original) == 0,
             "cannot restore floating-point rounding mode");

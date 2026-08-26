@@ -123,7 +123,7 @@ class CExtensionEquivalenceTests(unittest.TestCase):
             _cext.u64(0, 0, 0, 2)
 
     def test_packed_philox_pairs_match_scalar_reference(self) -> None:
-        key = 0x0123456789ABCDEF
+        key = 0x0123456789ABCDEF  # gitleaks:allow -- deterministic RNG key
         entities = (0, 1, 17, 1 << 32, (1 << 64) - 1)
         local_indices = (0, 3, (1 << 32) | 149, 7, (1 << 64) - 1)
         packed_entities = struct.pack("={}Q".format(len(entities)), *entities)
@@ -140,7 +140,9 @@ class CExtensionEquivalenceTests(unittest.TestCase):
                 "={}Q".format(len(entities)),
                 *(
                     _cext.u64(key, entity, local, pair)
-                    for entity, local in zip(entities, local_indices)
+                    for entity, local in zip(
+                        entities, local_indices, strict=True
+                    )
                 ),
             )
             for pair in (0, 1)

@@ -24,7 +24,7 @@ UINT32_MAX = (1 << 32) - 1
 
 class KeyDerivationTests(unittest.TestCase):
     def test_contract_and_stage_names_are_frozen(self) -> None:
-        self.assertEqual(RNG_CONTRACT, "philox4x32-10+philox-domain-v2")
+        self.assertEqual(RNG_CONTRACT, "philox4x32-10+philox-domain")
         self.assertEqual(
             STAGE_NAMES,
             (
