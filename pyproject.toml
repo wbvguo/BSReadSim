@@ -1,14 +1,15 @@
 [build-system]
-requires = ["setuptools>=68", "wheel>=0.41"]
+requires = ["setuptools>=77.0.3", "wheel>=0.41"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "bsreadsim"
-version = "0.4.0"
+dynamic = ["version"]
 description = "Bisulfite sequencing read simulation"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
   { name = "Wenbin Guo" },
 ]
@@ -16,16 +17,67 @@ dependencies = [
   "jsonschema>=4.10",
   "numpy>=1.24",
 ]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: C",
+  "Programming Language :: C++",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+
+[project.urls]
+Documentation = "https://wbvguo.github.io/BSReadSim/"
+Issues = "https://github.com/wbvguo/BSReadSim/issues"
+Source = "https://github.com/wbvguo/BSReadSim"
 
 [project.scripts]
 bsreadsim = "bsreadsim.cli:main"
 
+[dependency-groups]
+docs = [
+  "mkdocs-material==9.7.7",
+]
+
 [tool.setuptools]
 package-dir = { "" = "src" }
+include-package-data = false
+
+[tool.setuptools.dynamic]
+version = { attr = "bsreadsim._version.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
 namespaces = false
 
 [tool.setuptools.package-data]
-bsreadsim = ["run-config.schema.json", "_licenses/*.txt"]
+bsreadsim = [
+  "run-config.schema.json",
+  "_licenses/*.txt",
+  "data/registry.json",
+  "data/examples/*",
+  "data/models/**/*",
+  "data/profiles/**/*",
+  "data/licenses/**/*",
+]
+
+[tool.setuptools.exclude-package-data]
+bsreadsim = ["cext/*.c", "cext/*.h"]
+
+[tool.ruff]
+target-version = "py310"
+extend-exclude = ["build", "dev", "htslib", "site", "workspace"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/integration/check_core_stream.py" = ["E402"]
+"tests/integration/check_cpp_protocol.py" = ["E402"]
+"tests/integration/check_technology_outputs.py" = ["E402"]

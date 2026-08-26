@@ -1,13 +1,12 @@
 include CMakeLists.txt
+include LICENSE
 include mkdocs.yml
-include requirements-docs.txt
 include .gitmodules
 graft docs
 graft data
+recursive-include src/bsreadsim/cext *.c *.h
 recursive-include htsim/src *.cpp *.h
 graft htslib
-exclude htslib/.git
-exclude htslib/htscodecs/.git
 prune htslib/.github
 prune htslib/ref_cache
 prune htslib/samples

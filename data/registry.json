@@ -1,0 +1,15 @@
+{
+  "resources": [
+    {
+      "name": "test-fasta",
+      "kind": "example.reference",
+      "format": "fasta",
+      "path": "examples/test.fa",
+      "size_bytes": 1056,
+      "sha256": "fdd136a442068fdbd5cb09d012c0daae4ea6683d89ae1f787b4aa05f6336633d",
+      "source": "BSReadSim synthetic example",
+      "license": "MIT",
+      "description": "Synthetic 1,024-base FASTA for tests and examples."
+    }
+  ]
+}

@@ -7,6 +7,8 @@ the source checkout is never modified by this hook.
 """
 
 from pathlib import Path
+import hashlib
+import json
 import os
 import shutil
 import stat
@@ -127,6 +129,72 @@ class BuildPythonWithCore(build_py):
                     "submodules: {}".format(source)
                 )
             shutil.copy2(str(source), str(license_directory / filename))
+
+        self._stage_bundled_resources()
+
+    def _stage_bundled_resources(self):
+        """Verify canonical product data and copy it into the wheel package."""
+        data_root = SOURCE_ROOT / "data"
+        registry_source = data_root / "registry.json"
+        try:
+            registry = json.loads(registry_source.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise CompileError("cannot read data/registry.json: {}".format(error)) from error
+        if not isinstance(registry, dict) or set(registry) != {"resources"}:
+            raise CompileError("data/registry.json has invalid fields")
+        entries = registry.get("resources")
+        if not isinstance(entries, list):
+            raise CompileError("data/registry.json resources must be an array")
+
+        package_data = Path(self.build_lib) / "bsreadsim" / "data"
+        resource_fields = {
+            "description",
+            "format",
+            "kind",
+            "license",
+            "name",
+            "path",
+            "sha256",
+            "size_bytes",
+            "source",
+        }
+        names = set()
+        for entry in entries:
+            if not isinstance(entry, dict) or set(entry) != resource_fields:
+                raise CompileError("data registry entry fields are invalid")
+            name = entry.get("name")
+            relative_text = entry.get("path")
+            expected_size = entry.get("size_bytes")
+            expected_sha256 = entry.get("sha256")
+            if not isinstance(name, str) or not name or name in names:
+                raise CompileError("data registry resource names must be unique")
+            names.add(name)
+            if not isinstance(relative_text, str) or not relative_text:
+                raise CompileError("resource {} has an invalid path".format(name))
+            relative = Path(relative_text)
+            if (
+                relative.is_absolute()
+                or ".." in relative.parts
+                or relative.as_posix() != relative_text
+            ):
+                raise CompileError("resource {} has an unsafe path".format(name))
+            source = data_root / relative
+            try:
+                payload = source.read_bytes()
+            except OSError as error:
+                raise CompileError(
+                    "cannot read registered resource {}: {}".format(name, error)
+                ) from error
+            if expected_size != len(payload):
+                raise CompileError("resource {} has the wrong size".format(name))
+            if expected_sha256 != hashlib.sha256(payload).hexdigest():
+                raise CompileError("resource {} has the wrong SHA-256".format(name))
+            destination = package_data / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(source), str(destination))
+
+        package_data.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(str(registry_source), str(package_data / "registry.json"))
 
     def _reset_package_build_directory(self):
         """Prevent removed package files from leaking out of a reused build."""
