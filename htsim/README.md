@@ -6,6 +6,11 @@ errors, FASTQ and optional details output, alignment formatting, and publication
 For BAM, Python streams SAM records back through the executable's narrow
 HTSlib serializer; htsim still does not choose output paths.
 
+The whole-genome sampler backs both WGBS and WGS. The BED capture sampler
+backs TBS, WES, and TS. Standard technologies emit no methylation-site rows;
+the Python consumer therefore bypasses methylation realization and bisulfite
+conversion while retaining variants, quality scores, and sequencing errors.
+
 ## Source layout
 
 `htsim/src` is intentionally flat. Each implementation domain owns one public
