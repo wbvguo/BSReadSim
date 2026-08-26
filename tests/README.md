@@ -5,7 +5,7 @@ Everything here is a maintained correctness contract for the current product.
 - `unit/` contains Python unit tests.
 - `integration/` contains executable and cross-language checks.
 - `helpers/` contains support code shared by tests.
-- `fixtures/` contains small, versioned inputs described by `fixtures.json`.
+- `fixtures/` contains small, frozen inputs described by `fixtures.json`.
 
 C++ unit tests owned by the native core live under `htsim/tests/` and use the
 same root CMake/CTest entry point as these suites.

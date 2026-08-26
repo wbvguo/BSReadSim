@@ -35,15 +35,16 @@ from .._cext import format_sam_batch as _cext_format_sam_batch
 from .._cext import format_sam_columns as _cext_format_sam_columns
 
 
-BAM_CONTRACT = "bsreadsim-bam-v3"
+BAM_CONTRACT = "bsreadsim-bam"
 BAM_MAPQ = 60
 ANNOTATION_STATE_ALPHABET = (
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 )
-ANNOTATION_STATE_SCHEMA = "state64-v1"
-ANNOTATION_READ_SUMMARY_SCHEMA = "u16x12-v1"
-ANNOTATION_FRAGMENT_SUMMARY_SCHEMA = "u16x12-v1"
-ANNOTATION_FRAGMENT_REALIZATION_SCHEMA = "packed-b64url-v1"
+ANNOTATION_STATE_SCHEMA = "state64"
+ANNOTATION_READ_SUMMARY_SCHEMA = "u16x12"
+ANNOTATION_FRAGMENT_SUMMARY_SCHEMA = "u16x12"
+ANNOTATION_FRAGMENT_REALIZATION_SCHEMA = "packed-b64url"
+ALIGNMENT_SCORE_SCHEME = "details-max"
 _MAX_REFERENCE_LENGTH = (1 << 31) - 1
 _MAX_CIGAR_OPERATION_LENGTH = (1 << 28) - 1
 _MAX_TEMPLATE_LENGTH = (1 << 31) - 1
@@ -122,7 +123,9 @@ def build_sam_header(
             "@CO\tBSREADSIM_CONFIG_SHA256={}".format(
                 header.normalized_config_sha256.hex()
             ),
-            "@CO\tAS_SCHEME=details-max-v1;AS_MAX=query_length",
+            "@CO\tAS_SCHEME={};AS_MAX=query_length".format(
+                ALIGNMENT_SCORE_SCHEME
+            ),
             "@CO\tBSREADSIM_ZT={};ALPHABET={}".format(
                 ANNOTATION_STATE_SCHEMA, ANNOTATION_STATE_ALPHABET
             ),
@@ -195,7 +198,9 @@ def format_sam_fragment(
         include_fragment_realization=include_fragment_realization,
     )
     records = []
-    for index, (mate, alignment) in enumerate(zip(mates, alignments)):
+    for index, (mate, alignment) in enumerate(
+        zip(mates, alignments, strict=True)
+    ):
         flag = 0
         mate_fields = ("*", 0)
         tags = [
@@ -388,7 +393,9 @@ def _site_state_suffixes(
     if include_fragment_realization and fragment_realization is None:
         raise BamError("fragment realization is missing")
     suffixes = []
-    for mate, (state_text, raw_summary) in zip(mates, mate_values):
+    for mate, (state_text, raw_summary) in zip(
+        mates, mate_values, strict=True
+    ):
         if mate.reverse_complement:
             state_text = state_text[::-1]
         fields = [
@@ -940,7 +947,7 @@ class BamOutput:
         if process is None:
             return
         if process.stdin is not None:
-            with suppreii(OSError):
+            with suppress(OSError):
                 process.stdin.close()
         if process.poll() is None:
             process.terminate()
@@ -984,6 +991,11 @@ class BamOutput:
 
 
 __all__ = [
+    "ALIGNMENT_SCORE_SCHEME",
+    "ANNOTATION_FRAGMENT_REALIZATION_SCHEMA",
+    "ANNOTATION_FRAGMENT_SUMMARY_SCHEMA",
+    "ANNOTATION_READ_SUMMARY_SCHEMA",
+    "ANNOTATION_STATE_SCHEMA",
     "BAM_CONTRACT",
     "BAM_MAPQ",
     "BamConfig",

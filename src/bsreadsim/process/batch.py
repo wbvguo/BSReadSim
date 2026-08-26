@@ -257,6 +257,7 @@ class ConversionMode(IntEnum):
 
     C2T = 0
     G2A = 1
+    NONE = 2
 
 
 @dataclass(frozen=True)
@@ -740,7 +741,7 @@ def _contig_fragment_groups(contig_indices: np.ndarray) -> dict[int, np.ndarray]
     }
 
 
-READ_NAME_CONTRACT = "bsreadsim-read-name-v2"
+READ_NAME_CONTRACT = "bsreadsim-read-name"
 _MAX_U64 = (1 << 64) - 1
 
 # Cross-stage batches retain only numeric identity columns.  FASTQ and BAM

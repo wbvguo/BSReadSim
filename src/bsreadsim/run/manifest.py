@@ -6,30 +6,40 @@ import copy
 from dataclasses import dataclass
 import hashlib
 import json
+import math
 from pathlib import Path
-from collections.abc import Mapping
+import shlex
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from .. import __version__
-from ..output.bam import BAM_CONTRACT, BAM_MAPQ
-from .config import RUN_CONFIG_SCHEMA_VERSION
+from ..output.bam import (
+    ANNOTATION_FRAGMENT_REALIZATION_SCHEMA,
+    ANNOTATION_FRAGMENT_SUMMARY_SCHEMA,
+    ANNOTATION_READ_SUMMARY_SCHEMA,
+    ANNOTATION_STATE_SCHEMA,
+    BAM_CONTRACT,
+    BAM_MAPQ,
+)
 from ..output import OutputFileSummary, OutputSummary
 from .prepare import FileDigest, PreparedRun
 from ..htsim.protocol import (
     AmbiguityPolicy,
     BaseEncoding,
-    PROTOCOL_MAJOR,
-    PROTOCOL_MINOR,
+    PROTOCOL_VERSION,
     Header,
     Technology,
     Trailer,
 )
 from ..process.batch import READ_NAME_CONTRACT
 from ..rng import RNG_CONTRACT, STAGE_NAMES
+from .invocation import FullCommandError, build_full_run_argv
 
 
-MANIFEST_SCHEMA_VERSION = "1.1"
+MANIFEST_VERSION = 2
 COORDINATE_CONVENTION = "0-based-half-open"
+METHDB_MAGIC = b"methdb"
+METHDB_VERSION = 1
 
 
 class ManifestError(ValueError):
@@ -53,6 +63,8 @@ def build_complete_manifest(
     header: Header,
     trailer: Trailer,
     outputs: OutputSummary,
+    *,
+    invocation_argv: Sequence[str] | None = None,
 ) -> CompleteManifest:
     """Cross-check core/Python evidence and build the final commit marker."""
     if not isinstance(prepared, PreparedRun):
@@ -62,21 +74,38 @@ def build_complete_manifest(
         raise ManifestError("the effective config must contain a materialized seed")
     if not isinstance(header, Header) or not isinstance(trailer, Trailer):
         raise ManifestError("header and trailer must use the protocol contract")
-    protocol_version = (PROTOCOL_MAJOR, PROTOCOL_MINOR)
     validate_header_projection(prepared, header)
     if not isinstance(outputs, OutputSummary):
         raise ManifestError("outputs must be an OutputSummary")
 
-    _validate_counts(config.normalized, header, trailer, outputs)
-    _validate_output_paths(config.normalized, outputs)
+    normalized = config.normalized
+    _validate_counts(normalized, header, trailer, outputs)
+    _validate_output_paths(normalized, outputs)
 
-    document = {
-        "config": {
-            "normalized": config.as_dict(),
-            "sha256": config.sha256,
-        },
+    bisulfite = normalized["technology"] in ("WGBS", "RRBS", "TBS")
+    methylation_state_model = (
+        {
+            "contract": "bernoulli-site",
+            "effective": "bernoulli",
+            "requested": normalized["methylation"]["state_model"],
+        }
+        if bisulfite
+        else {
+            "effective": "disabled",
+            "requested": "disabled",
+        }
+    )
+    fragments = normalized["fragments"]
+    read_base_count = trailer.fragment_count * (
+        fragments["read_length_1"]
+        + (fragments["read_length_2"] if fragments["paired_end"] else 0)
+    )
+    details = {
+        "configuration": _manifest_effective_config(normalized),
+        "configuration_sha256": config.sha256,
         "contigs": [
             {
+                "fragment_count": trailer.per_contig_fragment_counts[index],
                 "index": index,
                 "length": contig.length,
                 "name": contig.name,
@@ -84,37 +113,40 @@ def build_complete_manifest(
             }
             for index, contig in enumerate(header.contigs)
         ],
-        "counts": {
-            "core": {
-                "fragment_count": trailer.fragment_count,
-                "mate_count": trailer.mate_count,
-                "methylation_site_count": trailer.methylation_site_count,
-                "per_contig_fragment_counts": list(
-                    trailer.per_contig_fragment_counts
-                ),
-                "skipped_fragment_count": trailer.skipped_fragment_count,
-                "template_base_count": trailer.template_base_count,
-            },
-            "python": {
-                "fragment_count": outputs.fragment_count,
-                "mate_count": outputs.mate_count,
-                "records_by_role": {
-                    item.role: item.record_count for item in outputs.files
-                },
-            },
+        "contracts": {
+            "read_name": READ_NAME_CONTRACT,
+            "rng": RNG_CONTRACT,
         },
+        "models": {"methylation_state": methylation_state_model},
+        "protocol_version": PROTOCOL_VERSION,
+        "randomness": {
+            "master_seed": str(config.master_seed),
+            "methylation_seed": normalized["seeds"]["methylation"],
+            "mutation_seed": normalized["seeds"]["mutation"],
+            "phasing_seed": normalized["seeds"]["phasing"],
+            "stages": list(STAGE_NAMES),
+        },
+        "reproducibility": {
+            "numerical_tolerance_exceptions": [],
+            "scope": (
+                "same released core/Python versions, effective config, "
+                "input/model digests, and master seed"
+            ),
+        },
+        "software_versions": {
+            "core": header.core_version,
+            "python": __version__,
+        },
+        "stream_sha256": trailer.stream_sha256.hex(),
+    }
+
+    document = {
+        "command": _command_manifest_entry(invocation_argv, normalized),
+        "details": details,
         "inputs": [
-            _input_manifest_entry(file_digest, config.normalized)
+            _input_manifest_entry(file_digest, normalized)
             for file_digest in prepared.files
         ],
-        "manifest_schema_version": MANIFEST_SCHEMA_VERSION,
-        "models": {
-            "methylation_state": {
-                "contract": "bernoulli-site-v1",
-                "effective": "bernoulli",
-                "requested": config.normalized["methylation"]["state_model"],
-            }
-        },
         "outputs": [
             {
                 "path": str(item.path),
@@ -125,41 +157,27 @@ def build_complete_manifest(
             }
             for item in outputs.files
         ],
-        "randomness": {
-            "catalog_seed": config.normalized["methylation"]["catalog_seed"],
-            "contract": RNG_CONTRACT,
-            "master_seed": str(config.master_seed),
-            "stages": list(STAGE_NAMES),
-        },
         "run_id": header.run_id,
         "status": "complete",
-        "stream_sha256": trailer.stream_sha256.hex(),
-        "versions": {
-            "config_schema": RUN_CONFIG_SCHEMA_VERSION,
-            "core": header.core_version,
-            "manifest": MANIFEST_SCHEMA_VERSION,
-            "protocol": "{}.{}".format(*protocol_version),
-            "python": __version__,
-            "read_name": READ_NAME_CONTRACT,
-            "rng": RNG_CONTRACT,
+        "summary": {
+            "fragment_count": trailer.fragment_count,
+            "methylation_site_count": trailer.methylation_site_count,
+            "output_file_count": len(outputs.files),
+            "output_format": normalized["output"]["format"],
+            "output_size_bytes": sum(item.size_bytes for item in outputs.files),
+            "paired_end": fragments["paired_end"],
+            "read_base_count": read_base_count,
+            "read_count": trailer.mate_count,
+            "skipped_fragment_count": trailer.skipped_fragment_count,
+            "technology": normalized["technology"],
+            "template_base_count": trailer.template_base_count,
         },
-        "reproducibility": {
-            "numerical_tolerance_exceptions": [],
-            "scope": (
-                "same released core/Python versions, normalized config, "
-                "input/model digests, and master seed"
-            ),
-        },
+        "version": MANIFEST_VERSION,
     }
-    if config.normalized["output"]["bam"]:
-        fragment_summary = bool(
-            config.normalized["output"]["fragment_summary"]
-        )
-        fragment_realization = bool(
-            config.normalized["output"]["fragment_realization"]
-        )
-        document["annotation_alignment"] = {
-            "contract": BAM_CONTRACT,
+    if normalized["output"]["format"] == "bam":
+        fragment_summary = bool(normalized["output"]["fragment_summary"])
+        fragment_realization = bool(normalized["output"]["fragment_realization"])
+        details["alignment"] = {
             "coordinate_convention": COORDINATE_CONVENTION,
             "format": "BAM",
             "mapq": BAM_MAPQ,
@@ -171,34 +189,34 @@ def build_complete_manifest(
             "tags": {
                 "zx": {
                     "required": fragment_realization,
-                    "schema": "packed-b64url-v1",
+                    "schema": ANNOTATION_FRAGMENT_REALIZATION_SCHEMA,
                     "scope": "complete-physical-fragment-realization",
                 },
                 "zf": {
                     "required": fragment_summary,
-                    "schema": "u16x12-v1",
+                    "schema": ANNOTATION_FRAGMENT_SUMMARY_SCHEMA,
                     "scope": "complete-physical-fragment",
                 },
                 "zr": {
                     "required": True,
-                    "schema": "u16x12-v1",
+                    "schema": ANNOTATION_READ_SUMMARY_SCHEMA,
                     "scope": "single-read",
                 },
                 "zt": {
                     "alphabet": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_",
                     "required": True,
-                    "schema": "state64-v1",
+                    "schema": ANNOTATION_STATE_SCHEMA,
                     "scope": "one-character-per-bam-seq-base",
                 },
             },
         }
-        document["versions"]["bam"] = BAM_CONTRACT
+        details["contracts"]["bam"] = BAM_CONTRACT
 
     identity_json = _canonical_json(document)
     reproducibility_digest = hashlib.sha256(
         identity_json.encode("utf-8")
     ).hexdigest()
-    document["reproducibility"]["sha256"] = reproducibility_digest
+    details["reproducibility"]["sha256"] = reproducibility_digest
     verify_complete_manifest(document)
     canonical_json = _canonical_json(document)
     return CompleteManifest(
@@ -215,7 +233,7 @@ def validate_header_projection(prepared: PreparedRun, header: Header) -> None:
     if not isinstance(header, Header):
         raise ManifestError("header must be a protocol Header")
     normalized_output = prepared.config.normalized["output"]
-    expected_has_details = bool(normalized_output["bam"])
+    expected_has_details = normalized_output["format"] == "bam"
     _validate_protocol_projection(prepared, header)
 
     normalized = prepared.config.normalized
@@ -223,6 +241,9 @@ def validate_header_projection(prepared: PreparedRun, header: Header) -> None:
         "WGBS": Technology.WGBS,
         "RRBS": Technology.RRBS,
         "TBS": Technology.TBS,
+        "WGS": Technology.WGS,
+        "WES": Technology.WES,
+        "TS": Technology.TS,
     }.get(normalized["technology"])
     if header.technology is not technology:
         raise ManifestError("core technology disagrees with the effective config")
@@ -252,7 +273,19 @@ def verify_complete_manifest(document: Mapping[str, Any]) -> None:
         raise ManifestError("manifest must be an object")
     if document.get("status") != "complete":
         raise ManifestError("manifest status must be complete")
-    reproducibility = document.get("reproducibility")
+    manifest_version = document.get("version")
+    if type(manifest_version) is not int or manifest_version != MANIFEST_VERSION:
+        raise ManifestError("manifest version is unsupported")
+    details = document.get("details")
+    if not isinstance(details, Mapping):
+        raise ManifestError("manifest details section is missing")
+    normalized_config = _manifest_run_config(
+        details.get("configuration"),
+        details.get("configuration_sha256"),
+        details.get("randomness"),
+    )
+    _validate_command(document.get("command"), normalized_config)
+    reproducibility = details.get("reproducibility")
     if not isinstance(reproducibility, Mapping):
         raise ManifestError("manifest reproducibility section is missing")
     observed_digest = reproducibility.get("sha256")
@@ -264,7 +297,10 @@ def verify_complete_manifest(document: Mapping[str, Any]) -> None:
         raise ManifestError("manifest reproducibility SHA-256 is invalid")
 
     identity = copy.deepcopy(dict(document))
-    identity_reproducibility = identity.get("reproducibility")
+    identity_details = identity.get("details")
+    if not isinstance(identity_details, dict):
+        raise ManifestError("manifest details section is invalid")
+    identity_reproducibility = identity_details.get("reproducibility")
     if not isinstance(identity_reproducibility, dict):
         raise ManifestError("manifest reproducibility section is invalid")
     identity_reproducibility.pop("sha256", None)
@@ -279,8 +315,6 @@ def _validate_protocol_projection(
     prepared: PreparedRun, header: Header
 ) -> None:
     config = prepared.config
-    if header.config_schema_version != RUN_CONFIG_SCHEMA_VERSION:
-        raise ManifestError("core config-schema version disagrees with Python")
     if header.rng_contract != RNG_CONTRACT:
         raise ManifestError("core RNG contract disagrees with Python")
     if header.master_seed != config.master_seed:
@@ -301,6 +335,13 @@ def _validate_counts(
     trailer: Trailer,
     outputs: OutputSummary,
 ) -> None:
+    if (
+        config["technology"] in ("WGS", "WES", "TS")
+        and trailer.methylation_site_count != 0
+    ):
+        raise ManifestError(
+            "standard sequencing cannot report methylation sites"
+        )
     paired_end = bool(config["fragments"]["paired_end"])
     expected_mates = trailer.fragment_count * (2 if paired_end else 1)
     if trailer.mate_count != expected_mates:
@@ -314,7 +355,7 @@ def _validate_counts(
     if sum(trailer.per_contig_fragment_counts) != trailer.fragment_count:
         raise ManifestError("per-contig counts do not sum to the fragment count")
 
-    bam = bool(config["output"]["bam"])
+    bam = config["output"]["format"] == "bam"
     expected_roles = set()
     if not bam:
         expected_roles.add("read1")
@@ -322,19 +363,28 @@ def _validate_counts(
             expected_roles.add("read2")
     if bam:
         expected_roles.add("bam")
+    if config["output"]["save_methdb"]:
+        expected_roles.add("truth.methdb")
+    if config["output"]["save_vcf"]:
+        expected_roles.add("truth.vcf")
     observed_roles = {item.role for item in outputs.files}
     if observed_roles != expected_roles or len(outputs.files) != len(expected_roles):
         raise ManifestError("output roles disagree with SE/PE configuration")
     for item in outputs.files:
         if not isinstance(item, OutputFileSummary):
             raise ManifestError("output files contain an invalid summary")
-        expected_record_count = (
-            trailer.mate_count
-            if item.role == "bam"
-            else trailer.fragment_count
-        )
-        if item.record_count != expected_record_count:
-            raise ManifestError("output record count disagrees with core fragments")
+        if item.role == "bam":
+            expected_record_count = trailer.mate_count
+        elif item.role in ("read1", "read2"):
+            expected_record_count = trailer.fragment_count
+        elif item.role == "truth.methdb":
+            expected_record_count = trailer.methylation_site_count
+        else:
+            expected_record_count = None
+        if expected_record_count is not None and item.record_count != expected_record_count:
+            raise ManifestError("output record count disagrees with core evidence")
+        if item.record_count < 0:
+            raise ManifestError("output record count must be non-negative")
         if item.size_bytes < 0:
             raise ManifestError("output byte size must be non-negative")
         _require_hex_digest("output SHA-256", item.sha256)
@@ -347,8 +397,11 @@ def _validate_output_paths(
     directory = Path(output_config["directory"])
     prefix = output_config["prefix"]
     for item in outputs.files:
-        if item.path.parent != directory:
-            raise ManifestError("output path escaped the normalized output directory")
+        expected_parent = (
+            directory / "truth" if item.role.startswith("truth.") else directory
+        )
+        if item.path.parent != expected_parent:
+            raise ManifestError("output path escaped its normalized output location")
         if not item.path.name.startswith(prefix + "."):
             raise ManifestError("output path disagrees with the normalized prefix")
 
@@ -361,18 +414,251 @@ def _input_manifest_entry(
         raise ManifestError("prepared files contain an invalid digest")
     _require_hex_digest("input SHA-256", file_digest.sha256)
     entry = {
-        "format": _input_format(file_digest.role),
+        "format": (
+            _methdb_input_format(file_digest.path)
+            if file_digest.role == "input.methdb"
+            else _input_format(file_digest.role)
+        ),
         "path": str(file_digest.path),
         "role": file_digest.role,
         "sha256": file_digest.sha256,
         "size_bytes": file_digest.size_bytes,
     }
+    if file_digest.role == "input.methdb":
+        entry["format_version"] = METHDB_VERSION
     artifact = _artifact_for_role(config, file_digest.role)
     if artifact is not None:
-        entry["format"] = artifact["format"]
-        entry["model_version"] = artifact["version"]
         entry["declared_sha256"] = artifact["sha256"]
     return entry
+
+
+def _command_manifest_entry(
+    invocation_argv: Sequence[str] | None,
+    config: Mapping[str, Any],
+) -> dict[str, Any]:
+    if invocation_argv is None:
+        return {"interface": "python-api"}
+    if isinstance(invocation_argv, (str, bytes)):
+        raise ManifestError("invocation argv must be a sequence of strings")
+    argv = list(invocation_argv)
+    if not argv or any(not isinstance(token, str) for token in argv):
+        raise ManifestError("CLI invocation argv must contain strings")
+    full_argv = _full_run_argv(config, argv)
+    return {
+        "full_command": shlex.join(full_argv),
+        "interface": "cli",
+        "user_command": shlex.join(argv),
+    }
+
+
+def _validate_command(
+    value: object, config: Mapping[str, Any]
+) -> None:
+    if not isinstance(value, Mapping):
+        raise ManifestError("manifest command section is missing")
+    interface = value.get("interface")
+    if interface == "python-api":
+        if set(value) != {"interface"}:
+            raise ManifestError("Python API command section is invalid")
+        return
+    if interface != "cli":
+        raise ManifestError("manifest command interface is invalid")
+    command = value.get("user_command")
+    full_command = value.get("full_command")
+    if not isinstance(command, str):
+        raise ManifestError("CLI command section is invalid")
+    try:
+        argv = shlex.split(command)
+    except ValueError as error:
+        raise ManifestError("CLI command section is invalid") from error
+    if (
+        not argv
+        or any(not isinstance(token, str) for token in argv)
+        or command != shlex.join(argv)
+        or not isinstance(full_command, str)
+        or full_command != shlex.join(_full_run_argv(config, argv))
+        or set(value)
+        != {
+            "full_command",
+            "interface",
+            "user_command",
+        }
+    ):
+        raise ManifestError("CLI command section is invalid")
+
+
+def _full_run_argv(
+    config: Mapping[str, Any], argv: Sequence[str]
+) -> list[str]:
+    try:
+        return build_full_run_argv(config, argv)
+    except FullCommandError as error:
+        raise ManifestError(
+            "CLI command cannot form a full command: {}".format(error)
+        ) from error
+
+
+_MODEL_DECLARATION_PATHS = (
+    ("coverage",),
+    ("sequencing", "quality"),
+    ("sequencing", "error"),
+)
+
+
+def _manifest_effective_config(
+    normalized: Mapping[str, Any],
+) -> dict[str, Any]:
+    effective = copy.deepcopy(dict(normalized))
+    if "seed" not in effective or "seeds" not in effective:
+        raise ManifestError("effective config randomness is incomplete")
+    effective.pop("seed")
+    effective.pop("seeds")
+    _rename_model_discriminators(effective, "kind", "type")
+    _serialize_beta_pairs(effective)
+    return effective
+
+
+def _manifest_run_config(
+    value: object, sha256_value: object, randomness_value: object
+) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ManifestError("manifest configuration section is missing")
+    normalized = copy.deepcopy(dict(value))
+    if "seed" in normalized or "seeds" in normalized:
+        raise ManifestError("manifest configuration duplicates randomness")
+    _rename_model_discriminators(normalized, "type", "kind")
+    _deserialize_beta_pairs(normalized)
+
+    if not isinstance(randomness_value, Mapping):
+        raise ManifestError("manifest randomness section is missing")
+    if set(randomness_value) != {
+        "master_seed",
+        "methylation_seed",
+        "mutation_seed",
+        "phasing_seed",
+        "stages",
+    }:
+        raise ManifestError("manifest randomness section is invalid")
+    master_seed = randomness_value.get("master_seed")
+    stage_seeds = {
+        "methylation": randomness_value.get("methylation_seed"),
+        "mutation": randomness_value.get("mutation_seed"),
+        "phasing": randomness_value.get("phasing_seed"),
+    }
+    stages = randomness_value.get("stages")
+    if (
+        not _is_seed_text(master_seed)
+        or any(not _is_seed_text(seed) for seed in stage_seeds.values())
+        or stages != list(STAGE_NAMES)
+    ):
+        raise ManifestError("manifest randomness section is invalid")
+    normalized["seed"] = master_seed
+    normalized["seeds"] = copy.deepcopy(dict(stage_seeds))
+
+    _require_hex_digest("configuration SHA-256", sha256_value)
+    try:
+        config_json = json.dumps(
+            normalized,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    except (TypeError, ValueError, UnicodeError) as error:
+        raise ManifestError(
+            "manifest effective configuration is not JSON-compatible"
+        ) from error
+    observed_sha256 = hashlib.sha256(config_json.encode("utf-8")).hexdigest()
+    if observed_sha256 != sha256_value:
+        raise ManifestError("manifest configuration SHA-256 mismatch")
+    return normalized
+
+
+def _rename_model_discriminators(
+    config: dict[str, Any], source: str, destination: str
+) -> None:
+    for path in _MODEL_DECLARATION_PATHS:
+        declaration: object = config
+        for component in path:
+            if not isinstance(declaration, dict):
+                raise ManifestError(
+                    "manifest model declaration is invalid: {}".format(
+                        ".".join(path)
+                    )
+                )
+            declaration = declaration.get(component)
+        if (
+            not isinstance(declaration, dict)
+            or source not in declaration
+            or destination in declaration
+        ):
+            raise ManifestError(
+                "manifest model discriminator is invalid: {}".format(
+                    ".".join(path)
+                )
+            )
+        declaration[destination] = declaration.pop(source)
+
+
+def _serialize_beta_pairs(config: dict[str, Any]) -> None:
+    beta = _beta_section(config)
+    for context in ("CG", "CHG", "CHH"):
+        pair = beta.get(context)
+        if not isinstance(pair, list) or len(pair) != 2:
+            raise ManifestError("manifest beta declaration is invalid")
+        beta[context] = ",".join(_number_text(value) for value in pair)
+
+
+def _deserialize_beta_pairs(config: dict[str, Any]) -> None:
+    beta = _beta_section(config)
+    for context in ("CG", "CHG", "CHH"):
+        value = beta.get(context)
+        if not isinstance(value, str):
+            raise ManifestError("manifest beta declaration is invalid")
+        tokens = value.split(",")
+        if len(tokens) != 2:
+            raise ManifestError("manifest beta declaration is invalid")
+        try:
+            pair = [json.loads(token) for token in tokens]
+        except json.JSONDecodeError as error:
+            raise ManifestError("manifest beta declaration is invalid") from error
+        if (
+            any(
+                isinstance(number, bool)
+                or not isinstance(number, (int, float))
+                or not math.isfinite(number)
+                for number in pair
+            )
+            or ",".join(_number_text(number) for number in pair) != value
+        ):
+            raise ManifestError("manifest beta declaration is invalid")
+        beta[context] = pair
+
+
+def _beta_section(config: dict[str, Any]) -> dict[str, Any]:
+    methylation = config.get("methylation")
+    beta = methylation.get("beta") if isinstance(methylation, dict) else None
+    if not isinstance(beta, dict):
+        raise ManifestError("manifest beta section is missing")
+    return beta
+
+
+def _number_text(value: object) -> str:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+    ):
+        raise ManifestError("manifest beta value is invalid")
+    return json.dumps(value, allow_nan=False, separators=(",", ":"))
+
+
+def _is_seed_text(value: object) -> bool:
+    if not isinstance(value, str) or not value or not value.isdigit():
+        return False
+    if len(value) > 1 and value.startswith("0"):
+        return False
+    return int(value, 10) <= (1 << 64) - 1
 
 
 def _input_format(role: str) -> str:
@@ -381,11 +667,26 @@ def _input_format(role: str) -> str:
         "input.vcf": "vcf",
         "input.cgmap": "cgmap",
         "input.bed_methyl": "bedMethyl",
-        "input.methdb": "bsreadsim-methdb-v1",
         "input.asm": "asm",
         "input.asm_bed": "asm-bed",
         "input.tbs-bed": "bed",
+        "model.coverage": "tsv",
+        "model.quality": "json",
+        "model.error": "json",
     }.get(role, "model")
+
+
+def _methdb_input_format(path: Path) -> str:
+    try:
+        with path.open("rb") as input_file:
+            prefix = input_file.read(len(METHDB_MAGIC) + 1)
+    except OSError as error:
+        raise ManifestError("cannot inspect MethDB format: {}".format(error)) from error
+    if prefix[: len(METHDB_MAGIC)] != METHDB_MAGIC:
+        raise ManifestError("input MethDB has an unknown format magic")
+    if len(prefix) != len(METHDB_MAGIC) + 1 or prefix[-1] != METHDB_VERSION:
+        raise ManifestError("input MethDB has an unsupported format version")
+    return "methdb"
 
 
 def _artifact_for_role(
@@ -418,7 +719,7 @@ def _canonical_json(document: Mapping[str, Any]) -> str:
             document,
             allow_nan=False,
             ensure_ascii=False,
-            separators=(",", ":"),
+            indent=2,
             sort_keys=True,
         )
     except (TypeError, ValueError, UnicodeError) as error:

@@ -24,6 +24,7 @@ from .batch import (
     ProcessedFragment,
     ProcessedMate,
     UniformError,
+    _ConvertedFragment,
     _U1,
     _U2,
     _U4,
@@ -58,6 +59,11 @@ from ..htsim.protocol import (
     DecodedBatchView,
     Header,
 )
+from .._cext import (
+    decode_protocol_fragments as _cext_decode_fragments,
+    format_fastq_batch as _cext_format_fastq_batch,
+    pack_protocol_common_columns as _cext_pack_common_columns,
+)
 
 _BASE_ASCII = np.frombuffer(b"ACGTN", dtype=np.uint8)
 _SITE_STATE_ASCII = np.frombuffer(
@@ -73,11 +79,6 @@ _ALTERNATIVE_BASES = np.asarray(
     ((1, 2, 3), (0, 2, 3), (0, 1, 3), (0, 1, 2)),
     dtype=np.uint8,
 )
-from .._cext import (
-    decode_protocol_fragments as _cext_decode_fragments,
-    format_fastq_batch as _cext_format_fastq_batch,
-    pack_protocol_common_columns as _cext_pack_common_columns,
-)
 
 
 def _resolve_fragment_mode(
@@ -85,6 +86,8 @@ def _resolve_fragment_mode(
     config: ProcessConfig,
 ) -> ConversionMode:
     """Resolve molecule orientation before bisulfite chemistry is applied."""
+    if not config.bisulfite:
+        return ConversionMode.NONE
     if fragment.capture_strand is CaptureStrand.FORWARD:
         return ConversionMode.C2T
     if fragment.capture_strand is CaptureStrand.REVERSE:
@@ -112,6 +115,8 @@ def _resolve_fragment_modes(
     """Resolve vectorized molecule orientations at the fragment boundary."""
     if np.any(capture_strands > 2):
         raise ProcessError("NumPy capture strand contains an invalid enum")
+    if not config.bisulfite:
+        return np.full(len(capture_strands), int(ConversionMode.NONE), dtype=np.uint8)
     result = np.zeros(len(capture_strands), dtype=np.uint8)
     result[capture_strands == 2] = 1
     unknown = np.flatnonzero(capture_strands == 0)
@@ -332,9 +337,10 @@ def process_fragment_batch(
         include_details=include_details,
         include_fragment_realization=include_fragment_realization,
     )
-    sampled_batch = _sample_methylation_batch_values(
-        fragments,
-        config,
+    sampled_batch = (
+        _sample_methylation_batch_values(fragments, config)
+        if config.bisulfite
+        else tuple(() for _ in fragments)
     )
     return tuple(
         _process_fragment_with_states(
@@ -350,6 +356,7 @@ def process_fragment_batch(
             fragments,
             contig_names,
             sampled_batch,
+            strict=True,
         )
     )
 
@@ -364,18 +371,30 @@ def _process_fragment_with_states(
     include_details: bool,
     include_fragment_realization: bool = False,
 ) -> ProcessedFragment:
-    site_states = (
-        _materialize_site_states(fragment, sampled_methylation)
-        if include_details
-        else ()
-    )
     fragment_mode = _resolve_fragment_mode(fragment, config)
-    converted_fragment = _convert_fragment(
-        fragment,
-        fragment_mode,
-        sampled_methylation,
-        config,
-    )
+    if config.bisulfite:
+        site_states = (
+            _materialize_site_states(fragment, sampled_methylation)
+            if include_details
+            else ()
+        )
+        converted_fragment = _convert_fragment(
+            fragment,
+            fragment_mode,
+            sampled_methylation,
+            config,
+        )
+    else:
+        site_states = ()
+        template_length = len(fragment.template_bases)
+        converted_fragment = _ConvertedFragment(
+            fragment_mode,
+            fragment.template_bases,
+            (None,) * template_length,
+            (None,) * template_length,
+            (False,) * template_length,
+            (False,) * template_length,
+        )
     converted_mates = _derive_mates(fragment, converted_fragment)
     quality_mates = tuple(
         _generate_quality(fragment, mate, config)
@@ -411,13 +430,11 @@ def _process_fragment_with_states(
             for attempted, succeeded in zip(
                 converted_fragment.attempted,
                 converted_fragment.succeeded,
+                strict=True,
             )
         ),
-        _encode_typed_fragment_realization(
-            sampled_methylation,
-            converted_fragment,
-        )
-        if include_fragment_realization
+        _encode_typed_fragment_realization(sampled_methylation, converted_fragment)
+        if include_fragment_realization and config.bisulfite
         else None,
     )
 
@@ -449,7 +466,7 @@ def _validate_fragment_batch_request(
         raise ProcessError("fragment realization requires Full Details")
     if compact_base_states and not include_details:
         raise ProcessError("compact_base_states requires include_details")
-    for fragment, contig_name in zip(fragments, contig_names):
+    for fragment, contig_name in zip(fragments, contig_names, strict=True):
         if not isinstance(fragment, Fragment):
             raise ProcessError("fragment must be a decoded protocol Fragment")
         if (
@@ -678,6 +695,7 @@ def _encode_typed_fragment_realization(
             converted.methylated,
             converted.attempted,
             converted.succeeded,
+            strict=True,
         )
         if attempted
         or (
@@ -767,7 +785,11 @@ def _generate_columnar_read_batch(
     if columnar_result:
         retain_sequences = True
 
-    states = _sample_site_states(batch, config)
+    states = (
+        _sample_site_states(batch, config)
+        if config.bisulfite
+        else np.zeros(0, dtype=np.uint8)
+    )
     model = batch.model
     ordinals = batch.array(model.fragment_ordinal_bytes, _U8)
     contig_indices = batch.array(model.contig_indices, _U4)
@@ -814,12 +836,16 @@ def _generate_columnar_read_batch(
         contig_indices,
         config,
     )
-    mate_modes = np.bitwise_xor(fragment_modes[mate_fragment], reverse.astype(np.uint8))
+    mate_modes = (
+        np.bitwise_xor(fragment_modes[mate_fragment], reverse.astype(np.uint8))
+        if config.bisulfite
+        else np.full(len(mate_fragment), int(ConversionMode.NONE), dtype=np.uint8)
+    )
 
     methylated = np.full(oriented.shape, -1, dtype=np.int8)
     context_codes = np.zeros(oriented.shape, dtype=np.uint8)
     reference_mate = _owners_from_offsets(site_ref_offsets)
-    if reference_mate.size:
+    if config.bisulfite and reference_mate.size:
         if np.any(site_ref_read_offsets >= read_length):
             raise ProcessError("NumPy site reference exceeds read length")
         reference_fragment = mate_fragment[reference_mate]

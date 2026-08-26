@@ -3,7 +3,7 @@
 The module is the sole runtime owner of the component boundary:
 
 * C++ owns reference parsing, genomic catalogs, fragment allocation, and the
-  versioned protocol stream.
+  framed binary protocol stream.
 * Python validates that stream identity, applies pure fragment-level stages,
   and publishes FASTQ or annotated BAM plus a manifest transactionally.
 
@@ -21,25 +21,24 @@ worker count and completion order cannot affect output bytes.
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+import gzip
+import hashlib
 import multiprocessing
 import os
 from pathlib import Path
 import pickle
 import queue
+import shutil
+import tempfile
 import threading
 import uuid
 import warnings
 
 from .. import __version__
 from ..output.bam import BamConfig
-from .config import (
-    LoadedRunConfig,
-    WGBS_GC_PROFILE_FORMAT,
-    WGBS_GC_PROFILE_VERSION,
-    normalize_run_config,
-)
+from .config import LoadedRunConfig, normalize_run_config
 from ..htsim.launch import build_core_argv
 from ..htsim.subprocess import CoreProcess
 from .manifest import (
@@ -76,6 +75,7 @@ from .prepare import (
     prepare_run,
     snapshot_prepared_file,
 )
+from .catalog import CatalogError, export_methdb_catalog, export_variant_catalog
 from ..process.batch import FragmentSummary
 from ..htsim.protocol import (
     Header,
@@ -87,10 +87,6 @@ from ..htsim.launch import (
 )
 from ..process.sequencing import (
     MAX_MODEL_BYTES,
-    QUALITY_CONFUSION_FORMAT,
-    QUALITY_CONFUSION_VERSION,
-    QUALITY_MARKOV_FORMAT,
-    QUALITY_MARKOV_VERSION,
     QualityConfusionModel,
     QualityMarkovModel,
     SequencingModelError,
@@ -118,6 +114,13 @@ class RunResult:
     manifest_path: Path
     manifest: CompleteManifest
     outputs: OutputSummary
+
+
+@dataclass(frozen=True)
+class _TruthArtifact:
+    role: str
+    path: Path
+    record_count: int | None
 
 
 @dataclass(frozen=True)
@@ -300,7 +303,7 @@ def _write_shared_formatted_batch(
     slot: LocalBatchSlot | SharedBatchSlot,
     result: WorkerBatchResult,
 ) -> None:
-    alignment_enabled = output.config.bam is not None
+    alignment_enabled = output.config.bam_config is not None
     if result.needs_resize or (
         result.read1 is None and result.alignment is None
     ):
@@ -350,6 +353,7 @@ def run_document(
     core_executable: PathLike | None = None,
     run_id: str | None = None,
     entropy: EntropySource | None = None,
+    invocation_argv: Sequence[str] | None = None,
 ) -> RunResult:
     """Normalize and execute one in-memory command-line configuration."""
     loaded = normalize_run_config(document, base_directory)
@@ -362,6 +366,7 @@ def run_document(
         prepared,
         core_executable=core_executable,
         run_id=run_id,
+        invocation_argv=invocation_argv,
     )
 
 
@@ -370,6 +375,7 @@ def run_prepared(
     *,
     core_executable: PathLike | None = None,
     run_id: str | None = None,
+    invocation_argv: Sequence[str] | None = None,
 ) -> RunResult:
     """Run one prepared configuration through the production data path."""
     if not isinstance(prepared, PreparedRun):
@@ -386,7 +392,7 @@ def run_prepared(
     fragments = _mapping(normalized, "fragments")
     execution = _mapping(normalized, "execution")
     output = _mapping(normalized, "output")
-    include_alignment = bool(output["bam"])
+    include_alignment = output["format"] == "bam"
     include_fragment_summary = bool(output["fragment_summary"])
     include_fragment_realization = bool(output["fragment_realization"])
     include_details = include_alignment
@@ -405,86 +411,112 @@ def run_prepared(
     if execution["workers"] > 1:
         _require_picklable_process_state(process_config)
 
-    core = CoreProcess(
-        argv,
-        read_length=fragments["read_length_1"],
-        paired_end=fragments["paired_end"],
-        expected_skipped_fragment_count=_expected_skipped_fragment_count(
-            normalized
-        ),
-    )
-    with core:
-        _validate_core_header(
+    output_directory = Path(output["directory"])
+    try:
+        output_directory.mkdir(parents=True, exist_ok=True)
+        if not output_directory.is_dir():
+            raise OSError("path is not a directory")
+    except OSError as error:
+        raise PipelineError("cannot prepare output directory: {}".format(error)) from error
+
+    with tempfile.TemporaryDirectory(
+        prefix=".{}.truth-".format(output["prefix"]),
+        dir=str(output_directory),
+    ) as truth_directory:
+        truth_artifacts = _build_truth_artifacts(
             prepared,
-            core.header,
-            expected_run_id=effective_run_id,
+            output,
+            Path(truth_directory),
+            executable,
         )
-        bam_config = None
-        if include_alignment:
-            bam_config = BamConfig(
-                writer_argv=(
-                    str(executable),
-                    "--sam-to-bam",
-                    str(output["gzip_level"]),
-                ),
-                sam_header=build_sam_header(
-                    core.header,
-                    sample_name=output["prefix"],
-                    program_version=__version__,
-                    fragment_summary=include_fragment_summary,
-                    fragment_realization=include_fragment_realization,
-                ),
-                references=tuple(
-                    (contig.name, contig.length) for contig in core.header.contigs
-                ),
-                read_group_id=core.header.run_id,
-                fragment_summary=include_fragment_summary,
-                fragment_realization=include_fragment_realization,
-            )
-        output_config = OutputConfig(
-            directory=Path(output["directory"]),
-            prefix=output["prefix"],
+        core = CoreProcess(
+            argv,
+            read_length=fragments["read_length_1"],
             paired_end=fragments["paired_end"],
-            compression=output["compression"],
-            gzip_level=output["gzip_level"],
-            bam=bam_config,
+            expected_skipped_fragment_count=_expected_skipped_fragment_count(
+                normalized
+            ),
         )
-        with OutputSession(output_config) as transaction:
-            if execution["workers"] == 1:
-                _consume_batches_inline(
-                    core,
-                    core.header,
-                    process_config,
-                    transaction,
-                    paired_end=fragments["paired_end"],
-                    include_details=include_details,
-                    include_alignment=include_alignment,
-                    include_fragment_summary=include_fragment_summary,
-                    include_fragment_realization=include_fragment_realization,
-                    max_in_flight=execution["max_in_flight_fragments"],
-                )
-            else:
-                _consume_batches(
-                    core,
-                    core.header,
-                    process_config,
-                    transaction,
-                    workers=execution["workers"],
-                    max_in_flight=execution["max_in_flight_fragments"],
-                    paired_end=fragments["paired_end"],
-                    include_details=include_details,
-                    include_alignment=include_alignment,
-                    include_fragment_summary=include_fragment_summary,
-                    include_fragment_realization=include_fragment_realization,
-                )
-            output_summary = transaction.finalize()
-            manifest = build_complete_manifest(
+        with core:
+            _validate_core_header(
                 prepared,
                 core.header,
-                core.trailer,
-                output_summary,
+                expected_run_id=effective_run_id,
             )
-            transaction.commit(manifest.canonical_json)
+            bam_config = None
+            if include_alignment:
+                bam_config = BamConfig(
+                    writer_argv=(
+                        str(executable),
+                        "--sam-to-bam",
+                        str(output["gzip_level"]),
+                    ),
+                    sam_header=build_sam_header(
+                        core.header,
+                        sample_name=output["prefix"],
+                        program_version=__version__,
+                        fragment_summary=include_fragment_summary,
+                        fragment_realization=include_fragment_realization,
+                    ),
+                    references=tuple(
+                        (contig.name, contig.length)
+                        for contig in core.header.contigs
+                    ),
+                    read_group_id=core.header.run_id,
+                    fragment_summary=include_fragment_summary,
+                    fragment_realization=include_fragment_realization,
+                )
+            output_config = OutputConfig(
+                directory=output_directory,
+                prefix=output["prefix"],
+                paired_end=fragments["paired_end"],
+                format=output["format"],
+                gzip_level=output["gzip_level"],
+                bam_config=bam_config,
+            )
+            with OutputSession(output_config) as transaction:
+                if execution["workers"] == 1:
+                    _consume_batches_inline(
+                        core,
+                        core.header,
+                        process_config,
+                        transaction,
+                        paired_end=fragments["paired_end"],
+                        include_details=include_details,
+                        include_alignment=include_alignment,
+                        include_fragment_summary=include_fragment_summary,
+                        include_fragment_realization=include_fragment_realization,
+                        max_in_flight=execution["max_in_flight_fragments"],
+                    )
+                else:
+                    _consume_batches(
+                        core,
+                        core.header,
+                        process_config,
+                        transaction,
+                        workers=execution["workers"],
+                        max_in_flight=execution["max_in_flight_fragments"],
+                        paired_end=fragments["paired_end"],
+                        include_details=include_details,
+                        include_alignment=include_alignment,
+                        include_fragment_summary=include_fragment_summary,
+                        include_fragment_realization=include_fragment_realization,
+                    )
+                _add_truth_artifacts(
+                    transaction,
+                    truth_artifacts,
+                    output["prefix"],
+                    core.trailer,
+                )
+                output_summary = transaction.finalize()
+                manifest = build_complete_manifest(
+                    prepared,
+                    core.header,
+                    core.trailer,
+                    output_summary,
+                    invocation_argv=invocation_argv,
+                )
+                transaction.commit(manifest.canonical_json)
 
     manifest_path = Path(output["directory"]) / "{}.manifest.json".format(
         output["prefix"]
@@ -495,6 +527,97 @@ def run_prepared(
         manifest=manifest,
         outputs=output_summary,
     )
+
+
+def _build_truth_artifacts(
+    prepared: PreparedRun,
+    output: Mapping[str, object],
+    directory: Path,
+    executable: Path,
+) -> tuple[_TruthArtifact, ...]:
+    artifacts = []
+    normalized = prepared.config.normalized
+    try:
+        if output["save_methdb"]:
+            destination = directory / "truth.methdb"
+            inputs = _mapping(normalized, "inputs")
+            if "methdb" in inputs:
+                identity = prepared.file_for_role("input.methdb")
+                shutil.copyfile(identity.path, destination)
+                if _sha256_file(destination) != identity.sha256:
+                    raise PipelineError("MethDB input changed while staging truth")
+            else:
+                export_methdb_catalog(
+                    normalized,
+                    destination,
+                    base_directory=Path.cwd(),
+                    core_executable=executable,
+                )
+            artifacts.append(_TruthArtifact("truth.methdb", destination, None))
+
+        if output["save_vcf"]:
+            destination = directory / "truth.variants.vcf.gz"
+            export_variant_catalog(
+                normalized,
+                destination,
+                base_directory=Path.cwd(),
+                core_executable=executable,
+            )
+            artifacts.append(
+                _TruthArtifact(
+                    "truth.vcf", destination, _count_vcf_records(destination)
+                )
+            )
+    except (CatalogError, OSError, EOFError) as error:
+        raise PipelineError("cannot build truth output: {}".format(error)) from error
+    return tuple(artifacts)
+
+
+def _add_truth_artifacts(
+    transaction: OutputSession,
+    artifacts: tuple[_TruthArtifact, ...],
+    prefix: str,
+    trailer: Trailer,
+) -> None:
+    for artifact in artifacts:
+        if artifact.role == "truth.methdb":
+            relative = Path("truth") / "{}.methdb".format(prefix)
+            record_count = trailer.methylation_site_count
+        else:
+            relative = Path("truth") / "{}.variants.vcf.gz".format(prefix)
+            record_count = artifact.record_count
+        if record_count is None:
+            raise PipelineError("truth artifact record count was not resolved")
+        transaction.add_artifact(
+            artifact.role,
+            artifact.path,
+            relative,
+            record_count=record_count,
+        )
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        while True:
+            block = source.read(1024 * 1024)
+            if not block:
+                return digest.hexdigest()
+            digest.update(block)
+
+
+def _count_vcf_records(path: Path) -> int:
+    count = 0
+    saw_header = False
+    with gzip.open(path, "rb") as source:
+        for line in source:
+            if line.startswith(b"#"):
+                saw_header = True
+            elif line.strip():
+                count += 1
+    if not saw_header:
+        raise PipelineError("truth VCF has no header")
+    return count
 
 
 def _consume_batches_inline(
@@ -954,13 +1077,13 @@ def _expected_skipped_fragment_count(
     config: Mapping[str, object]
 ) -> int | None:
     coverage = _mapping(config, "coverage")
-    if coverage["kind"] == "profile" and config["technology"] == "WGBS":
+    if coverage["kind"] == "profile" and config["technology"] in ("WGBS", "WGS"):
         return None
     fragments = _mapping(config, "fragments")
-    if config["technology"] == "WGBS" and _uses_variable_insert(fragments):
+    if config["technology"] in ("WGBS", "WGS") and _uses_variable_insert(fragments):
         return None
     if (
-        config["technology"] == "TBS"
+        config["technology"] in ("TBS", "WES", "TS")
         and _mapping(config, "tbs")["fragment_center_stddev"] > 0
     ):
         return None
@@ -970,8 +1093,11 @@ def _expected_skipped_fragment_count(
 def _require_released_capabilities(config: Mapping[str, object]) -> None:
     """Mirror the released capability gate before starting the core."""
     technology = config["technology"]
-    if technology not in ("WGBS", "RRBS", "TBS"):
+    if technology not in ("WGBS", "RRBS", "TBS", "WGS", "WES", "TS"):
         raise PipelineError("technology is outside the current pipeline contract")
+    bisulfite = technology in ("WGBS", "RRBS", "TBS")
+    whole_genome = technology in ("WGBS", "WGS")
+    targeted = technology in ("TBS", "WES", "TS")
     inputs = _mapping(config, "inputs")
     supported_inputs = {
         "vcf",
@@ -988,8 +1114,16 @@ def _require_released_capabilities(config: Mapping[str, object]) -> None:
                 ", ".join(unsupported_inputs)
             )
         )
+    if not bisulfite:
+        methylation_inputs = sorted(set(inputs) - {"vcf"})
+        if methylation_inputs:
+            raise PipelineError(
+                "standard sequencing forbids methylation input(s): {}".format(
+                    ", ".join(methylation_inputs)
+                )
+            )
     if ("asm" in inputs or "asm_bed" in inputs) and "vcf" not in inputs:
-        raise PipelineError("ASM v1 generation requires a VCF input")
+        raise PipelineError("ASM generation requires a VCF input")
     mutation = _mapping(config, "mutation")
     coverage = _mapping(config, "coverage")
     if mutation["rate"] != 0 and "vcf" in inputs:
@@ -998,17 +1132,10 @@ def _require_released_capabilities(config: Mapping[str, object]) -> None:
         )
     if coverage["kind"] == "profile":
         if "artifact" in coverage:
-            if technology != "WGBS":
+            if not whole_genome:
                 raise PipelineError(
-                    "artifact-backed profile coverage currently supports WGBS only"
-                )
-            artifact = _mapping(coverage, "artifact")
-            if (
-                artifact["format"] != WGBS_GC_PROFILE_FORMAT
-                or artifact["version"] != WGBS_GC_PROFILE_VERSION
-            ):
-                raise PipelineError(
-                    "unsupported WGBS coverage profile format or version"
+                    "artifact-backed profile coverage currently supports WGBS only "
+                    "among bisulfite modes, or WGS for standard sequencing"
                 )
             fragments = _mapping(config, "fragments")
             if _uses_variable_insert(fragments) and (
@@ -1028,22 +1155,28 @@ def _require_released_capabilities(config: Mapping[str, object]) -> None:
                 "profile coverage without an artifact currently supports RRBS only"
             )
     elif coverage["kind"] == "target-score":
-        if technology != "TBS":
-            raise PipelineError("target-score coverage currently supports TBS only")
+        if not targeted:
+            raise PipelineError(
+                "target-score coverage currently supports TBS only among "
+                "bisulfite modes, plus WES or TS"
+            )
     elif coverage["kind"] != "uniform":
         raise PipelineError("coverage kind is outside the released contract")
 
     fragments = _mapping(config, "fragments")
     has_depth = "depth" in fragments
-    has_read_pairs = "read_pairs" in fragments
-    if has_depth == has_read_pairs:
+    has_count = "count" in fragments
+    if has_depth == has_count:
         raise PipelineError(
-            "exactly one of fragments.depth and fragments.read_pairs is required"
+            "exactly one of fragments.depth and fragments.count is required"
         )
     variable_insert = _uses_variable_insert(fragments)
-    if technology == "TBS" and variable_insert:
-        raise PipelineError("the TBS baseline requires one fixed insert length")
-    if technology == "TBS":
+    if targeted and variable_insert:
+        raise PipelineError(
+            "the TBS baseline requires --insert-sd 0; WES and TS use the "
+            "same targeted constraint"
+        )
+    if targeted:
         tbs = _mapping(config, "tbs")
         if tbs["fragment_center_stddev"] < 0:
             raise PipelineError(
@@ -1057,7 +1190,7 @@ def _require_released_capabilities(config: Mapping[str, object]) -> None:
         raise PipelineError(
             "cgmap_pool=true requires a CGmap or bedMethyl input"
         )
-    if (
+    if bisulfite and (
         "vcf" in inputs or mutation["rate"] != 0
     ) and not methylation["update_variant_boundaries"]:
         raise PipelineError(
@@ -1065,25 +1198,24 @@ def _require_released_capabilities(config: Mapping[str, object]) -> None:
         )
 
     sequencing = _mapping(config, "sequencing")
-    quality = _mapping(sequencing, "quality")
-    if quality["kind"] == "markov":
-        _require_model_contract(
-            quality,
-            "quality",
-            QUALITY_MARKOV_FORMAT,
-            QUALITY_MARKOV_VERSION,
+    if not bisulfite and (
+        sequencing["conversion_rate"] != 0 or not sequencing["directional"]
+    ):
+        raise PipelineError(
+            "standard sequencing requires disabled bisulfite chemistry"
         )
-    elif quality["kind"] != "uniform":
+    output = _mapping(config, "output")
+    if not bisulfite and (
+        output["save_methdb"] or output["fragment_realization"]
+    ):
+        raise PipelineError(
+            "standard sequencing forbids MethDB truth and fragment realization"
+        )
+    quality = _mapping(sequencing, "quality")
+    if quality["kind"] not in ("markov", "uniform"):
         raise PipelineError("quality kind is outside the released contract")
     error = _mapping(sequencing, "error")
-    if error["kind"] == "quality-confusion":
-        _require_model_contract(
-            error,
-            "error",
-            QUALITY_CONFUSION_FORMAT,
-            QUALITY_CONFUSION_VERSION,
-        )
-    elif error["kind"] != "uniform":
+    if error["kind"] not in ("quality-confusion", "uniform"):
         raise PipelineError("error kind is outside the released contract")
 
 def _mapping(parent: Mapping[str, object], field: str) -> Mapping[str, object]:
@@ -1091,22 +1223,6 @@ def _mapping(parent: Mapping[str, object], field: str) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
         raise PipelineError("{} must be an object".format(field))
     return value
-
-
-def _require_model_contract(
-    declaration: Mapping[str, object],
-    label: str,
-    expected_format: str,
-    expected_version: str,
-) -> None:
-    artifact = _mapping(declaration, "artifact")
-    if (
-        artifact["format"] != expected_format
-        or artifact["version"] != expected_version
-    ):
-        raise PipelineError(
-            "unsupported {} model format or version".format(label)
-        )
 
 
 def _build_process_config(prepared: PreparedRun) -> ProcessConfig:
@@ -1155,6 +1271,7 @@ def _build_process_config(prepared: PreparedRun) -> ProcessConfig:
             conversion_rate=sequencing["conversion_rate"],
             quality=quality,
             error=error,
+            bisulfite=normalized["technology"] in ("WGBS", "RRBS", "TBS"),
             methylation_model=BernoulliStateModel(),
         )
     except (PreparationError, SequencingModelError, ProcessError) as error_value:
@@ -1206,11 +1323,7 @@ def _require_model_compatibility(quality: object, error: object) -> None:
 
 
 def _uses_variable_insert(fragments: Mapping[str, object]) -> bool:
-    return (
-        fragments["insert_min"] != fragments["insert_mean"]
-        or fragments["insert_min"] != fragments["insert_max"]
-        or fragments["insert_stddev"] != 0
-    )
+    return fragments["insert_sd"] != 0
 
 
 __all__ = [

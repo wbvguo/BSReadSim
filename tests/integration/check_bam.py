@@ -108,7 +108,9 @@ def _decode_zx(value: str) -> tuple[int, int]:
         raise SystemExit("BAM zx counts are not canonical hexadecimal")
 
     payloads = []
-    for text, count in zip(parts[2:], (site_count, convertible_count)):
+    for text, count in zip(
+        parts[2:], (site_count, convertible_count), strict=True
+    ):
         try:
             payload = base64.b64decode(
                 text + "=" * ((-len(text)) % 4),
@@ -280,6 +282,7 @@ def main() -> int:
                 "-m",
                 "bsreadsim",
                 "run",
+                "wgbs",
                 "-r",
                 "tiny.fa",
                 "-o",
@@ -292,8 +295,10 @@ def main() -> int:
                 "0",
                 "--read-length",
                 "3",
-                "--insert-size",
+                "--insert-mean",
                 "5",
+                "--insert-sd",
+                "0",
                 "--max-ambiguous-fraction",
                 "0",
                 "--conversion-rate",
@@ -312,7 +317,8 @@ def main() -> int:
                 "4",
                 "--prefix",
                 "sample",
-                "--bam",
+                "--format",
+                "bam",
                 "--fragment-realization",
                 "--core",
                 str(core),
@@ -342,15 +348,16 @@ def main() -> int:
             bam_path.read_bytes()
         ).hexdigest():
             raise SystemExit("BAM manifest digest is wrong")
-        if "details" in manifest["config"]["normalized"]["output"]:
+        details = manifest["details"]
+        if "details" in details["configuration"]["output"]:
             raise SystemExit("BAM manifest retained the deleted JSON policy")
-        if manifest.get("annotation_alignment", {}).get("sam_version") != "1.6":
+        if details.get("alignment", {}).get("sam_version") != "1.6":
             raise SystemExit("BAM manifest omitted its SAM contract")
-        if manifest["versions"].get("read_name") != "bsreadsim-read-name-v2":
-            raise SystemExit("BAM manifest omitted read-name v2")
-        if manifest["annotation_alignment"]["tags"]["zf"]["required"] is not True:
+        if details["contracts"].get("read_name") != "bsreadsim-read-name":
+            raise SystemExit("BAM manifest omitted the read-name contract")
+        if details["alignment"]["tags"]["zf"]["required"] is not True:
             raise SystemExit("BAM manifest omitted the requested zf policy")
-        if manifest["annotation_alignment"]["tags"]["zx"]["required"] is not True:
+        if details["alignment"]["tags"]["zx"]["required"] is not True:
             raise SystemExit("BAM manifest omitted the requested zx policy")
 
         header, references, records, _ = _parse_bam(bam_path)
@@ -358,7 +365,7 @@ def main() -> int:
             raise SystemExit("BAM header has the wrong sort contract")
         if "@RG\t" not in header or "@PG\tID:bsreadsim" not in header:
             raise SystemExit("BAM header omitted provenance records")
-        if "BSREADSIM_ZX=packed-b64url-v1;ENABLED=1;BIT_ORDER=LSB0" not in header:
+        if "BSREADSIM_ZX=packed-b64url;ENABLED=1;BIT_ORDER=LSB0" not in header:
             raise SystemExit("BAM header omitted the zx schema")
         if references != (("chr1", 9),):
             raise SystemExit("BAM reference dictionary is wrong")
@@ -381,14 +388,14 @@ def main() -> int:
                 right = int(right_text)
                 ordinal = int(ordinal_text, 16)
             except (ValueError, TypeError) as error:
-                raise SystemExit("BAM QNAME violates read-name v2") from error
+                raise SystemExit("BAM QNAME violates the read-name contract") from error
             if (
                 contig != "chr1"
                 or not 1 <= left <= right <= 9
                 or ordinal != pair_offset // 2
                 or ordinal_text != format(ordinal, "x")
             ):
-                raise SystemExit("BAM QNAME fields violate read-name v2")
+                raise SystemExit("BAM QNAME fields violate the read-name contract")
             if first["flag"] != 99 or second["flag"] != 147:
                 raise SystemExit("BAM emitted incorrect paired-end flags")
             if first["mapq"] != 60 or second["mapq"] != 60:
@@ -428,7 +435,7 @@ def main() -> int:
             for name in ("zr", "zf"):
                 value = aux.get(name)
                 if value is None or value[0] != "B:S" or len(value[1]) != 12:
-                    raise SystemExit("BAM {} violates u16x12-v1".format(name))
+                    raise SystemExit("BAM {} violates u16x12".format(name))
             zx = aux.get("zx")
             if zx is None or zx[0] != "Z":
                 raise SystemExit("BAM record omitted fragment realization zx")

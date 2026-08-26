@@ -98,9 +98,9 @@ class BamFormattingTests(unittest.TestCase):
         self.assertIn("@RG\tID:{}\tSM:sample\n".format(RUN_ID), value)
         self.assertIn("@PG\tID:bsreadsim\tPN:bsreadsim\tVN:1.2.3\n", value)
         self.assertIn("MAPQ 60 denotes simulated origin", value)
-        self.assertIn("BSREADSIM_ZT=state64-v1", value)
-        self.assertIn("BSREADSIM_ZR=u16x12-v1;REQUIRED=1", value)
-        self.assertIn("BSREADSIM_ZF=u16x12-v1;ENABLED=0", value)
+        self.assertIn("BSREADSIM_ZT=state64", value)
+        self.assertIn("BSREADSIM_ZR=u16x12;REQUIRED=1", value)
+        self.assertIn("BSREADSIM_ZF=u16x12;ENABLED=0", value)
 
     def test_indel_projection_forms_query_complete_cigar(self) -> None:
         record = format_sam_fragment(

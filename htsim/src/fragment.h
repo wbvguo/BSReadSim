@@ -51,7 +51,7 @@ public:
 //   floor((double(effective_reference_bases) * depth)
 //         / (read_length * (paired_end ? 2 : 1)))
 // under round-to-nearest floating point. No wider integer is used.
-std::uint32_t read_pairs(
+std::uint32_t fragments(
     double depth,
     std::uint64_t effective_reference_bases,
     std::uint32_t read_length,

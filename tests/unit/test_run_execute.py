@@ -34,7 +34,7 @@ def baseline_config() -> dict:
             "insert_min": 5,
             "insert_mean": 5,
             "insert_max": 5,
-            "insert_stddev": 0,
+            "insert_sd": 0,
         }
     )
     return document
@@ -58,7 +58,7 @@ def quality_model_bytes(scores=(10, 30)) -> bytes:
     }
     return json.dumps(
         {
-            "schema": "quality-markov-v1",
+            "schema": "quality-markov",
             "quality_scores": list(scores),
             "mates": [mate, mate],
         },
@@ -77,7 +77,7 @@ def error_model_bytes(scores=(10, 30, 40)) -> bytes:
     mate = {"base_transition_counts": [identity for _ in scores]}
     return json.dumps(
         {
-            "schema": "quality-confusion-v1",
+            "schema": "quality-confusion",
             "quality_scores": list(scores),
             "mates": [mate, mate],
         },
@@ -153,8 +153,6 @@ class PipelineTests(unittest.TestCase):
             "kind": "markov",
             "artifact": {
                 "path": "quality.json",
-                "format": "json",
-                "version": "quality-markov-v1",
                 "sha256": hashlib.sha256(quality_bytes).hexdigest(),
             },
         }
@@ -162,8 +160,6 @@ class PipelineTests(unittest.TestCase):
             "kind": "quality-confusion",
             "artifact": {
                 "path": "error.json",
-                "format": "json",
-                "version": "quality-confusion-v1",
                 "sha256": hashlib.sha256(error_bytes).hexdigest(),
             },
         }
@@ -195,8 +191,6 @@ class PipelineTests(unittest.TestCase):
             "kind": "markov",
             "artifact": {
                 "path": "quality.json",
-                "format": "json",
-                "version": "quality-markov-v1",
                 "sha256": hashlib.sha256(quality_bytes).hexdigest(),
             },
         }
@@ -204,20 +198,10 @@ class PipelineTests(unittest.TestCase):
             "kind": "quality-confusion",
             "artifact": {
                 "path": "error.json",
-                "format": "json",
-                "version": "quality-confusion-v1",
                 "sha256": hashlib.sha256(error_bytes).hexdigest(),
             },
         }
         with self.assertRaisesRegex(PipelineError, "missing quality score.*30"):
-            run_prepared(
-                self.prepared(document),
-                core_executable=self.directory / "missing-core",
-                run_id=RUN_ID,
-            )
-
-        document["sequencing"]["quality"]["artifact"]["version"] = "future"
-        with self.assertRaisesRegex(PipelineError, "unsupported quality"):
             run_prepared(
                 self.prepared(document),
                 core_executable=self.directory / "missing-core",
@@ -252,8 +236,6 @@ class PipelineTests(unittest.TestCase):
             "kind": "profile",
             "artifact": {
                 "path": "coverage.tsv",
-                "format": "tsv",
-                "version": "wgbs-gc-target-v2",
                 "sha256": hashlib.sha256(profile_bytes).hexdigest(),
             },
         }
@@ -298,7 +280,7 @@ class PipelineTests(unittest.TestCase):
 
     def test_depth_passes_all_technology_capability_gates(self) -> None:
         document = baseline_config()
-        del document["fragments"]["read_pairs"]
+        del document["fragments"]["count"]
         document["fragments"]["depth"] = 2
 
         with self.assertRaisesRegex(PipelineError, "cannot resolve"):
@@ -341,7 +323,7 @@ class PipelineTests(unittest.TestCase):
             {
                 "insert_mean": 9,
                 "insert_max": 16,
-                "insert_stddev": 4,
+                "insert_sd": 4,
             }
         )
         with self.assertRaisesRegex(PipelineError, "cannot resolve"):
@@ -359,8 +341,6 @@ class PipelineTests(unittest.TestCase):
             "kind": "profile",
             "artifact": {
                 "path": "coverage.tsv",
-                "format": "tsv",
-                "version": "wgbs-gc-target-v2",
                 "sha256": hashlib.sha256(profile_bytes).hexdigest(),
             },
         }
@@ -416,7 +396,7 @@ class PipelineTests(unittest.TestCase):
             "bed": "targets.bed",
             "fragment_center_stddev": 0,
         }
-        with self.assertRaisesRegex(PipelineError, "TBS baseline requires"):
+        with self.assertRaisesRegex(PipelineError, "TBS baseline requires --insert-sd 0"):
             run_prepared(
                 self.prepared(tbs),
                 core_executable=self.directory / "missing-core",
@@ -446,6 +426,14 @@ class PipelineTests(unittest.TestCase):
         )
         document = baseline_config()
         document["technology"] = "TBS"
+        document["fragments"].update(
+            {
+                "insert_min": 2,
+                "insert_mean": 5,
+                "insert_max": 8,
+                "insert_sd": 0,
+            }
+        )
         document["tbs"] = {
             "bed": "targets.bed",
             "fragment_center_stddev": 1,
@@ -469,8 +457,6 @@ class PipelineTests(unittest.TestCase):
             "kind": "profile",
             "artifact": {
                 "path": "coverage.tsv",
-                "format": "tsv",
-                "version": "wgbs-gc-target-v2",
                 "sha256": hashlib.sha256(profile_bytes).hexdigest(),
             },
         }
@@ -478,23 +464,6 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(PipelineError, "cannot resolve"):
             run_prepared(
                 prepared,
-                core_executable=self.directory / "missing-core",
-                run_id=RUN_ID,
-            )
-
-        wrong_version = baseline_config()
-        wrong_version["coverage"] = {
-            "kind": "profile",
-            "artifact": {
-                "path": "coverage.tsv",
-                "format": "tsv",
-                "version": "unknown",
-                "sha256": hashlib.sha256(profile_bytes).hexdigest(),
-            },
-        }
-        with self.assertRaisesRegex(PipelineError, "unsupported WGBS"):
-            run_prepared(
-                self.prepared(wrong_version),
                 core_executable=self.directory / "missing-core",
                 run_id=RUN_ID,
             )
@@ -563,8 +532,6 @@ class PipelineTests(unittest.TestCase):
             "kind": "profile",
             "artifact": {
                 "path": "coverage.tsv",
-                "format": "tsv",
-                "version": "wgbs-gc-target-v2",
                 "sha256": hashlib.sha256(profile_bytes).hexdigest(),
             },
         }
