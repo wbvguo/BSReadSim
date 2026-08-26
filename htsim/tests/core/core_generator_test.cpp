@@ -55,7 +55,7 @@ void write_text(const std::string &path, const std::string &text)
     if (!output) {throw std::runtime_error("temporary FASTA write failed");}
 }
 
-CoreConfig baseline_config(const TempFile &reference, const std::string &fasta)
+CoreConfig baseline_config(const TempFile &reference)
 {
     CoreConfig config;
     config.emit_details = true;
@@ -63,7 +63,6 @@ CoreConfig baseline_config(const TempFile &reference, const std::string &fasta)
     config.normalized_config_sha256 = htsim::crypto::sha256(bytes_of("config"));
     config.master_seed = UINT64_C(0x123456789abcdef0);
     config.reference_path = reference.path();
-    config.reference_sha256 = htsim::crypto::sha256(bytes_of(fasta));
     config.technology = htsim::core::Technology::wgbs;
     config.paired_end = true;
     config.read_length_1 = 3;
@@ -71,8 +70,8 @@ CoreConfig baseline_config(const TempFile &reference, const std::string &fasta)
     config.insert_min = 5;
     config.insert_mean = 5;
     config.insert_max = 5;
-    config.insert_stddev = 0.0;
-    config.read_pairs = 7;
+    config.insert_sd = 0.0;
+    config.fragment_count = 7;
     config.max_ambiguous_fraction = 0.0;
     config.chunk_size = 2;
     config.mutation_rate = 0.0;
@@ -110,7 +109,7 @@ void test_valid_generation_and_chunk_independence()
     const std::string fasta = ">chr1\nACGTCGTAACGT\n>chr2\nAACGTACGTTAA\n";
     TempFile reference;
     write_text(reference.path(), fasta);
-    CoreConfig config = baseline_config(reference, fasta);
+    CoreConfig config = baseline_config(reference);
 
     std::ostringstream first(std::ios::binary);
     const auto first_trailer =
@@ -131,6 +130,16 @@ void test_valid_generation_and_chunk_independence()
                 && repeated_trailer.stream_sha256 == first_trailer.stream_sha256,
             "same configuration did not produce identical protocol bytes");
 
+    CoreConfig bounded_fixed = config;
+    bounded_fixed.insert_min = 3U;
+    bounded_fixed.insert_max = 8U;
+    std::ostringstream bounded(std::ios::binary);
+    const auto bounded_trailer =
+        htsim::core::generate_core_stream(bounded_fixed, bounded);
+    require(bounded.str() == first.str()
+                && bounded_trailer.stream_sha256 == first_trailer.stream_sha256,
+            "fixed WGBS output depended on insert bounds instead of insert_mean");
+
     config.chunk_size = 5;
     std::ostringstream rechunked(std::ios::binary);
     const auto rechunked_trailer =
@@ -138,6 +147,38 @@ void test_valid_generation_and_chunk_independence()
     require(rechunked.str() == first.str()
                 && rechunked_trailer.stream_sha256 == first_trailer.stream_sha256,
             "chunk size changed protocol output");
+}
+
+void test_standard_technologies_emit_no_methylation_sites()
+{
+    TempFile reference;
+    write_text(reference.path(), ">chr1\nACGTCGTAACGT\n");
+
+    CoreConfig wgs = baseline_config(reference);
+    wgs.technology = htsim::core::Technology::wgs;
+    std::ostringstream wgs_stream(std::ios::binary);
+    const auto wgs_trailer =
+        htsim::core::generate_core_stream(wgs, wgs_stream);
+    require(wgs_trailer.fragment_count == 7U
+                && wgs_trailer.methylation_site_count == 0U,
+            "WGS generated methylation rows");
+
+    TempFile targets;
+    write_text(targets.path(), "chr1\t4\t5\ttarget\t1\t+\n");
+    for (const auto technology : {
+             htsim::core::Technology::wes,
+             htsim::core::Technology::ts}) {
+        CoreConfig targeted = baseline_config(reference);
+        targeted.technology = technology;
+        targeted.tbs_bed_path = targets.path();
+        targeted.tbs_center_stddev = 0.0;
+        std::ostringstream stream(std::ios::binary);
+        const auto trailer =
+            htsim::core::generate_core_stream(targeted, stream);
+        require(trailer.fragment_count == 7U
+                    && trailer.methylation_site_count == 0U,
+                "standard targeted sequencing generated methylation rows");
+    }
 }
 
 void test_variable_wgbs_generation_and_capability_gate()
@@ -151,15 +192,15 @@ void test_variable_wgbs_generation_and_capability_gate()
     const std::string fasta = ">chrVariable\n" + sequence + "\n";
     TempFile reference;
     write_text(reference.path(), fasta);
-    CoreConfig config = baseline_config(reference, fasta);
+    CoreConfig config = baseline_config(reference);
     config.master_seed = 91U;
     config.read_length_1 = 4U;
     config.read_length_2 = 4U;
     config.insert_min = 5U;
     config.insert_mean = 9U;
     config.insert_max = 16U;
-    config.insert_stddev = 4.0;
-    config.read_pairs = 40U;
+    config.insert_sd = 4.0;
+    config.fragment_count = 40U;
     config.chunk_size = 13U;
 
     std::ostringstream first(std::ios::binary);
@@ -190,10 +231,6 @@ void test_variable_wgbs_generation_and_capability_gate()
     CoreConfig profiled = config;
     profiled.coverage = htsim::core::CoverageMode::profile;
     profiled.coverage_profile_path = profile_file.path();
-    profiled.coverage_profile_format = "tsv";
-    profiled.coverage_profile_version = "wgbs-gc-target-v2";
-    profiled.coverage_profile_sha256 =
-        htsim::crypto::sha256(bytes_of(profile));
     std::ostringstream profiled_stream(std::ios::binary);
     const auto profiled_trailer =
         htsim::core::generate_core_stream(profiled, profiled_stream);
@@ -221,7 +258,6 @@ void test_variable_wgbs_generation_and_capability_gate()
     CoreConfig with_vcf = config;
     with_vcf.chunk_size = 13U;
     with_vcf.vcf_path = variants.path();
-    with_vcf.vcf_sha256 = htsim::crypto::sha256(bytes_of(vcf));
     std::ostringstream vcf_stream(std::ios::binary);
     const auto vcf_trailer =
         htsim::core::generate_core_stream(with_vcf, vcf_stream);
@@ -246,11 +282,9 @@ void test_variable_wgbs_generation_and_capability_gate()
     TempFile asm_file;
     write_text(asm_file.path(), variable_asm);
     CoreConfig with_asm = with_vcf;
-    with_asm.read_pairs = 128U;
+    with_asm.fragment_count = 128U;
     with_asm.chunk_size = 11U;
     with_asm.asm_path = asm_file.path();
-    with_asm.asm_sha256 =
-        htsim::crypto::sha256(bytes_of(variable_asm));
     std::ostringstream asm_stream(std::ios::binary);
     const auto asm_trailer =
         htsim::core::generate_core_stream(with_asm, asm_stream);
@@ -289,14 +323,14 @@ void test_variable_wgbs_generation_and_capability_gate()
     const std::string short_fasta = ">chrShort\nACGTACGTACGT\n";
     TempFile short_reference;
     write_text(short_reference.path(), short_fasta);
-    CoreConfig unsupported = baseline_config(short_reference, short_fasta);
+    CoreConfig unsupported = baseline_config(short_reference);
     unsupported.read_length_1 = 4U;
     unsupported.read_length_2 = 4U;
     unsupported.insert_min = 5U;
     unsupported.insert_mean = 9U;
     unsupported.insert_max = 16U;
-    unsupported.insert_stddev = 4.0;
-    unsupported.read_pairs = 1U;
+    unsupported.insert_sd = 4.0;
+    unsupported.fragment_count = 1U;
     require_empty_failure(
         [&](std::ostringstream &sink) {
             (void)htsim::core::generate_core_stream(unsupported, sink);
@@ -310,8 +344,8 @@ void test_wgbs_depth_conversion_and_preflight_rejections()
         ">chr1\nACGTCGTAACGT\n>ineligible\nNNNNNNNNNNNN\n";
     TempFile reference;
     write_text(reference.path(), fasta);
-    CoreConfig config = baseline_config(reference, fasta);
-    config.read_pairs.reset();
+    CoreConfig config = baseline_config(reference);
+    config.fragment_count.reset();
     config.depth = 2.0;
 
     std::ostringstream first(std::ios::binary);
@@ -357,7 +391,6 @@ void test_wgbs_depth_conversion_and_preflight_rejections()
     config.technology = htsim::core::Technology::tbs;
     config.rrbs_cut_sites.clear();
     config.tbs_bed_path = targets.path();
-    config.tbs_bed_sha256 = htsim::crypto::sha256(bytes_of(target_text));
     config.tbs_center_stddev = 0.0;
     std::ostringstream tbs_depth(std::ios::binary);
     const auto tbs_depth_trailer =
@@ -376,13 +409,9 @@ void test_valid_wgbs_profile_generation_and_chunk_independence()
     TempFile profile;
     write_text(reference.path(), fasta);
     write_text(profile.path(), profile_text);
-    CoreConfig config = baseline_config(reference, fasta);
+    CoreConfig config = baseline_config(reference);
     config.coverage = htsim::core::CoverageMode::profile;
     config.coverage_profile_path = profile.path();
-    config.coverage_profile_format = "tsv";
-    config.coverage_profile_version = "wgbs-gc-target-v2";
-    config.coverage_profile_sha256 =
-        htsim::crypto::sha256(bytes_of(profile_text));
 
     std::ostringstream first(std::ios::binary);
     const auto first_trailer =
@@ -403,21 +432,6 @@ void test_valid_wgbs_profile_generation_and_chunk_independence()
                     == first_trailer.skipped_fragment_count,
             "chunk size changed profiled WGBS protocol output");
 
-    config.coverage_profile_sha256 = htsim::crypto::Sha256Digest{};
-    require_empty_failure(
-        [&](std::ostringstream &sink) {
-            (void)htsim::core::generate_core_stream(config, sink);
-        },
-        "coverage profile digest mismatch");
-    config.coverage_profile_sha256 =
-        htsim::crypto::sha256(bytes_of(profile_text));
-    config.coverage_profile_version = "unknown";
-    require_empty_failure(
-        [&](std::ostringstream &sink) {
-            (void)htsim::core::generate_core_stream(config, sink);
-        },
-        "coverage profile version mismatch");
-    config.coverage_profile_version = "wgbs-gc-target-v2";
     config.technology = htsim::core::Technology::rrbs;
     config.rrbs_cut_sites = {"|C"};
     require_empty_failure(
@@ -437,9 +451,8 @@ void test_valid_wgbs_vcf_generation_and_chunk_independence()
     TempFile variants;
     write_text(reference.path(), fasta);
     write_text(variants.path(), vcf);
-    CoreConfig config = baseline_config(reference, fasta);
+    CoreConfig config = baseline_config(reference);
     config.vcf_path = variants.path();
-    config.vcf_sha256 = htsim::crypto::sha256(bytes_of(vcf));
 
     std::ostringstream first(std::ios::binary);
     const auto first_trailer =
@@ -458,7 +471,7 @@ void test_valid_wgbs_vcf_generation_and_chunk_independence()
                     == first_trailer.stream_sha256,
             "chunk size changed the WGBS VCF protocol stream");
 
-    CoreConfig baseline = baseline_config(reference, fasta);
+    CoreConfig baseline = baseline_config(reference);
     std::ostringstream reference_only(std::ios::binary);
     (void)htsim::core::generate_core_stream(baseline, reference_only);
     require(first.str() != reference_only.str(),
@@ -467,8 +480,6 @@ void test_valid_wgbs_vcf_generation_and_chunk_independence()
     const std::string empty_vcf = vcf_header();
     write_text(variants.path(), empty_vcf);
     baseline.vcf_path = variants.path();
-    baseline.vcf_sha256 =
-        htsim::crypto::sha256(bytes_of(empty_vcf));
     std::ostringstream no_events(std::ios::binary);
     (void)htsim::core::generate_core_stream(baseline, no_events);
     require(no_events.str() == reference_only.str(),
@@ -484,10 +495,8 @@ void test_wgbs_vcf_deletions_and_preflight_rejections()
     TempFile variants;
     write_text(reference.path(), fasta);
     write_text(variants.path(), deletion_vcf);
-    CoreConfig config = baseline_config(reference, fasta);
+    CoreConfig config = baseline_config(reference);
     config.vcf_path = variants.path();
-    config.vcf_sha256 =
-        htsim::crypto::sha256(bytes_of(deletion_vcf));
     std::ostringstream deletion_stream(std::ios::binary);
     const auto deletion_trailer =
         htsim::core::generate_core_stream(config, deletion_stream);
@@ -502,40 +511,19 @@ void test_wgbs_vcf_deletions_and_preflight_rejections()
     require(deletion_rechunked.str() == deletion_stream.str(),
             "chunk size changed the WGBS deletion protocol stream");
 
-    config.vcf_sha256 = htsim::crypto::Sha256Digest{};
-    require_empty_failure(
-        [&](std::ostringstream &sink) {
-            (void)htsim::core::generate_core_stream(config, sink);
-        },
-        "VCF digest mismatch");
-
-    config.vcf_sha256 =
-        htsim::crypto::sha256(bytes_of(deletion_vcf));
     const std::string all_one_profile = "0.5\n0.5\n";
     TempFile coverage_profile;
     write_text(coverage_profile.path(), all_one_profile);
     config.coverage = htsim::core::CoverageMode::profile;
     config.coverage_profile_path = coverage_profile.path();
-    config.coverage_profile_format = "tsv";
-    config.coverage_profile_version = "wgbs-gc-target-v2";
-    config.coverage_profile_sha256 =
-        htsim::crypto::sha256(bytes_of(all_one_profile));
     require_empty_failure(
         [&](std::ostringstream &sink) {
             (void)htsim::core::generate_core_stream(config, sink);
         },
         "target GC profile with a VCF");
 
-    config = baseline_config(reference, fasta);
+    config = baseline_config(reference);
     config.vcf_path = variants.path();
-    require_empty_failure(
-        [&](std::ostringstream &sink) {
-            (void)htsim::core::generate_core_stream(config, sink);
-        },
-        "VCF path without digest");
-
-    config.vcf_sha256 =
-        htsim::crypto::sha256(bytes_of(deletion_vcf));
     config.update_variant_boundaries = false;
     require_empty_failure(
         [&](std::ostringstream &sink) {
@@ -550,7 +538,7 @@ void test_de_novo_mutation_generation_and_preflight_rejections()
         ">chr1\nACGTACGTACGTACGTACGTACGTACGTACGT\n";
     TempFile reference;
     write_text(reference.path(), fasta);
-    CoreConfig config = baseline_config(reference, fasta);
+    CoreConfig config = baseline_config(reference);
     config.mutation_rate = 0.8;
     config.indel_fraction = 0.65;
     config.indel_extension_probability = 0.6;
@@ -583,10 +571,6 @@ void test_de_novo_mutation_generation_and_preflight_rejections()
     CoreConfig profiled = config;
     profiled.coverage = htsim::core::CoverageMode::profile;
     profiled.coverage_profile_path = coverage_profile.path();
-    profiled.coverage_profile_format = "tsv";
-    profiled.coverage_profile_version = "wgbs-gc-target-v2";
-    profiled.coverage_profile_sha256 =
-        htsim::crypto::sha256(bytes_of(all_one_profile));
     std::ostringstream profiled_stream(std::ios::binary);
     const auto profiled_trailer =
         htsim::core::generate_core_stream(profiled, profiled_stream);
@@ -604,7 +588,6 @@ void test_de_novo_mutation_generation_and_preflight_rejections()
     TempFile variants;
     write_text(variants.path(), empty_vcf);
     config.vcf_path = variants.path();
-    config.vcf_sha256 = htsim::crypto::sha256(bytes_of(empty_vcf));
     require_empty_failure(
         [&](std::ostringstream &sink) {
             (void)htsim::core::generate_core_stream(config, sink);
@@ -612,7 +595,6 @@ void test_de_novo_mutation_generation_and_preflight_rejections()
         "VCF with de novo mutations");
 
     config.vcf_path.reset();
-    config.vcf_sha256.reset();
     config.update_variant_boundaries = false;
     require_empty_failure(
         [&](std::ostringstream &sink) {
@@ -626,7 +608,7 @@ void test_de_novo_mutation_generation_and_preflight_rejections()
     config.insert_min = 4U;
     config.insert_mean = 5U;
     config.insert_max = 8U;
-    config.insert_stddev = 0.0;
+    config.insert_sd = 0.0;
     std::ostringstream rrbs_mutations(std::ios::binary);
     const auto rrbs_mutation_trailer =
         htsim::core::generate_core_stream(config, rrbs_mutations);
@@ -646,14 +628,12 @@ void test_de_novo_mutation_generation_and_preflight_rejections()
         "chr1\t24\t25\tc\t1\t.\n";
     TempFile tbs_targets;
     write_text(tbs_targets.path(), tbs_bed);
-    CoreConfig tbs_mutations = baseline_config(reference, fasta);
+    CoreConfig tbs_mutations = baseline_config(reference);
     tbs_mutations.technology = htsim::core::Technology::tbs;
     tbs_mutations.mutation_rate = 0.2;
     tbs_mutations.indel_fraction = 0.65;
     tbs_mutations.indel_extension_probability = 0.6;
     tbs_mutations.tbs_bed_path = tbs_targets.path();
-    tbs_mutations.tbs_bed_sha256 =
-        htsim::crypto::sha256(bytes_of(tbs_bed));
     tbs_mutations.tbs_center_stddev = 0.0;
     std::ostringstream tbs_mutation_stream(std::ios::binary);
     const auto tbs_mutation_trailer =
@@ -669,7 +649,7 @@ void test_de_novo_mutation_generation_and_preflight_rejections()
     require(tbs_mutation_rechunked.str() == tbs_mutation_stream.str(),
             "chunk size changed TBS de novo haplotype fragmentation");
 
-    config = baseline_config(reference, fasta);
+    config = baseline_config(reference);
     config.mutation_rate = std::numeric_limits<double>::quiet_NaN();
     require_empty_failure(
         [&](std::ostringstream &sink) {
@@ -690,9 +670,8 @@ void test_valid_cgmap_generation_and_preflight_rejections()
     TempFile profile;
     write_text(reference.path(), fasta);
     write_text(profile.path(), cgmap);
-    CoreConfig config = baseline_config(reference, fasta);
+    CoreConfig config = baseline_config(reference);
     config.cgmap_path = profile.path();
-    config.cgmap_sha256 = htsim::crypto::sha256(bytes_of(cgmap));
 
     std::ostringstream first(std::ios::binary);
     const auto first_trailer =
@@ -708,7 +687,7 @@ void test_valid_cgmap_generation_and_preflight_rejections()
         rechunked.str() == first.str(),
         "chunk size changed the CGmap protocol stream");
 
-    CoreConfig beta = baseline_config(reference, fasta);
+    CoreConfig beta = baseline_config(reference);
     std::ostringstream beta_stream(std::ios::binary);
     (void)htsim::core::generate_core_stream(beta, beta_stream);
     require(
@@ -724,43 +703,25 @@ void test_valid_cgmap_generation_and_preflight_rejections()
     CoreConfig bed_config = config;
     bed_config.chunk_size = 5U;
     bed_config.cgmap_path.reset();
-    bed_config.cgmap_sha256.reset();
     bed_config.bed_methyl_path = bed_profile.path();
-    bed_config.bed_methyl_sha256 =
-        htsim::crypto::sha256(bytes_of(bed_methyl));
     std::ostringstream bed_stream(std::ios::binary);
     (void)htsim::core::generate_core_stream(bed_config, bed_stream);
     require(
         bed_stream.str() == first.str(),
         "bedMethyl did not preserve the equivalent CGmap MethDB overlay");
 
-    config.cgmap_sha256 = {};
-    require_empty_failure(
-        [&](std::ostringstream &sink) {
-            (void)htsim::core::generate_core_stream(config, sink);
-        },
-        "CGmap digest mismatch");
-    config.cgmap_sha256 = htsim::crypto::sha256(bytes_of(cgmap));
     config.asm_path = profile.path();
-    config.asm_sha256 = config.cgmap_sha256;
     require_empty_failure(
         [&](std::ostringstream &sink) {
             (void)htsim::core::generate_core_stream(config, sink);
         },
         "ASM input without VCF");
 
-    config = baseline_config(reference, fasta);
+    config = baseline_config(reference);
     config.cgmap_path = profile.path();
-    require_empty_failure(
-        [&](std::ostringstream &sink) {
-            (void)htsim::core::generate_core_stream(config, sink);
-        },
-        "CGmap path without digest");
-
     const std::string mismatch =
         "chr1\tC\t3\tCHH\tCA\t1\t1\t1\n";
     write_text(profile.path(), mismatch);
-    config.cgmap_sha256 = htsim::crypto::sha256(bytes_of(mismatch));
     require_empty_failure(
         [&](std::ostringstream &sink) {
             (void)htsim::core::generate_core_stream(config, sink);
@@ -786,13 +747,10 @@ void test_valid_asm_generation_and_preflight_rejections()
     write_text(cgmap_file.path(), cgmap);
     write_text(asm_file.path(), asm_profile);
 
-    CoreConfig config = baseline_config(reference, fasta);
+    CoreConfig config = baseline_config(reference);
     config.vcf_path = variants.path();
-    config.vcf_sha256 = htsim::crypto::sha256(bytes_of(vcf));
     config.cgmap_path = cgmap_file.path();
-    config.cgmap_sha256 = htsim::crypto::sha256(bytes_of(cgmap));
     config.asm_path = asm_file.path();
-    config.asm_sha256 = htsim::crypto::sha256(bytes_of(asm_profile));
 
     std::ostringstream first(std::ios::binary);
     const auto first_trailer =
@@ -810,7 +768,6 @@ void test_valid_asm_generation_and_preflight_rejections()
 
     CoreConfig cgmap_only = config;
     cgmap_only.asm_path.reset();
-    cgmap_only.asm_sha256.reset();
     std::ostringstream cgmap_stream(std::ios::binary);
     (void)htsim::core::generate_core_stream(cgmap_only, cgmap_stream);
     require(
@@ -823,36 +780,24 @@ void test_valid_asm_generation_and_preflight_rejections()
     write_text(asm_bed_file.path(), asm_bed);
     CoreConfig bed_config = config;
     bed_config.asm_path.reset();
-    bed_config.asm_sha256.reset();
     bed_config.asm_bed_path = asm_bed_file.path();
-    bed_config.asm_bed_sha256 = htsim::crypto::sha256(bytes_of(asm_bed));
     std::ostringstream bed_stream(std::ios::binary);
     (void)htsim::core::generate_core_stream(bed_config, bed_stream);
     require(
         bed_stream.str() == first.str(),
         "ASM BED did not preserve the equivalent typed ASM overlay");
 
-    config.asm_sha256 = {};
-    require_empty_failure(
-        [&](std::ostringstream &sink) {
-            (void)htsim::core::generate_core_stream(config, sink);
-        },
-        "ASM digest mismatch");
-    config.asm_sha256 = htsim::crypto::sha256(bytes_of(asm_profile));
-
     const std::string unresolved_asm =
         "chr1\tC\t2\tCG\tCG\t0.5\t4\tT\tC\t0.2\t0.8\t4\t0.01\tfixture\n";
     write_text(asm_file.path(), unresolved_asm);
-    config.asm_sha256 = htsim::crypto::sha256(bytes_of(unresolved_asm));
     require_empty_failure(
         [&](std::ostringstream &sink) {
             (void)htsim::core::generate_core_stream(config, sink);
         },
         "ASM row without its exact linked VCF SNV");
 
-    config = baseline_config(reference, fasta);
+    config = baseline_config(reference);
     config.asm_path = asm_file.path();
-    config.asm_sha256 = htsim::crypto::sha256(bytes_of(unresolved_asm));
     require_empty_failure(
         [&](std::ostringstream &sink) {
             (void)htsim::core::generate_core_stream(config, sink);
@@ -865,15 +810,15 @@ void test_valid_rrbs_generation_and_chunk_independence()
     const std::string fasta = ">chrR\nCAACAACAAC\n";
     TempFile reference;
     write_text(reference.path(), fasta);
-    CoreConfig config = baseline_config(reference, fasta);
+    CoreConfig config = baseline_config(reference);
     config.technology = htsim::core::Technology::rrbs;
     config.read_length_1 = 2;
     config.read_length_2 = 2;
     config.insert_min = 3;
     config.insert_mean = 5;
     config.insert_max = 9;
-    config.insert_stddev = 25.0;
-    config.read_pairs = 5;
+    config.insert_sd = 25.0;
+    config.fragment_count = 5;
     config.rrbs_cut_sites = {"|C"};
 
     std::ostringstream first(std::ios::binary);
@@ -921,17 +866,16 @@ void test_rrbs_and_tbs_vcf_haplotype_fragmentation()
         + "chr1\t11\t.\tT\tC\t.\tPASS\t.\tGT\t1|0\n";
     TempFile rrbs_variants;
     write_text(rrbs_variants.path(), rrbs_vcf);
-    CoreConfig rrbs = baseline_config(reference, fasta);
+    CoreConfig rrbs = baseline_config(reference);
     rrbs.technology = htsim::core::Technology::rrbs;
     rrbs.read_length_1 = 2U;
     rrbs.read_length_2 = 2U;
     rrbs.insert_min = 7U;
     rrbs.insert_mean = 7U;
     rrbs.insert_max = 7U;
-    rrbs.insert_stddev = 0.0;
+    rrbs.insert_sd = 0.0;
     rrbs.rrbs_cut_sites = {"CCG|G"};
     rrbs.vcf_path = rrbs_variants.path();
-    rrbs.vcf_sha256 = htsim::crypto::sha256(bytes_of(rrbs_vcf));
     std::ostringstream rrbs_stream(std::ios::binary);
     const auto rrbs_trailer =
         htsim::core::generate_core_stream(rrbs, rrbs_stream);
@@ -951,13 +895,11 @@ void test_rrbs_and_tbs_vcf_haplotype_fragmentation()
     TempFile targets;
     write_text(tbs_variants.path(), tbs_vcf);
     write_text(targets.path(), bed);
-    CoreConfig tbs = baseline_config(reference, fasta);
+    CoreConfig tbs = baseline_config(reference);
     tbs.technology = htsim::core::Technology::tbs;
     tbs.tbs_bed_path = targets.path();
-    tbs.tbs_bed_sha256 = htsim::crypto::sha256(bytes_of(bed));
     tbs.tbs_center_stddev = 0.0;
     tbs.vcf_path = tbs_variants.path();
-    tbs.vcf_sha256 = htsim::crypto::sha256(bytes_of(tbs_vcf));
     std::ostringstream tbs_stream(std::ios::binary);
     const auto tbs_trailer =
         htsim::core::generate_core_stream(tbs, tbs_stream);
@@ -983,11 +925,14 @@ void test_valid_tbs_generation_and_chunk_independence()
     TempFile targets;
     write_text(reference.path(), fasta);
     write_text(targets.path(), bed);
-    CoreConfig config = baseline_config(reference, fasta);
+    CoreConfig config = baseline_config(reference);
     config.technology = htsim::core::Technology::tbs;
     config.tbs_bed_path = targets.path();
-    config.tbs_bed_sha256 = htsim::crypto::sha256(bytes_of(bed));
     config.tbs_center_stddev = 0.0;
+    config.insert_min = 3U;
+    config.insert_mean = 5U;
+    config.insert_max = 8U;
+    config.insert_sd = 0.0;
 
     std::ostringstream first(std::ios::binary);
     const auto first_trailer =
@@ -1045,7 +990,6 @@ void test_valid_tbs_generation_and_chunk_independence()
         "chr1\t4\t5\tforward\t0\t+\n"
         "chr2\t5\t6\tunknown\t0\t.\n";
     write_text(targets.path(), all_zero);
-    config.tbs_bed_sha256 = htsim::crypto::sha256(bytes_of(all_zero));
     config.tbs_center_stddev = 0.0;
     require_empty_failure(
         [&](std::ostringstream &sink) {
@@ -1056,7 +1000,6 @@ void test_valid_tbs_generation_and_chunk_independence()
     const std::string fractional =
         "chr1\t4\t5\tforward\t0.5\t+\n";
     write_text(targets.path(), fractional);
-    config.tbs_bed_sha256 = htsim::crypto::sha256(bytes_of(fractional));
     require_empty_failure(
         [&](std::ostringstream &sink) {
             (void)htsim::core::generate_core_stream(config, sink);
@@ -1069,7 +1012,7 @@ void test_preflight_failures_write_nothing()
     const std::string fasta = ">chr1\nACGTACGT\n";
     TempFile reference;
     write_text(reference.path(), fasta);
-    CoreConfig config = baseline_config(reference, fasta);
+    CoreConfig config = baseline_config(reference);
 
     config.coverage = htsim::core::CoverageMode::target_score;
     require_empty_failure(
@@ -1078,7 +1021,7 @@ void test_preflight_failures_write_nothing()
         },
         "TBS target-score coverage on WGBS");
 
-    config = baseline_config(reference, fasta);
+    config = baseline_config(reference);
 
     config.technology = htsim::core::Technology::tbs;
     require_empty_failure(
@@ -1087,7 +1030,7 @@ void test_preflight_failures_write_nothing()
         },
         "TBS without its required input projection");
 
-    config = baseline_config(reference, fasta);
+    config = baseline_config(reference);
     config.technology = htsim::core::Technology::rrbs;
     config.rrbs_cut_sites = {"|A"};
     require_empty_failure(
@@ -1096,19 +1039,9 @@ void test_preflight_failures_write_nothing()
         },
         "RRBS reference with fewer than two cut positions");
 
-    config = baseline_config(reference, fasta);
-    config.reference_sha256 = {};
-    require_empty_failure(
-        [&](std::ostringstream &sink) {
-            (void)htsim::core::generate_core_stream(config, sink);
-        },
-        "reference digest mismatch");
-
-    config = baseline_config(reference, fasta);
+    config = baseline_config(reference);
     config.max_ambiguous_fraction = 0.0;
     write_text(reference.path(), ">chr1\nNNNNNNNN\n");
-    config.reference_sha256 = htsim::crypto::sha256(
-        bytes_of(">chr1\nNNNNNNNN\n"));
     require_empty_failure(
         [&](std::ostringstream &sink) {
             (void)htsim::core::generate_core_stream(config, sink);
@@ -1122,6 +1055,7 @@ int main()
 {
     try {
         test_valid_generation_and_chunk_independence();
+        test_standard_technologies_emit_no_methylation_sites();
         test_variable_wgbs_generation_and_capability_gate();
         test_wgbs_depth_conversion_and_preflight_rejections();
         test_valid_wgbs_profile_generation_and_chunk_independence();

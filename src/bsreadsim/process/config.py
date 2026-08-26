@@ -32,11 +32,14 @@ class ProcessConfig:
     methylation_model: MethylationStateModel = field(
         default_factory=BernoulliStateModel
     )
+    bisulfite: bool = True
 
     def __post_init__(self) -> None:
         _require_u64("master_seed", self.master_seed)
         if not isinstance(self.directional, bool):
             raise ProcessError("directional must be a boolean")
+        if not isinstance(self.bisulfite, bool):
+            raise ProcessError("bisulfite must be a boolean")
         _require_probability("conversion_rate", self.conversion_rate)
         if not isinstance(self.quality, (UniformQuality, QualityMarkovModel)):
             raise ProcessError("quality policy is outside the released contract")

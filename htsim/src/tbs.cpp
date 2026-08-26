@@ -143,10 +143,8 @@ std::uint32_t exact_output_weight(double score)
 
 TargetFile::TargetFile(
     const std::string &path,
-    const crypto::Sha256Digest &expected_file_sha256,
     const std::vector<reference::ContigMetadata> &reference_catalog)
-    : file_sha256_(expected_file_sha256),
-      targets_by_contig_(reference_catalog.size())
+    : targets_by_contig_(reference_catalog.size())
 {
     try {
         std::unordered_map<std::string, std::uint32_t> contig_indices;
@@ -162,7 +160,8 @@ TargetFile::TargetFile(
             }
         }
 
-        text::TextSnapshot snapshot(path, expected_file_sha256);
+        text::TextSnapshot snapshot(path);
+        file_sha256_ = snapshot.file_sha256();
         snapshot.visit_lines([&](std::string_view line, std::uint64_t line_number) {
             if (metadata_line(line)) {return;}
             try {

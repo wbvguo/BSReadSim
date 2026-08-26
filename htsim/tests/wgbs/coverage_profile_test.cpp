@@ -102,7 +102,7 @@ WgbsGcProfile load_profile(const std::string &text)
     TempFile file;
     const auto bytes = bytes_of(text);
     write_bytes(file.path(), bytes);
-    return WgbsGcProfile(file.path(), htsim::crypto::sha256(bytes));
+    return WgbsGcProfile(file.path());
 }
 
 htsim::model::Bases encode(const std::string &text)
@@ -127,8 +127,7 @@ void test_profile_parse_and_exact_bin_mapping()
     TempFile plain;
     const auto bytes = bytes_of(text);
     write_bytes(plain.path(), bytes);
-    const WgbsGcProfile profile(
-        plain.path(), htsim::crypto::sha256(bytes));
+    const WgbsGcProfile profile(plain.path());
     require(profile.bin_count() == 3U,
             "profile did not retain every contiguous bin");
     require(profile.bin_for_counts(0, 4) == 0U
@@ -151,8 +150,7 @@ void test_profile_parse_and_exact_bin_mapping()
     TempFile compressed_file;
     const auto compressed = gzip_bytes(text);
     write_bytes(compressed_file.path(), compressed);
-    const WgbsGcProfile compressed_profile(
-        compressed_file.path(), htsim::crypto::sha256(compressed));
+    const WgbsGcProfile compressed_profile(compressed_file.path());
     require(compressed_profile.bin_count() == profile.bin_count()
                 && compressed_profile.target_probability_for_counts(3, 4)
                     == 0.75
@@ -184,18 +182,10 @@ void test_profile_rejections()
         write_bytes(file.path(), bytes);
         require_error(
             [&] {
-                (void)WgbsGcProfile(
-                    file.path(), htsim::crypto::sha256(bytes));
+                (void)WgbsGcProfile(file.path());
             },
             "invalid coverage profile was accepted: " + text);
     }
-
-    TempFile file;
-    const auto valid = bytes_of("0.5\n0.5\n");
-    write_bytes(file.path(), valid);
-    require_error(
-        [&] {(void)WgbsGcProfile(file.path(), {});},
-        "coverage profile digest mismatch was accepted");
 }
 
 void test_profiled_sampling_and_chunk_independence()

@@ -1,25 +1,22 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://bsreadsim.org/schemas/run-config-1.1.json",
+  "$id": "https://bsreadsim.org/schemas/run-config.json",
   "title": "BSReadSim run configuration",
-  "description": "Input for the C++ generation plus Python processing architecture. Relative paths resolve against the config file directory.",
+  "description": "Internal input for the C++ generation plus Python processing architecture. Relative paths resolve against the invocation base directory.",
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema_version",
     "reference",
     "inputs",
     "mutation",
     "fragments",
+    "seeds",
     "methylation",
     "sequencing",
     "execution",
     "output"
   ],
   "properties": {
-    "schema_version": {
-      "const": "1.1"
-    },
     "reference": {
       "$ref": "#/$defs/path"
     },
@@ -32,7 +29,10 @@
       "enum": [
         "WGBS",
         "RRBS",
-        "TBS"
+        "TBS",
+        "WGS",
+        "WES",
+        "TS"
       ],
       "default": "WGBS"
     },
@@ -124,7 +124,7 @@
     },
     "fragments": {
       "type": "object",
-      "description": "Runtime validation additionally enforces each read length <= insert_min <= insert_mean <= insert_max.",
+      "description": "Runtime validation enforces insert_min <= insert_mean <= insert_max. Whole-genome and targeted technologies with insert_sd=0 use insert_mean as one fixed length; otherwise each read length must fit insert_min.",
       "additionalProperties": false,
       "required": [
         "paired_end",
@@ -152,7 +152,7 @@
           "maximum": 4294967295,
           "default": 400
         },
-        "insert_stddev": {
+        "insert_sd": {
           "type": "number",
           "minimum": 0,
           "maximum": 1.7976931348623157e+308,
@@ -173,7 +173,7 @@
           "exclusiveMinimum": 0,
           "maximum": 1.7976931348623157e+308
         },
-        "read_pairs": {
+        "count": {
           "type": "integer",
           "minimum": 1,
           "maximum": 4294967295
@@ -216,13 +216,13 @@
               ],
               "not": {
                 "required": [
-                  "read_pairs"
+                  "count"
                 ]
               }
             },
             {
               "required": [
-                "read_pairs"
+                "count"
               ],
               "not": {
                 "required": [
@@ -273,18 +273,32 @@
             }
           }
         },
-        "catalog_seed": {
-          "type": "string",
-          "pattern": "^(0|[1-9][0-9]*)$",
-          "default": "0",
-          "description": "catalog-only unsigned 64-bit seed"
-        },
         "state_model": {
           "enum": [
             "bernoulli",
             "bilstm"
           ],
           "default": "bernoulli"
+        }
+      }
+    },
+    "seeds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mutation",
+        "phasing",
+        "methylation"
+      ],
+      "properties": {
+        "mutation": {
+          "$ref": "#/$defs/seed"
+        },
+        "phasing": {
+          "$ref": "#/$defs/seed"
+        },
+        "methylation": {
+          "$ref": "#/$defs/seed"
         }
       }
     },
@@ -314,7 +328,7 @@
               "const": "profile"
             },
             "artifact": {
-              "$ref": "#/$defs/modelArtifact"
+              "$ref": "#/$defs/fileArtifact"
             }
           }
         },
@@ -435,7 +449,7 @@
                   "const": "markov"
                 },
                 "artifact": {
-                  "$ref": "#/$defs/modelArtifact"
+                  "$ref": "#/$defs/fileArtifact"
                 }
               }
             }
@@ -471,7 +485,7 @@
                   "const": "quality-confusion"
                 },
                 "artifact": {
-                  "$ref": "#/$defs/modelArtifact"
+                  "$ref": "#/$defs/fileArtifact"
                 }
               }
             }
@@ -526,12 +540,13 @@
           "maxLength": 128,
           "pattern": "^[A-Za-z0-9._-]+$"
         },
-        "compression": {
+        "format": {
           "enum": [
-            "none",
-            "gzip"
+            "fastq",
+            "fastq.gz",
+            "bam"
           ],
-          "default": "gzip"
+          "default": "fastq.gz"
         },
         "gzip_level": {
           "type": "integer",
@@ -539,7 +554,11 @@
           "maximum": 9,
           "default": 6
         },
-        "bam": {
+        "save_methdb": {
+          "type": "boolean",
+          "default": false
+        },
+        "save_vcf": {
           "type": "boolean",
           "default": false
         },
@@ -559,7 +578,10 @@
       "if": {
         "properties": {
           "technology": {
-            "const": "WGBS"
+            "enum": [
+              "WGBS",
+              "WGS"
+            ]
           }
         },
         "required": [
@@ -597,7 +619,11 @@
       "if": {
         "properties": {
           "technology": {
-            "const": "TBS"
+            "enum": [
+              "TBS",
+              "WES",
+              "TS"
+            ]
           }
         },
         "required": [
@@ -624,6 +650,11 @@
       "minimum": 0,
       "maximum": 1
     },
+    "seed": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "description": "Unsigned 64-bit decimal seed; runtime validation enforces the upper bound."
+    },
     "betaPair": {
       "type": "array",
       "prefixItems": [
@@ -641,30 +672,16 @@
       "minItems": 2,
       "maxItems": 2
     },
-    "modelArtifact": {
+    "fileArtifact": {
       "type": "object",
       "additionalProperties": false,
       "required": [
         "path",
-        "format",
-        "version",
         "sha256"
       ],
       "properties": {
         "path": {
           "$ref": "#/$defs/path"
-        },
-        "format": {
-          "enum": [
-            "json",
-            "npz",
-            "onnx",
-            "tsv"
-          ]
-        },
-        "version": {
-          "type": "string",
-          "minLength": 1
         },
         "sha256": {
           "type": "string",

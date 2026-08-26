@@ -11,8 +11,23 @@ from collections.abc import Mapping, Sequence
 from . import __version__
 
 
+_BISULFITE_TECHNOLOGIES = frozenset(("WGBS", "RRBS", "TBS"))
+_WHOLE_GENOME_TECHNOLOGIES = frozenset(("WGBS", "WGS"))
+_TARGETED_TECHNOLOGIES = frozenset(("TBS", "WES", "TS"))
+
+
 class CommandLineError(ValueError):
     """Direct simulation arguments cannot form one valid run."""
+
+
+def _parse_beta_pair(value: str) -> list[float]:
+    parts = value.split(",")
+    if len(parts) != 2 or not all(parts):
+        raise argparse.ArgumentTypeError("must be ALPHA,BETA")
+    try:
+        return [float(parts[0]), float(parts[1])]
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be ALPHA,BETA") from error
 
 
 def _add_runtime_options(parser: argparse.ArgumentParser) -> None:
@@ -23,8 +38,10 @@ def _add_runtime_options(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _add_fragment_domain_arguments(parser: argparse.ArgumentParser) -> None:
-    """Add fragment-shape arguments shared by simulation and catalog export."""
+def _add_fragment_domain_arguments(
+    parser: argparse.ArgumentParser, *, targeted: bool = False
+) -> None:
+    """Add fragment-shape arguments shared by simulation and build commands."""
     fragments = parser.add_argument_group("fragments")
     fragments.add_argument(
         "--single-end",
@@ -32,19 +49,30 @@ def _add_fragment_domain_arguments(parser: argparse.ArgumentParser) -> None:
         help="emit one read per fragment instead of paired-end reads",
     )
     fragments.add_argument(
-        "--read-length", type=int, default=100, help="read length (default: 100)"
+        "-l", "--read-length", type=int, default=100, help="read length (default: 100)"
     )
     fragments.add_argument(
-        "--insert-size",
+        "--insert-min", type=int, help="lower insert bound (default: 100)"
+    )
+    fragments.add_argument(
+        "--insert-mean",
         type=int,
+        help="fixed insert length or variable-distribution mean (default: 400)",
+    )
+    fragments.add_argument(
+        "--insert-max", type=int, help="upper insert bound (default: 1000)"
+    )
+    fragments.add_argument(
+        "--insert-sd",
+        type=float,
+        default=0.0 if targeted else None,
         help=(
-            "fixed insert size; cannot be combined with insert range options"
+            "insert-length SD; 0 selects a fixed whole-genome/targeted "
+            "insert (default: {} for this command)".format(
+                0 if targeted else 25
+            )
         ),
     )
-    fragments.add_argument("--insert-min", type=int)
-    fragments.add_argument("--insert-mean", type=int)
-    fragments.add_argument("--insert-max", type=int)
-    fragments.add_argument("--insert-stddev", type=float)
     fragments.add_argument(
         "--max-ambiguous-fraction",
         type=float,
@@ -54,12 +82,21 @@ def _add_fragment_domain_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _add_variant_domain_arguments(parser: argparse.ArgumentParser) -> None:
-    """Add de novo mutation arguments shared by run and RRBS export."""
+    """Add de novo mutation arguments shared by run and build commands."""
     mutation = parser.add_argument_group("variants")
-    mutation.add_argument(
+    source = mutation.add_mutually_exclusive_group()
+    source.add_argument(
+        "--vcf",
+        type=Path,
+        help="one-sample diploid VCF input instead of de novo mutations",
+    )
+    source.add_argument(
         "--mutation-rate",
         type=float,
-        help="de novo mutation rate (run default: 0.001; catalog default: 0)",
+        help=(
+            "total de novo mutation-event rate (run/build variants default: "
+            "0.001; build RRBS default: 0)"
+        ),
     )
     mutation.add_argument("--indel-fraction", type=float, default=0.15)
     mutation.add_argument(
@@ -68,46 +105,41 @@ def _add_variant_domain_arguments(parser: argparse.ArgumentParser) -> None:
     mutation.add_argument("--homozygous-only", action="store_true")
 
 
-def _add_direct_run_arguments(parser: argparse.ArgumentParser) -> None:
-    required = parser.add_argument_group("required run inputs")
-    required.add_argument(
-        "-r", "--reference", type=Path, required=True, help="reference FASTA"
-    )
-    required.add_argument(
-        "-o",
-        "--output",
-        dest="output_directory",
-        type=Path,
-        required=True,
-        help="new output directory",
-    )
-    count = required.add_mutually_exclusive_group(required=True)
-    count.add_argument(
-        "-n", "--read-pairs", type=int, help="number of fragments/read pairs"
-    )
-    count.add_argument(
-        "-d",
-        "--depth",
-        type=float,
-        help="requested mean depth over the technology target region",
-    )
-
-    biology = parser.add_argument_group("biological inputs and technology")
-    biology.add_argument(
-        "--technology",
-        choices=("WGBS", "RRBS", "TBS"),
-        default="WGBS",
-    )
-    biology.add_argument(
-        "--seed",
-        help="simulation-only unsigned 64-bit seed; omit to generate one",
-    )
-    biology.add_argument(
-        "--methdb-seed",
+def _add_seed_arguments(
+    parser: argparse.ArgumentParser,
+    *,
+    include_master: bool,
+    include_methylation: bool = True,
+) -> None:
+    seeds = parser.add_argument_group("random seeds")
+    if include_master:
+        seeds.add_argument(
+            "-s",
+            "--seed",
+            help="read-simulation unsigned 64-bit seed; omit to generate one",
+        )
+    seeds.add_argument(
+        "--seed-mut",
         default="0",
-        help="catalog-only unsigned 64-bit seed (default: 0)",
+        help="de novo mutation seed (default: 0)",
     )
-    biology.add_argument("--vcf", type=Path, help="phased VCF input")
+    seeds.add_argument(
+        "--seed-phase",
+        default="0",
+        help="seed for phasing unphased VCF heterozygotes (default: 0)",
+    )
+    if include_methylation:
+        seeds.add_argument(
+            "--seed-meth",
+            default="0",
+            help="methylation-probability seed (default: 0)",
+        )
+
+
+def _add_methylation_input_arguments(
+    parser: argparse.ArgumentParser, *, include_methdb: bool = True
+) -> None:
+    biology = parser.add_argument_group("methylation inputs")
     methylation_input = biology.add_mutually_exclusive_group()
     methylation_input.add_argument(
         "--cgmap", type=Path, help="CGmap methylation input"
@@ -117,11 +149,12 @@ def _add_direct_run_arguments(parser: argparse.ArgumentParser) -> None:
         type=Path,
         help="UCSC/ENCODE bedMethyl (BED9+2 or BED9+9) input",
     )
-    methylation_input.add_argument(
-        "--methdb",
-        type=Path,
-        help="fixed normalized BSReadSim MethDB snapshot",
-    )
+    if include_methdb:
+        methylation_input.add_argument(
+            "--methdb",
+            type=Path,
+            help="prepared methylation profile in MethDB format",
+        )
     asm_input = biology.add_mutually_exclusive_group()
     asm_input.add_argument(
         "--asm", type=Path, help="htsim allele-specific methylation input"
@@ -131,66 +164,23 @@ def _add_direct_run_arguments(parser: argparse.ArgumentParser) -> None:
         type=Path,
         help="htsim ASM BED6+6 allele-specific methylation input",
     )
-    biology.add_argument(
-        "--cut-site",
-        action="append",
-        dest="cut_sites",
-        help="RRBS cut motif, for example C|CGG; repeat for multiple enzymes",
-    )
-    biology.add_argument(
-        "--rrbs-candidates",
-        type=Path,
-        help=(
-            "RRBS candidate BED exported by 'bsreadsim catalog rrbs'; "
-            "scores are ignored unless --rrbs-score is selected"
-        ),
-    )
-    biology.add_argument("--targets", type=Path, help="TBS BED6 targets")
-    biology.add_argument(
-        "--fragment-center-stddev",
-        type=float,
-        default=50.0,
-        help="TBS fragment-center standard deviation (default: 50)",
-    )
 
-    coverage = parser.add_argument_group("coverage")
-    coverage_mode = coverage.add_mutually_exclusive_group()
-    coverage_mode.add_argument(
-        "--coverage-profile",
-        type=Path,
-        help=(
-            "WGBS target GC distribution with one probability per line; "
-            "identity is hashed automatically"
-        ),
-    )
-    coverage_mode.add_argument(
-        "--target-score",
-        action="store_true",
-        help="sample TBS targets by exact BED6 output weights",
-    )
-    coverage_mode.add_argument(
-        "--rrbs-score",
-        action="store_true",
-        help="sample RRBS fragments by candidate BED score weights",
-    )
 
-    _add_fragment_domain_arguments(parser)
-    _add_variant_domain_arguments(parser)
-
+def _add_methylation_arguments(parser: argparse.ArgumentParser) -> None:
     methylation = parser.add_argument_group("methylation")
     methylation.add_argument(
-        "--beta-cg", type=float, nargs=2, metavar=("ALPHA", "BETA")
+        "--beta-cg", type=_parse_beta_pair, metavar="ALPHA,BETA"
     )
     methylation.add_argument(
-        "--beta-chg", type=float, nargs=2, metavar=("ALPHA", "BETA")
+        "--beta-chg", type=_parse_beta_pair, metavar="ALPHA,BETA"
     )
     methylation.add_argument(
-        "--beta-chh", type=float, nargs=2, metavar=("ALPHA", "BETA")
+        "--beta-chh", type=_parse_beta_pair, metavar="ALPHA,BETA"
     )
     methylation.add_argument(
         "--cpg-only",
         action="store_true",
-        help="omit CHG and CHH sites from the generated methylation catalog",
+        help="omit CHG and CHH sites from the generated MethDB",
     )
     methylation.add_argument("--cgmap-pool", action="store_true")
     methylation.add_argument(
@@ -205,17 +195,101 @@ def _add_direct_run_arguments(parser: argparse.ArgumentParser) -> None:
         help="do not recompute methylation contexts affected by variants",
     )
 
+
+def _add_direct_run_arguments(
+    parser: argparse.ArgumentParser, technology: str
+) -> None:
+    bisulfite = technology in _BISULFITE_TECHNOLOGIES
+    required = parser.add_argument_group("required run inputs")
+    required.add_argument(
+        "-r", "--reference", type=Path, required=True, help="reference FASTA"
+    )
+    required.add_argument(
+        "-o",
+        "--output",
+        dest="output_directory",
+        type=Path,
+        required=True,
+        help="new output directory",
+    )
+    count = required.add_mutually_exclusive_group(required=True)
+    count.add_argument(
+        "-n", "--fragments", type=int, help="number of source DNA fragments"
+    )
+    count.add_argument(
+        "-d",
+        "--depth",
+        type=float,
+        help="requested mean depth over the technology target region",
+    )
+
+    if bisulfite:
+        _add_methylation_input_arguments(parser)
+    _add_seed_arguments(
+        parser,
+        include_master=True,
+        include_methylation=bisulfite,
+    )
+
+    sampling = parser.add_argument_group("sampling")
+    if technology in _WHOLE_GENOME_TECHNOLOGIES:
+        sampling.add_argument(
+            "--gc-profile",
+            type=Path,
+            help="target fragment-GC distribution; omit for uniform sampling",
+        )
+    elif technology == "RRBS":
+        sampling.add_argument(
+            "--cut-site",
+            action="append",
+            dest="cut_sites",
+            required=True,
+            help="RRBS cut motif, for example C|CGG; repeat for multiple enzymes",
+        )
+        sampling.add_argument(
+            "--rrbs-candidates",
+            type=Path,
+            help="candidate BED produced by 'bsreadsim build rrbs'",
+        )
+        sampling.add_argument(
+            "--sampling", choices=("uniform", "score"), default="uniform"
+        )
+    elif technology in _TARGETED_TECHNOLOGIES:
+        sampling.add_argument(
+            "--targets", type=Path, required=True, help="BED6 capture targets"
+        )
+        sampling.add_argument(
+            "--sampling", choices=("uniform", "score"), default="uniform"
+        )
+        sampling.add_argument(
+            "--fragment-center-stddev",
+            type=float,
+            default=50.0,
+            help="capture fragment-center standard deviation (default: 50)",
+        )
+    else:
+        raise CommandLineError("unsupported run technology")
+
+    _add_fragment_domain_arguments(
+        parser, targeted=technology in _TARGETED_TECHNOLOGIES
+    )
+    _add_variant_domain_arguments(parser)
+
+    if bisulfite:
+        _add_methylation_arguments(parser)
+
     sequencing = parser.add_argument_group("sequencing")
+    if bisulfite:
+        sequencing.add_argument(
+            "--conversion-rate", type=float, default=0.998
+        )
+        sequencing.add_argument(
+            "--undirectional",
+            action="store_true",
+            help="sample both directional bisulfite library orientations",
+        )
     sequencing.add_argument(
-        "--conversion-rate", type=float, default=0.998
-    )
-    sequencing.add_argument(
-        "--undirectional",
-        action="store_true",
-        help="sample both directional bisulfite library orientations",
-    )
-    sequencing.add_argument(
-        "--phred", type=int, help="uniform Phred score (default: 40)"
+        "-q", "--phred", type=int, help="uniform Phred score (default: 40)"
     )
     sequencing.add_argument(
         "--quality-model",
@@ -223,7 +297,7 @@ def _add_direct_run_arguments(parser: argparse.ArgumentParser) -> None:
         help="quality Markov JSON; identity is hashed automatically",
     )
     sequencing.add_argument(
-        "--error-rate",
+        "-e", "--error-rate",
         type=float,
         help="uniform substitution rate (default: 0.005)",
     )
@@ -242,17 +316,13 @@ def _add_direct_run_arguments(parser: argparse.ArgumentParser) -> None:
     output = parser.add_argument_group("output")
     output.add_argument("-p", "--prefix", default="sim")
     output.add_argument(
-        "--compression", choices=("none", "gzip"), default="gzip"
+        "-f",
+        "--format",
+        choices=("fastq", "fastq.gz", "bam"),
+        default="fastq.gz",
+        help="read output format (default: fastq.gz)",
     )
     output.add_argument("--gzip-level", type=int, default=6)
-    output.add_argument(
-        "--bam",
-        action="store_true",
-        help=(
-            "also emit an unsorted annotated BAM; Full Details projection "
-            "is retained internally"
-        ),
-    )
     output.add_argument(
         "--fragment-summary",
         action="store_true",
@@ -261,20 +331,39 @@ def _add_direct_run_arguments(parser: argparse.ArgumentParser) -> None:
             "zt and zr are always present"
         ),
     )
+    if bisulfite:
+        output.add_argument(
+            "--fragment-realization",
+            action="store_true",
+            help="emit complete-fragment methylation/conversion state in BAM zx",
+        )
+        output.add_argument(
+            "--save-methdb",
+            action="store_true",
+            help=(
+                "save the prepared methylation profile as a MethDB truth "
+                "artifact"
+            ),
+        )
     output.add_argument(
-        "--fragment-realization",
+        "--save-vcf",
         action="store_true",
-        help="emit complete-fragment methylation/conversion state in BAM zx",
+        help="save the prepared variant set as a phased VCF truth artifact",
     )
     output.add_argument(
-        "--save-methdb",
-        type=Path,
-        help="save the fixed normalized MethDB catalog used by the run",
+        "--save-truth",
+        action="store_true",
+        help=(
+            "save the prepared variant set and methylation profile as "
+            "simulation truth artifacts"
+            if bisulfite
+            else "save the prepared variant set as a simulation truth artifact"
+        ),
     )
 
 
-def _add_rrbs_catalog_arguments(parser: argparse.ArgumentParser) -> None:
-    required = parser.add_argument_group("required catalog inputs")
+def _add_rrbs_build_arguments(parser: argparse.ArgumentParser) -> None:
+    required = parser.add_argument_group("required build inputs")
     required.add_argument(
         "-r", "--reference", type=Path, required=True, help="reference FASTA"
     )
@@ -293,22 +382,46 @@ def _add_rrbs_catalog_arguments(parser: argparse.ArgumentParser) -> None:
         help="RRBS cut motif, for example C|CGG; repeat for multiple enzymes",
     )
 
-    biology = parser.add_argument_group("biological inputs")
-    biology.add_argument(
-        "--methdb-seed",
-        dest="catalog_seed",
-        default="0",
-        help=(
-            "catalog-only unsigned 64-bit decimal seed (default: 0)"
-        ),
-    )
-    biology.add_argument("--vcf", type=Path, help="phased VCF input")
-
     _add_fragment_domain_arguments(parser)
     _add_variant_domain_arguments(parser)
-    parser.add_argument(
-        "--core", type=Path, help="override the bundled htsim-core executable"
+    _add_seed_arguments(
+        parser, include_master=False, include_methylation=False
     )
+    _add_runtime_options(parser)
+
+
+def _add_variant_build_arguments(parser: argparse.ArgumentParser) -> None:
+    required = parser.add_argument_group("required build inputs")
+    required.add_argument(
+        "-r", "--reference", type=Path, required=True, help="reference FASTA"
+    )
+    required.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        required=True,
+        help="new gzip-compressed .vcf.gz path",
+    )
+    _add_variant_domain_arguments(parser)
+    _add_seed_arguments(
+        parser, include_master=False, include_methylation=False
+    )
+    _add_runtime_options(parser)
+
+
+def _add_methdb_build_arguments(parser: argparse.ArgumentParser) -> None:
+    required = parser.add_argument_group("required build inputs")
+    required.add_argument(
+        "-r", "--reference", type=Path, required=True, help="reference FASTA"
+    )
+    required.add_argument(
+        "-o", "--output", type=Path, required=True, help="new .methdb path"
+    )
+    _add_methylation_input_arguments(parser, include_methdb=False)
+    _add_variant_domain_arguments(parser)
+    _add_methylation_arguments(parser)
+    _add_seed_arguments(parser, include_master=False)
+    _add_runtime_options(parser)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -317,7 +430,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="bsreadsim",
         description=(
             "Generate biological fragments with htsim and apply BSReadSim "
-            "bisulfite conversion and sequencing effects."
+            "optional chemistry and sequencing effects."
         ),
     )
     parser.add_argument(
@@ -335,25 +448,82 @@ def build_parser() -> argparse.ArgumentParser:
             "files are not accepted."
         ),
     )
-    _add_direct_run_arguments(run_parser)
-    _add_runtime_options(run_parser)
+    run_commands = run_parser.add_subparsers(dest="run_technology", required=True)
+    for name, technology, help_text in (
+        ("wgbs", "WGBS", "simulate whole-genome bisulfite sequencing"),
+        ("rrbs", "RRBS", "simulate reduced-representation bisulfite sequencing"),
+        ("tbs", "TBS", "simulate targeted bisulfite sequencing"),
+        ("wgs", "WGS", "simulate whole-genome sequencing"),
+        ("wes", "WES", "simulate whole-exome capture sequencing"),
+        ("ts", "TS", "simulate targeted capture sequencing"),
+    ):
+        technology_parser = run_commands.add_parser(name, help=help_text)
+        _add_direct_run_arguments(technology_parser, technology)
+        _add_runtime_options(technology_parser)
 
-    catalog_parser = commands.add_parser(
-        "catalog",
-        help="export an htsim fragment-candidate catalog",
+    build_parser = commands.add_parser(
+        "build", help="build a reusable truth or sampling artifact"
     )
-    catalog_commands = catalog_parser.add_subparsers(
-        dest="catalog_technology", required=True
-    )
-    rrbs_catalog_parser = catalog_commands.add_parser(
+    build_commands = build_parser.add_subparsers(dest="build_target", required=True)
+    rrbs_build_parser = build_commands.add_parser(
         "rrbs",
         help="export exact RRBS candidates directly from CLI arguments",
         description=(
-            "Export the htsim RRBS candidate BED directly; no JSON "
+            "Build the htsim RRBS candidate BED directly; no JSON "
             "configuration file is read or written."
         ),
     )
-    _add_rrbs_catalog_arguments(rrbs_catalog_parser)
+    _add_rrbs_build_arguments(rrbs_build_parser)
+    variant_build_parser = build_commands.add_parser(
+        "variants",
+        help="build a normalized, phased VCF.gz",
+        description=(
+            "Build the exact deterministic de novo variant set, or normalize and "
+            "phase --vcf input, as a gzip-compressed one-sample VCF."
+        ),
+    )
+    _add_variant_build_arguments(variant_build_parser)
+    methdb_build_parser = build_commands.add_parser(
+        "methdb", help="build a reusable methylation profile as MethDB"
+    )
+    _add_methdb_build_arguments(methdb_build_parser)
+
+    export_parser = commands.add_parser(
+        "export",
+        help="export bundled data or decode a BSReadSim artifact",
+    )
+    export_commands = export_parser.add_subparsers(
+        dest="export_target", required=True
+    )
+    test_fasta_export = export_commands.add_parser(
+        "test-fasta",
+        help="export the bundled synthetic test FASTA",
+    )
+    test_fasta_export.add_argument(
+        "-o", "--output", type=Path, required=True, help="new FASTA path"
+    )
+    methdb_export = export_commands.add_parser(
+        "methdb",
+        help="decode a MethDB methylation profile as a human-readable BED",
+    )
+    methdb_export.add_argument(
+        "-i", "--input", type=Path, required=True, help="input MethDB path"
+    )
+    methdb_export.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        required=True,
+        help="new .bed.gz path, or .bed with --no-compression",
+    )
+    methdb_export.add_argument(
+        "--no-compression",
+        action="store_true",
+        help="write plain .bed instead of deterministic BGZF",
+    )
+    methdb_export.add_argument(
+        "--core", type=Path, help="override the bundled htsim-core executable"
+    )
     return parser
 
 
@@ -384,77 +554,74 @@ def _artifact_sha256(path: Path, base_directory: Path) -> str:
 def _artifact(
     path: Path,
     base_directory: Path,
-    *,
-    format_name: str,
-    version: str,
 ) -> dict[str, str]:
     return {
         "path": str(path.expanduser()),
-        "format": format_name,
-        "version": version,
         "sha256": _artifact_sha256(path, base_directory),
     }
 
 
-def _insert_parameters(arguments: argparse.Namespace) -> Mapping[str, object]:
-    ranged = (
-        arguments.insert_min,
-        arguments.insert_mean,
-        arguments.insert_max,
-        arguments.insert_stddev,
-    )
-    if arguments.insert_size is not None:
-        if any(value is not None for value in ranged):
-            raise CommandLineError(
-                "--insert-size cannot be combined with insert range options"
-            )
-        return {
-            "insert_min": arguments.insert_size,
-            "insert_mean": arguments.insert_size,
-            "insert_max": arguments.insert_size,
-            "insert_stddev": 0,
-        }
+def _insert_parameters(
+    arguments: argparse.Namespace,
+    *,
+    collapse_fixed_bounds: bool = False,
+) -> Mapping[str, object]:
+    insert_mean = 400 if arguments.insert_mean is None else arguments.insert_mean
+    insert_sd = 25.0 if arguments.insert_sd is None else arguments.insert_sd
+    fixed_insert = collapse_fixed_bounds and insert_sd == 0
+    insert_min = 100 if arguments.insert_min is None else arguments.insert_min
+    insert_max = 1000 if arguments.insert_max is None else arguments.insert_max
+    if fixed_insert:
+        if arguments.insert_min is None:
+            insert_min = insert_mean
+        if arguments.insert_max is None:
+            insert_max = insert_mean
     return {
-        "insert_min": 100 if arguments.insert_min is None else arguments.insert_min,
-        "insert_mean": 400 if arguments.insert_mean is None else arguments.insert_mean,
-        "insert_max": 1000 if arguments.insert_max is None else arguments.insert_max,
-        "insert_stddev": (
-            25 if arguments.insert_stddev is None else arguments.insert_stddev
-        ),
+        "insert_min": insert_min,
+        "insert_mean": insert_mean,
+        "insert_max": insert_max,
+        "insert_sd": insert_sd,
     }
 
 
-def build_rrbs_catalog_document(
+def _resolve_mutation_rate(
+    arguments: argparse.Namespace, *, default: float
+) -> float:
+    if arguments.vcf is not None:
+        if arguments.mutation_rate is not None:
+            raise CommandLineError(
+                "--vcf and --mutation-rate are mutually exclusive"
+            )
+        return 0
+    return default if arguments.mutation_rate is None else arguments.mutation_rate
+
+
+def build_rrbs_document(
     arguments: argparse.Namespace,
     base_directory: Path,
 ) -> dict[str, object]:
-    """Project direct RRBS catalog arguments into an in-memory core config."""
+    """Project ``build rrbs`` arguments into an in-memory core config."""
     if (
-        arguments.command != "catalog"
-        or arguments.catalog_technology != "rrbs"
+        arguments.command != "build"
+        or arguments.build_target != "rrbs"
     ):
-        raise CommandLineError("direct RRBS catalog arguments are required")
+        raise CommandLineError("build rrbs arguments are required")
 
     base = base_directory.expanduser().resolve(strict=False)
-    mutation_rate = (
-        0 if arguments.mutation_rate is None else arguments.mutation_rate
-    )
-    if arguments.vcf is not None and mutation_rate != 0:
-        raise CommandLineError("--vcf requires --mutation-rate 0")
+    mutation_rate = _resolve_mutation_rate(arguments, default=0)
     fragments: dict[str, object] = {
         "paired_end": not arguments.single_end,
         "read_length_1": arguments.read_length,
         **_insert_parameters(arguments),
         # The htsim config contract requires a count even though catalog-only
         # generation never samples or emits protocol fragments.
-        "read_pairs": 1,
+        "count": 1,
         "max_ambiguous_fraction": arguments.max_ambiguous_fraction,
     }
     if not arguments.single_end:
         fragments["read_length_2"] = arguments.read_length
 
     document: dict[str, object] = {
-        "schema_version": "1.1",
         "reference": str(arguments.reference.expanduser()),
         "inputs": {},
         "technology": "RRBS",
@@ -467,9 +634,13 @@ def build_rrbs_catalog_document(
             ),
             "homozygous_only": arguments.homozygous_only,
         },
+        "seeds": {
+            "mutation": arguments.seed_mut,
+            "phasing": arguments.seed_phase,
+            "methylation": getattr(arguments, "seed_meth", "0"),
+        },
         "fragments": fragments,
         "methylation": {
-            "catalog_seed": arguments.catalog_seed,
             "state_model": "bernoulli",
             "beta": {
                 "CG": [0.5, 0.5],
@@ -489,73 +660,131 @@ def build_rrbs_catalog_document(
         # this directory or publishes simulation outputs.
         "output": {
             "directory": str(base),
-            "prefix": "rrbs_catalog",
-            "compression": "none",
+            "prefix": "rrbs_build",
+            "format": "fastq",
         },
     }
     if arguments.vcf is not None:
         inputs = document["inputs"]
         if not isinstance(inputs, dict):
-            raise CommandLineError("internal catalog input projection failed")
+            raise CommandLineError("internal RRBS input projection failed")
         inputs["vcf"] = str(arguments.vcf.expanduser())
     return document
 
 
-def build_run_document(
+def build_variant_document(
     arguments: argparse.Namespace,
     base_directory: Path,
 ) -> dict[str, object]:
-    """Project direct CLI arguments into the sole normalized config contract."""
-    if arguments.command != "run":
-        raise CommandLineError("direct run arguments are required")
+    """Project ``build variants`` arguments into an in-memory core config."""
+    if (
+        arguments.command != "build"
+        or arguments.build_target != "variants"
+    ):
+        raise CommandLineError("build variants arguments are required")
+
     base = base_directory.expanduser().resolve(strict=False)
-    technology = arguments.technology
+    mutation_rate = _resolve_mutation_rate(arguments, default=0.001)
+    document: dict[str, object] = {
+        "reference": str(arguments.reference.expanduser()),
+        "inputs": {},
+        "technology": "WGBS",
+        "mutation": {
+            "rate": mutation_rate,
+            "indel_fraction": arguments.indel_fraction,
+            "indel_extension_probability": (
+                arguments.indel_extension_probability
+            ),
+            "homozygous_only": arguments.homozygous_only,
+        },
+        "seeds": {
+            "mutation": arguments.seed_mut,
+            "phasing": arguments.seed_phase,
+            "methylation": getattr(arguments, "seed_meth", "0"),
+        },
+        # Catalog-only generation never samples fragments, but the shared
+        # normalized contract deliberately retains one complete shape.
+        "fragments": {
+            "paired_end": False,
+            "read_length_1": 1,
+            "insert_min": 1,
+            "insert_mean": 1,
+            "insert_max": 1,
+            "insert_sd": 0,
+            "count": 1,
+            "max_ambiguous_fraction": 0,
+        },
+        "methylation": {
+            "state_model": "bernoulli",
+            "beta": {
+                "CG": [0.5, 0.5],
+                "CHG": [0.01, 0.05],
+                "CHH": [0.01, 0.05],
+            },
+        },
+        "coverage": {"kind": "uniform"},
+        "sequencing": {
+            "conversion_rate": 1,
+            "directional": True,
+            "quality": {"kind": "uniform", "phred": 40},
+            "error": {"kind": "uniform", "rate": 0},
+        },
+        "execution": {},
+        "output": {
+            "directory": str(base),
+            "prefix": "variant_build",
+            "format": "fastq",
+        },
+    }
+    if arguments.vcf is not None:
+        inputs = document["inputs"]
+        if not isinstance(inputs, dict):
+            raise CommandLineError("internal variant input projection failed")
+        inputs["vcf"] = str(arguments.vcf.expanduser())
+    return document
+
+
+def build_methdb_document(
+    arguments: argparse.Namespace,
+    base_directory: Path,
+) -> dict[str, object]:
+    """Project ``build methdb`` arguments into an in-memory core config."""
+    if arguments.command != "build" or arguments.build_target != "methdb":
+        raise CommandLineError("build methdb arguments are required")
     if (arguments.asm is not None or arguments.asm_bed is not None) and (
         arguments.vcf is None
     ):
         raise CommandLineError("--asm/--asm-bed requires --vcf")
-    if arguments.methdb is not None and (
-        arguments.asm is not None
-        or arguments.asm_bed is not None
-        or arguments.cgmap_pool
-    ):
-        raise CommandLineError(
-            "--methdb cannot be combined with ASM or --cgmap-pool"
-        )
-    if arguments.methdb is not None and arguments.save_methdb is not None:
-        raise CommandLineError("--methdb and --save-methdb are mutually exclusive")
 
-    mutation_rate = arguments.mutation_rate
-    if mutation_rate is None:
-        mutation_rate = (
-            0
-            if arguments.vcf is not None
-            or arguments.rrbs_candidates is not None
-            or arguments.coverage_profile is not None
-            else 0.001
-        )
-    if arguments.vcf is not None and mutation_rate != 0:
-        raise CommandLineError("--vcf requires --mutation-rate 0")
+    mutation_rate = _resolve_mutation_rate(arguments, default=0.001)
 
+    base = base_directory.expanduser().resolve(strict=False)
     document: dict[str, object] = {
-        "schema_version": "1.1",
         "reference": str(arguments.reference.expanduser()),
         "inputs": {},
-        "technology": technology,
+        "technology": "WGBS",
         "mutation": {
             "rate": mutation_rate,
             "indel_fraction": arguments.indel_fraction,
             "indel_extension_probability": arguments.indel_extension_probability,
             "homozygous_only": arguments.homozygous_only,
         },
+        "seeds": {
+            "mutation": arguments.seed_mut,
+            "phasing": arguments.seed_phase,
+            "methylation": arguments.seed_meth,
+        },
         "fragments": {
-            "paired_end": not arguments.single_end,
-            "read_length_1": arguments.read_length,
-            **_insert_parameters(arguments),
-            "max_ambiguous_fraction": arguments.max_ambiguous_fraction,
+            "paired_end": False,
+            "read_length_1": 1,
+            "insert_min": 1,
+            "insert_mean": 1,
+            "insert_max": 1,
+            "insert_sd": 0,
+            "count": 1,
+            "max_ambiguous_fraction": 0,
         },
         "methylation": {
-            "catalog_seed": arguments.methdb_seed,
             "state_model": arguments.methylation_model,
             "collect_non_cpg": not arguments.cpg_only,
             "cgmap_pool": arguments.cgmap_pool,
@@ -568,20 +797,143 @@ def build_run_document(
         },
         "coverage": {"kind": "uniform"},
         "sequencing": {
-            "conversion_rate": arguments.conversion_rate,
-            "directional": not arguments.undirectional,
+            "conversion_rate": 1,
+            "directional": True,
+            "quality": {"kind": "uniform", "phred": 40},
+            "error": {"kind": "uniform", "rate": 0},
+        },
+        "execution": {},
+        "output": {
+            "directory": str(base),
+            "prefix": "methdb_build",
+            "format": "fastq",
+        },
+    }
+    inputs = document["inputs"]
+    if not isinstance(inputs, dict):
+        raise CommandLineError("internal MethDB input projection failed")
+    for name in ("vcf", "cgmap", "bed_methyl", "asm", "asm_bed"):
+        value = getattr(arguments, name)
+        if value is not None:
+            inputs[name] = str(value.expanduser())
+    return document
+
+
+def build_run_document(
+    arguments: argparse.Namespace,
+    base_directory: Path,
+) -> dict[str, object]:
+    """Project direct CLI arguments into the sole normalized config contract."""
+    if arguments.command != "run" or arguments.run_technology not in (
+        "wgbs",
+        "rrbs",
+        "tbs",
+        "wgs",
+        "wes",
+        "ts",
+    ):
+        raise CommandLineError("direct run arguments are required")
+    base = base_directory.expanduser().resolve(strict=False)
+    technology = arguments.run_technology.upper()
+    bisulfite = technology in _BISULFITE_TECHNOLOGIES
+    asm = getattr(arguments, "asm", None)
+    asm_bed = getattr(arguments, "asm_bed", None)
+    methdb = getattr(arguments, "methdb", None)
+    cgmap_pool = getattr(arguments, "cgmap_pool", False)
+    if (asm is not None or asm_bed is not None) and (
+        arguments.vcf is None
+    ):
+        raise CommandLineError("--asm/--asm-bed requires --vcf")
+    if methdb is not None and (
+        asm is not None
+        or asm_bed is not None
+        or cgmap_pool
+    ):
+        raise CommandLineError(
+            "--methdb cannot be combined with ASM or --cgmap-pool"
+        )
+    default_mutation_rate = (
+        0.0
+        if getattr(arguments, "rrbs_candidates", None) is not None
+        or getattr(arguments, "gc_profile", None) is not None
+        else 0.001
+    )
+    mutation_rate = _resolve_mutation_rate(
+        arguments, default=default_mutation_rate
+    )
+    fragment_realization = getattr(arguments, "fragment_realization", False)
+    if arguments.format != "bam" and (
+        arguments.fragment_summary or fragment_realization
+    ):
+        raise CommandLineError(
+            "--fragment-summary/--fragment-realization requires --format bam"
+        )
+
+    document: dict[str, object] = {
+        "reference": str(arguments.reference.expanduser()),
+        "inputs": {},
+        "technology": technology,
+        "mutation": {
+            "rate": mutation_rate,
+            "indel_fraction": arguments.indel_fraction,
+            "indel_extension_probability": arguments.indel_extension_probability,
+            "homozygous_only": arguments.homozygous_only,
+        },
+        "seeds": {
+            "mutation": arguments.seed_mut,
+            "phasing": arguments.seed_phase,
+            "methylation": getattr(arguments, "seed_meth", "0"),
+        },
+        "fragments": {
+            "paired_end": not arguments.single_end,
+            "read_length_1": arguments.read_length,
+            **_insert_parameters(
+                arguments,
+                collapse_fixed_bounds=(
+                    technology in _WHOLE_GENOME_TECHNOLOGIES
+                    or technology in _TARGETED_TECHNOLOGIES
+                ),
+            ),
+            "max_ambiguous_fraction": arguments.max_ambiguous_fraction,
+        },
+        "methylation": {
+            "state_model": getattr(arguments, "methylation_model", "bernoulli"),
+            "collect_non_cpg": not getattr(arguments, "cpg_only", False),
+            "cgmap_pool": cgmap_pool,
+            "update_variant_boundaries": not getattr(
+                arguments, "no_update_variant_boundaries", False
+            ),
+            "beta": {
+                "CG": list(getattr(arguments, "beta_cg", None) or (0.5, 0.5)),
+                "CHG": list(getattr(arguments, "beta_chg", None) or (0.01, 0.05)),
+                "CHH": list(getattr(arguments, "beta_chh", None) or (0.01, 0.05)),
+            },
+        },
+        "coverage": {"kind": "uniform"},
+        "sequencing": {
+            "conversion_rate": (
+                arguments.conversion_rate if bisulfite else 0.0
+            ),
+            "directional": (
+                not arguments.undirectional if bisulfite else True
+            ),
         },
         "execution": {},
         "output": {
             "directory": str(arguments.output_directory.expanduser()),
             "prefix": arguments.prefix,
-            "compression": arguments.compression,
+            "format": arguments.format,
             "gzip_level": arguments.gzip_level,
-            "bam": arguments.bam or arguments.fragment_realization,
-            "fragment_summary": (
-                arguments.fragment_summary or arguments.fragment_realization
+            "save_methdb": (
+                getattr(arguments, "save_methdb", False) or arguments.save_truth
+                if bisulfite
+                else False
             ),
-            "fragment_realization": arguments.fragment_realization,
+            "save_vcf": arguments.save_vcf or arguments.save_truth,
+            "fragment_summary": (
+                arguments.fragment_summary or fragment_realization
+            ),
+            "fragment_realization": fragment_realization,
         },
     }
     if arguments.seed is not None:
@@ -591,7 +943,7 @@ def build_run_document(
     if not isinstance(inputs, dict):
         raise CommandLineError("internal CLI input projection failed")
     for name in ("vcf", "cgmap", "bed_methyl", "methdb", "asm", "asm_bed"):
-        value = getattr(arguments, name)
+        value = getattr(arguments, name, None)
         if value is not None:
             inputs[name] = str(value.expanduser())
 
@@ -600,70 +952,43 @@ def build_run_document(
         raise CommandLineError("internal CLI fragment projection failed")
     if not arguments.single_end:
         fragments["read_length_2"] = arguments.read_length
-    if arguments.read_pairs is not None:
-        fragments["read_pairs"] = arguments.read_pairs
+    if arguments.fragments is not None:
+        fragments["count"] = arguments.fragments
     else:
         fragments["depth"] = arguments.depth
 
-    cut_sites = arguments.cut_sites or []
     if technology == "RRBS":
+        cut_sites = arguments.cut_sites
         if not cut_sites:
             raise CommandLineError("RRBS requires at least one --cut-site")
-        if arguments.targets is not None:
-            raise CommandLineError("RRBS forbids --targets")
         rrbs = {"cut_sites": cut_sites}
         if arguments.rrbs_candidates is not None:
             rrbs["candidate_bed"] = str(arguments.rrbs_candidates.expanduser())
         document["rrbs"] = rrbs
-    elif cut_sites:
-        raise CommandLineError("--cut-site requires --technology RRBS")
-    elif arguments.rrbs_candidates is not None:
-        raise CommandLineError("--rrbs-candidates requires --technology RRBS")
 
-    if technology == "TBS":
-        if arguments.targets is None:
-            raise CommandLineError("TBS requires --targets")
+    if technology in _TARGETED_TECHNOLOGIES:
         document["tbs"] = {
             "bed": str(arguments.targets.expanduser()),
             "fragment_center_stddev": arguments.fragment_center_stddev,
         }
-    elif arguments.targets is not None:
-        raise CommandLineError("--targets requires --technology TBS")
 
-    if arguments.coverage_profile is not None:
-        if technology != "WGBS":
-            raise CommandLineError("--coverage-profile supports WGBS only")
-        variable_insert = not (
-            fragments["insert_min"]
-            == fragments["insert_mean"]
-            == fragments["insert_max"]
-            and fragments["insert_stddev"] == 0
-        )
+    gc_profile = getattr(arguments, "gc_profile", None)
+    if gc_profile is not None:
+        variable_insert = fragments["insert_sd"] != 0
         if variable_insert and (arguments.vcf is not None or mutation_rate != 0):
             raise CommandLineError(
-                "variable-insert --coverage-profile does not yet support variants"
+                "variable-insert --gc-profile does not yet support variants"
             )
-        from .run.config import WGBS_GC_PROFILE_FORMAT, WGBS_GC_PROFILE_VERSION
-
         document["coverage"] = {
             "kind": "profile",
-            "artifact": _artifact(
-                arguments.coverage_profile,
-                base,
-                format_name=WGBS_GC_PROFILE_FORMAT,
-                version=WGBS_GC_PROFILE_VERSION,
-            ),
+            "artifact": _artifact(gc_profile, base),
         }
-    elif arguments.target_score:
-        if technology != "TBS":
-            raise CommandLineError("--target-score supports TBS only")
+    elif technology in _TARGETED_TECHNOLOGIES and arguments.sampling == "score":
         document["coverage"] = {"kind": "target-score"}
-    elif arguments.rrbs_score:
-        if technology != "RRBS":
-            raise CommandLineError("--rrbs-score supports RRBS only")
+    elif technology == "RRBS" and arguments.sampling == "score":
         if arguments.rrbs_candidates is None:
             raise CommandLineError(
-                "--rrbs-score requires --rrbs-candidates"
+                "--sampling score requires --rrbs-candidates"
             )
         document["coverage"] = {"kind": "profile"}
 
@@ -673,16 +998,9 @@ def build_run_document(
     if arguments.quality_model is not None:
         if arguments.phred is not None:
             raise CommandLineError("--quality-model cannot be combined with --phred")
-        from .process.sequencing import QUALITY_MARKOV_FORMAT, QUALITY_MARKOV_VERSION
-
         sequencing["quality"] = {
             "kind": "markov",
-            "artifact": _artifact(
-                arguments.quality_model,
-                base,
-                format_name=QUALITY_MARKOV_FORMAT,
-                version=QUALITY_MARKOV_VERSION,
-            ),
+            "artifact": _artifact(arguments.quality_model, base),
         }
     else:
         sequencing["quality"] = {
@@ -692,19 +1010,9 @@ def build_run_document(
     if arguments.error_model is not None:
         if arguments.error_rate is not None:
             raise CommandLineError("--error-model cannot be combined with --error-rate")
-        from .process.sequencing import (
-            QUALITY_CONFUSION_FORMAT,
-            QUALITY_CONFUSION_VERSION,
-        )
-
         sequencing["error"] = {
             "kind": "quality-confusion",
-            "artifact": _artifact(
-                arguments.error_model,
-                base,
-                format_name=QUALITY_CONFUSION_FORMAT,
-                version=QUALITY_CONFUSION_VERSION,
-            ),
+            "artifact": _artifact(arguments.error_model, base),
         }
     else:
         sequencing["error"] = {
@@ -730,60 +1038,98 @@ def build_run_document(
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the BSReadSim command-line interface."""
     parser = build_parser()
-    arguments = parser.parse_args(argv)
+    command_arguments = list(sys.argv[1:] if argv is None else argv)
+    arguments = parser.parse_args(command_arguments)
     if arguments.command is None:
         parser.print_help()
         return 2
 
-    # Keep metadata-only commands independent from optional runtime
-    # dependencies and the simulation modules.
+    if arguments.command == "export" and arguments.export_target == "test-fasta":
+        from .resources import ResourceError, copy_resource
+
+        try:
+            print(copy_resource("test-fasta", arguments.output))
+        except ResourceError as error:
+            print("bsreadsim: error: {}".format(error), file=sys.stderr)
+            return 1
+        return 0
+
+    # Keep artifact building independent from optional array/runtime modules.
     from .run.config import ConfigError
-    from .output import BamError
     from .run.catalog import (
         CatalogError,
+        export_methdb_bed,
         export_methdb_catalog,
         export_rrbs_catalog,
+        export_variant_catalog,
     )
     from .htsim.launch import CoreArgvError
-    from .htsim.subprocess import CoreProcessError
-    from .run.manifest import ManifestError
-    from .output import OutputError
-    from .run.execute import PipelineError, run_document
-    from .process import ProcessError
     from .run.prepare import PreparationError
 
-    try:
-        if arguments.command == "run":
-            document = build_run_document(arguments, Path.cwd())
-            if arguments.save_methdb is not None:
-                methdb_path = export_methdb_catalog(
-                    document,
-                    arguments.save_methdb,
+    if arguments.command == "build":
+        try:
+            if arguments.build_target == "rrbs":
+                output_path = export_rrbs_catalog(
+                    build_rrbs_document(arguments, Path.cwd()),
+                    arguments.output,
                     base_directory=Path.cwd(),
                     core_executable=arguments.core,
                 )
-                inputs = document["inputs"]
-                methylation = document["methylation"]
-                if not isinstance(inputs, dict) or not isinstance(methylation, dict):
-                    raise CommandLineError("internal MethDB projection failed")
-                for name in ("cgmap", "bed_methyl", "asm", "asm_bed"):
-                    inputs.pop(name, None)
-                inputs["methdb"] = str(methdb_path)
-                methylation["cgmap_pool"] = False
-            result = run_document(
-                document,
-                base_directory=Path.cwd(),
-                core_executable=arguments.core,
-            )
-        else:
-            output_path = export_rrbs_catalog(
-                build_rrbs_catalog_document(arguments, Path.cwd()),
-                arguments.output,
-                base_directory=Path.cwd(),
-                core_executable=arguments.core,
-            )
+            elif arguments.build_target == "variants":
+                output_path = export_variant_catalog(
+                    build_variant_document(arguments, Path.cwd()),
+                    arguments.output,
+                    base_directory=Path.cwd(),
+                    core_executable=arguments.core,
+                )
+            else:
+                output_path = export_methdb_catalog(
+                    build_methdb_document(arguments, Path.cwd()),
+                    arguments.output,
+                    base_directory=Path.cwd(),
+                    core_executable=arguments.core,
+                )
             print(output_path)
             return 0
+        except (
+            CatalogError,
+            CommandLineError,
+            ConfigError,
+            CoreArgvError,
+            PreparationError,
+        ) as error:
+            print("bsreadsim: error: {}".format(error), file=sys.stderr)
+            return 1
+
+    if arguments.command == "export":
+        try:
+            print(
+                export_methdb_bed(
+                    arguments.input,
+                    arguments.output,
+                    compressed=not arguments.no_compression,
+                    core_executable=arguments.core,
+                )
+            )
+            return 0
+        except CatalogError as error:
+            print("bsreadsim: error: {}".format(error), file=sys.stderr)
+            return 1
+
+    from .output import BamError, OutputError
+    from .htsim.subprocess import CoreProcessError
+    from .run.manifest import ManifestError
+    from .run.execute import PipelineError, run_document
+    from .process import ProcessError
+
+    try:
+        document = build_run_document(arguments, Path.cwd())
+        result = run_document(
+            document,
+            base_directory=Path.cwd(),
+            core_executable=arguments.core,
+            invocation_argv=("bsreadsim", *command_arguments),
+        )
     except (
         CatalogError,
         CommandLineError,
@@ -806,8 +1152,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 __all__ = [
     "CommandLineError",
+    "build_methdb_document",
     "build_parser",
-    "build_rrbs_catalog_document",
+    "build_rrbs_document",
     "build_run_document",
+    "build_variant_document",
     "main",
 ]

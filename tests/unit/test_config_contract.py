@@ -19,11 +19,11 @@ MODEL_SHA = "1" * 64
 
 def base_config(technology: str = "WGBS") -> dict:
     config = {
-        "schema_version": "1.1",
         "reference": "inputs/reference.fa",
         "inputs": {},
         "technology": technology,
         "mutation": {},
+        "seeds": {"mutation": "0", "phasing": "0", "methylation": "0"},
         "fragments": {
             "paired_end": True,
             "read_length_1": 100,
@@ -50,8 +50,10 @@ def base_config(technology: str = "WGBS") -> dict:
     }
     if technology == "RRBS":
         config["rrbs"] = {"cut_sites": ["C|CGG"]}
-    elif technology == "TBS":
+    elif technology in ("TBS", "WES", "TS"):
         config["tbs"] = {"bed": "inputs/targets.bed"}
+    if technology in ("WGS", "WES", "TS"):
+        config["sequencing"]["conversion_rate"] = 0.0
     return config
 
 
@@ -98,16 +100,17 @@ class NormalizedConfigTests(unittest.TestCase):
             },
         )
         self.assertEqual(loaded.normalized["fragments"]["insert_mean"], 400)
-        self.assertEqual(loaded.normalized["fragments"]["insert_stddev"], 25)
+        self.assertEqual(loaded.normalized["fragments"]["insert_sd"], 25)
         self.assertEqual(loaded.normalized["execution"]["workers"], 1)
         self.assertEqual(loaded.normalized["execution"]["core_workers"], 1)
         self.assertEqual(loaded.normalized["execution"]["chunk_size"], 10000)
         self.assertEqual(
             loaded.normalized["execution"]["max_in_flight_fragments"], 4096
         )
-        self.assertEqual(loaded.normalized["output"]["compression"], "gzip")
+        self.assertEqual(loaded.normalized["output"]["format"], "fastq.gz")
         self.assertEqual(loaded.normalized["output"]["gzip_level"], 6)
-        self.assertFalse(loaded.normalized["output"]["bam"])
+        self.assertFalse(loaded.normalized["output"]["save_methdb"])
+        self.assertFalse(loaded.normalized["output"]["save_vcf"])
         self.assertNotIn("details", loaded.normalized["output"])
         self.assertNotIn("shuffle", loaded.normalized["output"])
         self.assertNotIn("overwrite", loaded.normalized["output"])
@@ -151,14 +154,17 @@ class NormalizedConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigValidationError, "requires RRBS"):
             normalize_run_config(wgbs, self.base_directory)
 
-    def test_rrbs_variant_candidate_bed_uses_catalog_seed_default(self) -> None:
+    def test_rrbs_variant_candidate_bed_preserves_split_seed_defaults(self) -> None:
         config = base_config("RRBS")
         config["rrbs"]["candidate_bed"] = "profiles/rrbs-candidates.bed"
         config["inputs"]["vcf"] = "inputs/sample.vcf"
         config["mutation"]["rate"] = 0
 
         normalized = normalize_run_config(config, self.base_directory).normalized
-        self.assertEqual(normalized["methylation"]["catalog_seed"], "0")
+        self.assertEqual(
+            normalized["seeds"],
+            {"mutation": "0", "phasing": "0", "methylation": "0"},
+        )
 
     def test_paths_resolve_against_cli_invocation_directory(self) -> None:
         config = base_config()
@@ -171,8 +177,6 @@ class NormalizedConfigTests(unittest.TestCase):
             "kind": "profile",
             "artifact": {
                 "path": "models/coverage.json",
-                "format": "json",
-                "version": "1",
                 "sha256": MODEL_SHA,
             },
         }
@@ -288,15 +292,15 @@ class NormalizedConfigTests(unittest.TestCase):
                 with self.assertRaises(ConfigValidationError):
                     normalize_run_config(invalid, self.base_directory)
 
-    def test_bam_is_an_explicit_boolean_output_policy(self) -> None:
+    def test_format_is_an_explicit_output_policy(self) -> None:
         enabled = base_config()
-        enabled["output"]["bam"] = True
+        enabled["output"]["format"] = "bam"
         loaded = normalize_run_config(enabled, self.base_directory)
-        self.assertTrue(loaded.normalized["output"]["bam"])
+        self.assertEqual(loaded.normalized["output"]["format"], "bam")
         self.assertNotIn("details", loaded.normalized["output"])
 
         invalid = base_config()
-        invalid["output"]["bam"] = "yes"
+        invalid["output"]["format"] = "yes"
         with self.assertRaises(ConfigValidationError):
             normalize_run_config(invalid, self.base_directory)
 
@@ -314,9 +318,9 @@ class NormalizedConfigTests(unittest.TestCase):
                 with self.assertRaises(ConfigValidationError):
                     normalize_run_config(config, self.base_directory)
 
-    def test_depth_and_read_pairs_are_mutually_exclusive(self) -> None:
+    def test_depth_and_fragment_count_are_mutually_exclusive(self) -> None:
         config = base_config()
-        config["fragments"]["read_pairs"] = 100
+        config["fragments"]["count"] = 100
         with self.assertRaises(ConfigValidationError):
             normalize_run_config(config, self.base_directory)
 
@@ -339,11 +343,24 @@ class NormalizedConfigTests(unittest.TestCase):
         normalized = normalize_run_config(asymmetric, self.base_directory)
         self.assertEqual(normalized.normalized["fragments"]["read_length_2"], 99)
 
+        fixed_tbs = base_config("TBS")
+        fixed_tbs["fragments"].update(
+            {
+                "read_length_1": 150,
+                "read_length_2": 150,
+                "insert_mean": 300,
+                "insert_sd": 0,
+            }
+        )
+        fixed = normalize_run_config(fixed_tbs, self.base_directory).normalized
+        self.assertEqual(fixed["fragments"]["insert_mean"], 300)
+        self.assertEqual(fixed["fragments"]["insert_min"], 100)
+
     def test_cpp_numeric_projection_bounds_are_checked(self) -> None:
         oversized_insert = base_config()
         oversized_insert["fragments"]["insert_max"] = 1 << 32
         oversized_number = base_config()
-        oversized_number["fragments"]["insert_stddev"] = 10**400
+        oversized_number["fragments"]["insert_sd"] = 10**400
 
         for config in (oversized_insert, oversized_number):
             with self.subTest(config=config):
@@ -366,14 +383,48 @@ class NormalizedConfigTests(unittest.TestCase):
         with self.assertRaises(ConfigValidationError):
             normalize_run_config(oversized_rrbs, self.base_directory)
 
+    def test_standard_technologies_use_whole_genome_or_target_sections(self) -> None:
+        for technology in ("WGS", "WES", "TS"):
+            with self.subTest(technology=technology):
+                normalized = normalize_run_config(
+                    base_config(technology), self.base_directory
+                ).normalized
+                self.assertEqual(normalized["technology"], technology)
+                self.assertEqual("tbs" in normalized, technology in ("WES", "TS"))
+
+    def test_standard_technologies_reject_methylation_inputs_and_truth(self) -> None:
+        methylation_input = base_config("WGS")
+        methylation_input["inputs"]["cgmap"] = "sample.cgmap"
+        methdb_truth = base_config("WGS")
+        methdb_truth["output"]["save_methdb"] = True
+        realization = base_config("WGS")
+        realization["output"].update(
+            {"format": "bam", "fragment_summary": True, "fragment_realization": True}
+        )
+        conversion = base_config("WGS")
+        conversion["sequencing"]["conversion_rate"] = 0.5
+        orientation = base_config("WGS")
+        orientation["sequencing"]["directional"] = False
+
+        for document in (
+            methylation_input,
+            methdb_truth,
+            realization,
+            conversion,
+            orientation,
+        ):
+            with self.subTest(document=document):
+                with self.assertRaisesRegex(
+                    ConfigValidationError, "standard sequencing"
+                ):
+                    normalize_run_config(document, self.base_directory)
+
     def test_invalid_model_sha_and_conflicting_declarations_are_rejected(self) -> None:
         invalid_sha = base_config()
         invalid_sha["coverage"] = {
             "kind": "profile",
             "artifact": {
                 "path": "models/shared.json",
-                "format": "json",
-                "version": "1",
                 "sha256": "ABC",
             },
         }
@@ -385,8 +436,6 @@ class NormalizedConfigTests(unittest.TestCase):
             "kind": "profile",
             "artifact": {
                 "path": "models/shared.json",
-                "format": "json",
-                "version": "1",
                 "sha256": "1" * 64,
             },
         }
@@ -394,13 +443,26 @@ class NormalizedConfigTests(unittest.TestCase):
             "kind": "markov",
             "artifact": {
                 "path": "models/shared.json",
-                "format": "json",
-                "version": "1",
                 "sha256": "2" * 64,
             },
         }
         with self.assertRaisesRegex(ConfigValidationError, "conflicting sha256"):
             normalize_run_config(conflicting, self.base_directory)
+
+    def test_artifact_format_and_version_fields_are_not_accepted(self) -> None:
+        config = base_config()
+        config["coverage"] = {
+            "kind": "profile",
+            "artifact": {
+                "path": "models/coverage.tsv",
+                "format": "tsv",
+                "version": "obsolete",
+                "sha256": MODEL_SHA,
+            },
+        }
+
+        with self.assertRaises(ConfigValidationError):
+            normalize_run_config(config, self.base_directory)
 
     def test_unknown_key_and_invalid_schema_type_are_rejected(self) -> None:
         unknown = base_config()

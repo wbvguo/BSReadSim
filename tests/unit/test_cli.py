@@ -8,14 +8,15 @@ import sys
 import tempfile
 import unittest
 
-
+from bsreadsim import __version__
 from bsreadsim.cli import (
     CommandLineError,
+    build_methdb_document,
     build_parser,
-    build_rrbs_catalog_document,
+    build_rrbs_document,
     build_run_document,
+    build_variant_document,
 )
-from bsreadsim import __version__
 from bsreadsim.run.config import normalize_run_config
 
 
@@ -25,12 +26,10 @@ SOURCE_ROOT = REPOSITORY_ROOT / "src"
 
 def run_module(*arguments: str) -> subprocess.CompletedProcess:
     environment = os.environ.copy()
-    existing_pythonpath = environment.get("PYTHONPATH")
-    pythonpath_entries = [str(SOURCE_ROOT)]
-    if existing_pythonpath:
-        pythonpath_entries.append(existing_pythonpath)
-    environment["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
-
+    entries = [str(SOURCE_ROOT)]
+    if environment.get("PYTHONPATH"):
+        entries.append(environment["PYTHONPATH"])
+    environment["PYTHONPATH"] = os.pathsep.join(entries)
     return subprocess.run(
         [sys.executable, "-m", "bsreadsim", *arguments],
         cwd=REPOSITORY_ROOT,
@@ -55,375 +54,362 @@ def run_module_without_site_packages(*arguments: str) -> subprocess.CompletedPro
 
 
 class CommandLineTests(unittest.TestCase):
-    def test_version(self) -> None:
-        result = run_module("--version")
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), "bsreadsim {}".format(__version__))
-
-    def test_version_does_not_import_runtime_dependencies(self) -> None:
+    def test_version_and_top_level_help_are_lightweight(self) -> None:
         result = run_module_without_site_packages("--version")
-
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "bsreadsim {}".format(__version__))
 
-    def test_help(self) -> None:
-        result = run_module("--help")
+        help_result = run_module("--help")
+        self.assertEqual(help_result.returncode, 0, help_result.stderr)
+        self.assertIn("run", help_result.stdout)
+        self.assertIn("build", help_result.stdout)
+        self.assertIn("export", help_result.stdout)
+        self.assertNotIn("get", help_result.stdout)
+        self.assertNotIn("resources", help_result.stdout)
+        self.assertNotIn("catalog", help_result.stdout)
 
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("usage: bsreadsim", result.stdout)
-        self.assertIn("--version", result.stdout)
-        self.assertIn("run", result.stdout)
-        self.assertIn("catalog", result.stdout)
-        self.assertNotIn("run-config", result.stdout)
+    def test_public_help_uses_consistent_prepared_truth_terms(self) -> None:
+        wgbs = run_module("run", "wgbs", "--help")
+        variants = run_module("build", "variants", "--help")
+        methdb = run_module("build", "methdb", "--help")
+        for result in (wgbs, variants, methdb):
+            self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_catalog_rrbs_help_exposes_direct_cli_domain(self) -> None:
-        result = run_module("catalog", "rrbs", "--help")
+        help_text = " ".join(
+            "\n".join(result.stdout for result in (wgbs, variants, methdb)).split()
+        ).lower()
+        self.assertIn("prepared variant set", help_text)
+        self.assertIn("prepared methylation profile", help_text)
+        self.assertIn("simulation truth artifacts", help_text)
+        self.assertNotIn("variant catalog", help_text)
+        self.assertNotIn("methylation catalog", help_text)
 
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("--reference", result.stdout)
-        self.assertIn("--cut-site", result.stdout)
-        self.assertIn("no JSON configuration file", result.stdout)
-        self.assertIn("--output", result.stdout)
-        self.assertIn("--core", result.stdout)
+    def test_export_test_fasta_copies_exact_resource_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "test.fa"
+            copied = run_module_without_site_packages(
+                "export", "test-fasta", "-o", str(output)
+            )
+            self.assertEqual(copied.returncode, 0, copied.stderr)
+            self.assertTrue(output.read_bytes().startswith(b">bsreadsim_test\n"))
 
-    def test_rrbs_catalog_is_projected_without_a_json_config(self) -> None:
-        arguments = build_parser().parse_args(
+    def test_export_requires_a_target_and_its_paths(self) -> None:
+        for arguments in (
+            ("export",),
+            ("export", "test-fasta"),
+            ("export", "methdb"),
+            ("export", "methdb", "-i", "sample.methdb"),
+            ("export", "methdb", "-o", "sample.bed.gz"),
+        ):
+            result = run_module_without_site_packages(*arguments)
+            self.assertEqual(result.returncode, 2)
+
+    def test_export_methdb_parses_input_and_compression_mode(self) -> None:
+        compressed = build_parser().parse_args(
             [
-                "catalog",
-                "rrbs",
-                "-r",
-                "reference.fa",
-                "-o",
-                "candidates.bed",
-                "--cut-site",
-                "C|CGG",
-                "--read-length",
-                "50",
-                "--insert-min",
-                "50",
+                "export", "methdb", "-i", "sample.methdb",
+                "-o", "sample.bed.gz",
             ]
         )
-        self.assertFalse(hasattr(arguments, "config"))
+        self.assertEqual(compressed.input, Path("sample.methdb"))
+        self.assertFalse(compressed.no_compression)
 
+        plain = build_parser().parse_args(
+            [
+                "export", "methdb", "-i", "sample.methdb",
+                "-o", "sample.bed", "--no-compression",
+            ]
+        )
+        self.assertTrue(plain.no_compression)
+
+    def test_build_rrbs_projects_a_fragment_domain(self) -> None:
+        arguments = build_parser().parse_args(
+            [
+                "build", "rrbs", "-r", "reference.fa", "-o", "candidates.bed",
+                "--cut-site", "C|CGG", "-l", "50", "--insert-min", "50",
+                "--seed-mut", "7", "--seed-phase", "8",
+            ]
+        )
         normalized = normalize_run_config(
-            build_rrbs_catalog_document(arguments, REPOSITORY_ROOT),
-            REPOSITORY_ROOT,
+            build_rrbs_document(arguments, REPOSITORY_ROOT), REPOSITORY_ROOT
         ).normalized
-
         self.assertEqual(normalized["technology"], "RRBS")
-        self.assertEqual(normalized["rrbs"], {"cut_sites": ["C|CGG"]})
-        self.assertEqual(normalized["coverage"], {"kind": "uniform"})
+        self.assertEqual(normalized["fragments"]["count"], 1)
         self.assertEqual(normalized["mutation"]["rate"], 0)
-        self.assertEqual(normalized["fragments"]["read_pairs"], 1)
+        self.assertEqual(normalized["seeds"]["mutation"], "7")
+        self.assertEqual(normalized["seeds"]["phasing"], "8")
 
-        variant_arguments = build_parser().parse_args(
+    def test_build_variants_accepts_generation_or_vcf_normalization(self) -> None:
+        generated = build_parser().parse_args(
             [
-                "catalog", "rrbs", "-r", "reference.fa", "-o",
-                "candidates.bed", "--cut-site", "C|CGG", "--vcf",
-                "variants.vcf",
+                "build", "variants", "-r", "reference.fa", "-o", "truth.vcf.gz",
+                "--mutation-rate", "0.002", "--seed-mut", "19",
             ]
         )
-        variant_document = build_rrbs_catalog_document(
-            variant_arguments, REPOSITORY_ROOT
+        normalized = normalize_run_config(
+            build_variant_document(generated, REPOSITORY_ROOT), REPOSITORY_ROOT
+        ).normalized
+        self.assertEqual(normalized["mutation"]["rate"], 0.002)
+        self.assertEqual(normalized["seeds"]["mutation"], "19")
+        self.assertEqual(normalized["fragments"]["count"], 1)
+
+        from_vcf = build_parser().parse_args(
+            [
+                "build", "variants", "-r", "reference.fa", "-o", "truth.vcf.gz",
+                "--vcf", "input.vcf.gz", "--seed-phase", "23",
+            ]
         )
-        self.assertEqual(variant_document["methylation"]["catalog_seed"], "0")
-        self.assertEqual(variant_document["mutation"]["rate"], 0)
+        document = build_variant_document(from_vcf, REPOSITORY_ROOT)
+        self.assertEqual(document["mutation"]["rate"], 0)
+        self.assertEqual(document["seeds"]["phasing"], "23")
+        self.assertEqual(document["inputs"]["vcf"], "input.vcf.gz")
 
-    def test_run_help_exposes_the_component_boundary(self) -> None:
-        result = run_module("run", "--help")
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("--reference", result.stdout)
-        self.assertIn("--read-pairs", result.stdout)
-        self.assertIn("--coverage-profile", result.stdout)
-        self.assertIn("--bed-methyl", result.stdout)
-        self.assertIn("--asm-bed", result.stdout)
-        self.assertIn("--core", result.stdout)
-        self.assertNotIn("--mode", result.stdout)
-
-    def test_no_command_is_not_reported_as_a_successful_run(self) -> None:
-        result = run_module()
-
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("usage: bsreadsim", result.stdout)
-
-    def test_run_defaults_to_fastq(self) -> None:
-        arguments = build_parser().parse_args(
-            ["run", "-r", "reference.fa", "-o", "output", "-n", "10"]
+    def test_vcf_and_mutation_rate_are_mutually_exclusive(self) -> None:
+        cases = (
+            (
+                "run", "wgbs", "-r", "reference.fa", "-o", "output", "-n", "1",
+                "--vcf", "input.vcf", "--mutation-rate", "0",
+            ),
+            (
+                "build", "variants", "-r", "reference.fa", "-o", "truth.vcf.gz",
+                "--vcf", "input.vcf", "--mutation-rate", "0",
+            ),
+            (
+                "build", "methdb", "-r", "reference.fa", "-o", "truth.methdb",
+                "--vcf", "input.vcf", "--mutation-rate", "0",
+            ),
+            (
+                "build", "rrbs", "-r", "reference.fa", "-o", "candidates.bed",
+                "--cut-site", "C|CGG", "--vcf", "input.vcf",
+                "--mutation-rate", "0",
+            ),
         )
+        for arguments in cases:
+            with self.subTest(command=arguments[:2]):
+                result = run_module(*arguments)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("not allowed with argument", result.stderr)
 
-        self.assertEqual(arguments.technology, "WGBS")
-        self.assertFalse(arguments.bam)
-        self.assertFalse(hasattr(arguments, "protocol_major"))
-
-    def test_bam_flag_projects_into_the_output_contract(self) -> None:
+    def test_build_methdb_projects_split_seeds_and_beta_parameters(self) -> None:
         arguments = build_parser().parse_args(
             [
-                "run",
-                "-r",
-                "reference.fa",
-                "-o",
-                "output",
-                "-n",
-                "10",
-                "--bam",
+                "build", "methdb", "-r", "reference.fa", "-o", "truth.methdb",
+                "--mutation-rate", "0", "--seed-mut", "3", "--seed-phase", "4",
+                "--seed-meth", "5", "--beta-cg", "2,8",
+            ]
+        )
+        document = build_methdb_document(arguments, REPOSITORY_ROOT)
+        self.assertEqual(
+            document["seeds"],
+            {"mutation": "3", "phasing": "4", "methylation": "5"},
+        )
+        self.assertEqual(document["methylation"]["beta"]["CG"], [2.0, 8.0])
+
+    def test_beta_parameters_require_comma_delimited_pairs(self) -> None:
+        result = run_module(
+            "build", "methdb", "-r", "reference.fa", "-o", "truth.methdb",
+            "--beta-cg", "2", "8",
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("must be ALPHA,BETA", result.stderr)
+
+        help_result = run_module("build", "methdb", "--help")
+        self.assertEqual(help_result.returncode, 0, help_result.stderr)
+        self.assertIn("--beta-cg ALPHA,BETA", help_result.stdout)
+
+    def test_run_subcommands_expose_only_relevant_sampling_options(self) -> None:
+        wgbs = run_module("run", "wgbs", "--help")
+        rrbs = run_module("run", "rrbs", "--help")
+        tbs = run_module("run", "tbs", "--help")
+        wgs = run_module("run", "wgs", "--help")
+        wes = run_module("run", "wes", "--help")
+        ts = run_module("run", "ts", "--help")
+        for result in (wgbs, rrbs, tbs, wgs, wes, ts):
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("-n FRAGMENTS", result.stdout)
+            self.assertIn("-f {fastq,fastq.gz,bam}", result.stdout)
+            self.assertIn("--seed-mut", result.stdout)
+        self.assertIn("--gc-profile", wgbs.stdout)
+        self.assertIn("--gc-profile", wgs.stdout)
+        self.assertNotIn("--sampling", wgbs.stdout)
+        self.assertIn("--sampling {uniform,score}", rrbs.stdout)
+        self.assertIn("--sampling {uniform,score}", tbs.stdout)
+        self.assertIn("--sampling {uniform,score}", wes.stdout)
+        self.assertIn("--sampling {uniform,score}", ts.stdout)
+        for result in (wgs, wes, ts):
+            self.assertNotIn("--conversion-rate", result.stdout)
+            self.assertNotIn("--seed-meth", result.stdout)
+            self.assertNotIn("--save-methdb", result.stdout)
+
+    def test_standard_run_documents_bypass_bisulfite_chemistry(self) -> None:
+        cases = (
+            ("wgs", "WGS", ()),
+            (
+                "wes",
+                "WES",
+                ("--targets", "exons.bed"),
+            ),
+            (
+                "ts",
+                "TS",
+                ("--targets", "panel.bed"),
+            ),
+        )
+        for command, technology, extra in cases:
+            with self.subTest(command=command):
+                arguments = build_parser().parse_args(
+                    [
+                        "run",
+                        command,
+                        "-r",
+                        "reference.fa",
+                        "-o",
+                        "output",
+                        "-n",
+                        "10",
+                        "--save-truth",
+                        *extra,
+                    ]
+                )
+                document = build_run_document(arguments, REPOSITORY_ROOT)
+                normalized = normalize_run_config(
+                    document, REPOSITORY_ROOT
+                ).normalized
+
+                self.assertEqual(document["technology"], technology)
+                self.assertEqual(normalized["technology"], technology)
+                self.assertEqual(document["sequencing"]["conversion_rate"], 0.0)
+                self.assertFalse(document["output"]["save_methdb"])
+                self.assertTrue(document["output"]["save_vcf"])
+                self.assertEqual(document["inputs"], {})
+                if technology in ("WES", "TS"):
+                    self.assertEqual(document["fragments"]["insert_sd"], 0.0)
+                    self.assertEqual(document["fragments"]["insert_min"], 400)
+                    self.assertEqual(document["fragments"]["insert_max"], 400)
+
+    def test_run_defaults_and_truth_flags_project_cleanly(self) -> None:
+        arguments = build_parser().parse_args(
+            [
+                "run", "wgbs", "-r", "reference.fa", "-o", "output", "-n", "10",
+                "--save-truth",
             ]
         )
         document = build_run_document(arguments, REPOSITORY_ROOT)
-        self.assertTrue(document["output"]["bam"])
+        self.assertEqual(document["technology"], "WGBS")
+        self.assertEqual(document["fragments"]["count"], 10)
+        self.assertEqual(document["output"]["format"], "fastq.gz")
+        self.assertTrue(document["output"]["save_methdb"])
+        self.assertTrue(document["output"]["save_vcf"])
 
-    def test_run_config_command_is_not_available(self) -> None:
-        result = run_module("run-config", "run.json")
+        empty_vcf = build_parser().parse_args(
+            [
+                "run", "wgbs", "-r", "reference.fa", "-o", "output", "-n", "10",
+                "--mutation-rate", "0", "--save-vcf",
+            ]
+        )
+        self.assertEqual(
+            build_run_document(empty_vcf, REPOSITORY_ROOT)["mutation"]["rate"], 0
+        )
 
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("invalid choice", result.stderr)
+    def test_bam_format_controls_annotation_output(self) -> None:
+        arguments = build_parser().parse_args(
+            [
+                "run", "wgbs", "-r", "reference.fa", "-o", "output", "-n", "10",
+                "-f", "bam", "--fragment-realization",
+            ]
+        )
+        document = build_run_document(arguments, REPOSITORY_ROOT)
+        self.assertEqual(document["output"]["format"], "bam")
+        self.assertTrue(document["output"]["fragment_summary"])
+        self.assertTrue(document["output"]["fragment_realization"])
 
-    def test_profile_path_keeps_default_variable_insert_distribution(self) -> None:
+        invalid = build_parser().parse_args(
+            [
+                "run", "wgbs", "-r", "reference.fa", "-o", "output", "-n", "10",
+                "--fragment-summary",
+            ]
+        )
+        with self.assertRaisesRegex(CommandLineError, "requires --format bam"):
+            build_run_document(invalid, REPOSITORY_ROOT)
+
+    def test_gc_profile_is_hashed_and_disables_default_mutations(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            profile_bytes = b"0.1\n0.7\n0.2\n"
-            (directory / "coverage.tsv").write_bytes(profile_bytes)
+            profile = b"0.1\n0.7\n0.2\n"
+            (directory / "gc.tsv").write_bytes(profile)
             arguments = build_parser().parse_args(
                 [
-                    "run",
-                    "-r",
-                    "reference.fa",
-                    "-o",
-                    "output",
-                    "-n",
-                    "100",
-                    "--coverage-profile",
-                    "coverage.tsv",
-                    "--workers",
-                    "2",
+                    "run", "wgbs", "-r", "reference.fa", "-o", "output", "-n", "100",
+                    "--gc-profile", "gc.tsv", "--workers", "2",
                 ]
             )
-
-            document = build_run_document(arguments, directory)
-            normalized = normalize_run_config(document, directory).normalized
-
+            normalized = normalize_run_config(
+                build_run_document(arguments, directory), directory
+            ).normalized
         artifact = normalized["coverage"]["artifact"]
-        self.assertEqual(normalized["coverage"]["kind"], "profile")
-        self.assertEqual(artifact["format"], "tsv")
-        self.assertEqual(artifact["version"], "wgbs-gc-target-v2")
-        self.assertEqual(
-            artifact["sha256"], hashlib.sha256(profile_bytes).hexdigest()
-        )
-        self.assertEqual(normalized["fragments"]["insert_min"], 100)
-        self.assertEqual(normalized["fragments"]["insert_mean"], 400)
-        self.assertEqual(normalized["fragments"]["insert_max"], 1000)
-        self.assertEqual(normalized["fragments"]["insert_stddev"], 25)
+        self.assertEqual(artifact["sha256"], hashlib.sha256(profile).hexdigest())
+        self.assertEqual(normalized["fragments"]["insert_sd"], 25)
         self.assertEqual(normalized["mutation"]["rate"], 0)
-        self.assertEqual(normalized["execution"]["workers"], 2)
-        self.assertEqual(normalized["sequencing"]["quality"]["phred"], 40)
-        self.assertEqual(normalized["sequencing"]["error"]["rate"], 0.005)
 
-    def test_direct_projection_rejects_conflicting_shortcuts(self) -> None:
-        common = ["run", "-r", "ref.fa", "-o", "out", "-n", "10"]
-        insert_conflict = build_parser().parse_args(
-            common + ["--insert-size", "350", "--insert-min", "100"]
-        )
-        with self.assertRaisesRegex(CommandLineError, "insert range"):
-            build_run_document(insert_conflict, REPOSITORY_ROOT)
-
-        profile_on_rrbs = build_parser().parse_args(
-            common
-            + [
-                "--technology",
-                "RRBS",
-                "--cut-site",
-                "C|CGG",
-                "--coverage-profile",
-                "missing.tsv",
-            ]
-        )
-        with self.assertRaisesRegex(CommandLineError, "WGBS only"):
-            build_run_document(profile_on_rrbs, REPOSITORY_ROOT)
-
-    def test_rrbs_arguments_project_the_enzyme_catalog(self) -> None:
-        arguments = build_parser().parse_args(
-            [
-                "run",
-                "-r",
-                "reference.fa",
-                "-o",
-                "output",
-                "-n",
-                "24",
-                "--technology",
-                "RRBS",
-                "--cut-site",
-                "C|CGG",
-                "--cut-site",
-                "A|ATT",
-                "--read-length",
-                "50",
-                "--insert-min",
-                "50",
-            ]
-        )
-
-        normalized = normalize_run_config(
-            build_run_document(arguments, REPOSITORY_ROOT),
-            REPOSITORY_ROOT,
-        ).normalized
-
-        self.assertEqual(normalized["technology"], "RRBS")
-        self.assertEqual(normalized["rrbs"]["cut_sites"], ["C|CGG", "A|ATT"])
-        self.assertEqual(normalized["coverage"], {"kind": "uniform"})
-
-    def test_rrbs_candidate_scores_are_opt_in(self) -> None:
-        common = [
-            "run",
-            "-r",
-            "reference.fa",
-            "-o",
-            "output",
-            "-n",
-            "24",
-            "--technology",
-            "RRBS",
-            "--cut-site",
-            "C|CGG",
-            "--rrbs-candidates",
-            "scored.bed",
-            "--read-length",
-            "50",
-            "--insert-min",
-            "50",
+    def test_rrbs_and_tbs_sampling_modes_are_unambiguous(self) -> None:
+        rrbs_common = [
+            "run", "rrbs", "-r", "reference.fa", "-o", "output", "-n", "24",
+            "--cut-site", "C|CGG", "--rrbs-candidates", "scored.bed",
+            "-l", "50", "--insert-min", "50",
         ]
-        uniform = normalize_run_config(
-            build_run_document(build_parser().parse_args(common), REPOSITORY_ROOT),
+        uniform = build_run_document(
+            build_parser().parse_args(rrbs_common), REPOSITORY_ROOT
+        )
+        scored = build_run_document(
+            build_parser().parse_args(rrbs_common + ["--sampling", "score"]),
             REPOSITORY_ROOT,
-        ).normalized
-        profiled = normalize_run_config(
-            build_run_document(
-                build_parser().parse_args(common + ["--rrbs-score"]),
-                REPOSITORY_ROOT,
-            ),
-            REPOSITORY_ROOT,
-        ).normalized
-
+        )
         self.assertEqual(uniform["coverage"], {"kind": "uniform"})
-        self.assertEqual(profiled["coverage"], {"kind": "profile"})
-        self.assertEqual(uniform["mutation"]["rate"], 0)
-        self.assertTrue(
-            uniform["rrbs"]["candidate_bed"].endswith("/scored.bed")
-        )
+        self.assertEqual(scored["coverage"], {"kind": "profile"})
 
-        missing = build_parser().parse_args(
+        tbs = build_parser().parse_args(
             [
-                "run", "-r", "reference.fa", "-o", "output", "-n", "24",
-                "--technology", "RRBS", "--cut-site", "C|CGG",
-                "--rrbs-score",
+                "run", "tbs", "-r", "reference.fa", "-o", "output", "-n", "24",
+                "--targets", "targets.bed", "--sampling", "score",
+                "--insert-mean", "150", "--insert-sd", "0",
             ]
         )
-        with self.assertRaisesRegex(CommandLineError, "requires --rrbs-candidates"):
-            build_run_document(missing, REPOSITORY_ROOT)
+        document = build_run_document(tbs, REPOSITORY_ROOT)
+        self.assertEqual(document["coverage"], {"kind": "target-score"})
+        self.assertEqual(document["fragments"]["insert_min"], 150)
+        self.assertEqual(document["fragments"]["insert_mean"], 150)
+        self.assertEqual(document["fragments"]["insert_max"], 150)
+        self.assertEqual(document["fragments"]["insert_sd"], 0)
 
-    def test_tbs_arguments_project_targets_and_score_weights(self) -> None:
+    def test_input_vcf_and_methylation_inputs_project_explicitly(self) -> None:
         arguments = build_parser().parse_args(
             [
-                "run",
-                "-r",
-                "reference.fa",
-                "-o",
-                "output",
-                "-n",
-                "24",
-                "--technology",
-                "TBS",
-                "--targets",
-                "targets.bed",
-                "--target-score",
-                "--insert-size",
-                "150",
-                "--fragment-center-stddev",
-                "0",
+                "run", "wgbs", "-r", "reference.fa", "-o", "output", "-n", "10",
+                "--vcf", "variants.vcf", "--bed-methyl", "levels.bed.gz",
+                "--asm-bed", "alleles.bed.gz", "--seed-phase", "9",
             ]
         )
-
-        normalized = normalize_run_config(
-            build_run_document(arguments, REPOSITORY_ROOT),
-            REPOSITORY_ROOT,
-        ).normalized
-
-        self.assertEqual(normalized["technology"], "TBS")
-        self.assertEqual(normalized["coverage"], {"kind": "target-score"})
-        self.assertEqual(normalized["tbs"]["fragment_center_stddev"], 0)
-        self.assertEqual(normalized["fragments"]["insert_mean"], 150)
-
-    def test_vcf_automatically_disables_de_novo_mutation(self) -> None:
-        arguments = build_parser().parse_args(
-            [
-                "run",
-                "-r",
-                "reference.fa",
-                "-o",
-                "output",
-                "-n",
-                "10",
-                "--vcf",
-                "variants.vcf",
-            ]
-        )
-
         document = build_run_document(arguments, REPOSITORY_ROOT)
-
         self.assertEqual(document["mutation"]["rate"], 0)
+        self.assertEqual(set(document["inputs"]), {"vcf", "bed_methyl", "asm_bed"})
+        self.assertEqual(document["seeds"]["phasing"], "9")
 
-    def test_bed_methyl_and_asm_bed_project_as_explicit_inputs(self) -> None:
-        common = [
-            "run", "-r", "reference.fa", "-o", "output", "-n", "10"
-        ]
-        arguments = build_parser().parse_args(
-            common
-            + [
-                "--vcf", "variants.vcf",
-                "--bed-methyl", "levels.bedmethyl.gz",
-                "--asm-bed", "alleles.bed.gz",
-            ]
-        )
-
-        document = build_run_document(arguments, REPOSITORY_ROOT)
-
-        self.assertEqual(
-            set(document["inputs"]),
-            {"vcf", "bed_methyl", "asm_bed"},
-        )
-        self.assertEqual(document["mutation"]["rate"], 0)
-
-        without_vcf = build_parser().parse_args(
-            common + ["--asm-bed", "alleles.bed"]
-        )
-        with self.assertRaisesRegex(CommandLineError, "requires --vcf"):
-            build_run_document(without_vcf, REPOSITORY_ROOT)
-
-        with self.assertRaises(SystemExit):
-            build_parser().parse_args(
-                common
-                + [
-                    "--cgmap", "levels.cgmap",
-                    "--bed-methyl", "levels.bedmethyl",
-                ]
-            )
-
-    def test_retired_protocol_selector_is_not_accepted(self) -> None:
-        result = run_module(
-            "run",
-            "-r",
-            "reference.fa",
-            "-o",
-            "output",
-            "-n",
-            "10",
-            "--protocol-major",
-            "1",
-        )
-
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("unrecognized arguments", result.stderr)
+    def test_old_command_and_option_names_are_not_accepted(self) -> None:
+        for arguments in (
+            ("catalog", "variants", "--help"),
+            ("resources", "list"),
+            ("run", "wgbs", "-r", "ref.fa", "-o", "out", "-n", "1", "--bam"),
+            (
+                "run", "wgbs", "-r", "ref.fa", "-o", "out", "-n", "1",
+                "--read-pairs", "1",
+            ),
+            (
+                "run", "wgbs", "-r", "ref.fa", "-o", "out", "-n", "1",
+                "--insert-size", "150",
+            ),
+        ):
+            result = run_module(*arguments)
+            self.assertEqual(result.returncode, 2)
 
 
 if __name__ == "__main__":

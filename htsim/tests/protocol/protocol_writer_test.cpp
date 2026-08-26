@@ -64,10 +64,9 @@ Header make_header(bool details)
     Header header;
     header.run_id = "00000000-0000-4000-8000-000000000002";
     header.core_version = "2.0.0-alpha.1";
-    header.config_schema_version = std::string(config_schema_version);
     header.rng_contract = std::string(rng_contract);
     header.master_seed = UINT64_C(0x0123456789abcdef);
-    header.normalized_config_sha256 = sha256_text("protocol-v2-config");
+    header.normalized_config_sha256 = sha256_text("protocol-config");
     header.technology = Technology::wgbs;
     header.has_details = details;
     header.mates_per_fragment = 1;
@@ -228,10 +227,11 @@ void test_no_annotation_envelope_and_counts()
     const auto result = make_no_annotation_stream(false);
     const std::string &stream = result.first;
     const Trailer &trailer = result.second;
-    require(stream.size() == 512U, "no-Details stream size changed");
+    require(stream.size() == 500U, "no-Details stream size changed");
     require(stream.substr(0, 8) == std::string("BSRSTRM\0", 8), "magic changed");
-    require(static_cast<unsigned char>(stream[8]) == 2U, "major version changed");
-    const std::size_t batch_start = 244U;
+    require(static_cast<unsigned char>(stream[8]) == 2U,
+            "protocol major version changed");
+    const std::size_t batch_start = 232U;
     require(load_le32(stream, batch_start) == 136U, "batch payload size changed");
     require(static_cast<unsigned char>(stream[batch_start + 4U]) == 2U,
             "batch frame type changed");
@@ -267,12 +267,12 @@ void test_prepared_batch_is_byte_identical()
 void test_full_annotation_shape()
 {
     const std::string stream = make_full_annotation_stream();
-    require(stream.size() == 852U,
+    require(stream.size() == 840U,
             "Full-Details stream size changed: " + std::to_string(stream.size()));
-    require(load_le32(stream, 244U) == 476U,
+    require(load_le32(stream, 232U) == 476U,
             "Full-Details payload size changed: "
-                + std::to_string(load_le32(stream, 244U)));
-    require(static_cast<unsigned char>(stream[249U]) == details_present,
+                + std::to_string(load_le32(stream, 232U)));
+    require(static_cast<unsigned char>(stream[237U]) == details_present,
             "Full-Details frame flag changed");
 }
 

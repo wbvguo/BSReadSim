@@ -357,13 +357,11 @@ double parse_probability(std::string_view text)
 
 } // namespace
 
-WgbsGcProfile::WgbsGcProfile(
-    const std::string &path,
-    const crypto::Sha256Digest &expected_file_sha256)
-    : file_sha256_(expected_file_sha256)
+WgbsGcProfile::WgbsGcProfile(const std::string &path)
 {
     try {
-        text::TextSnapshot snapshot(path, expected_file_sha256);
+        text::TextSnapshot snapshot(path);
+        file_sha256_ = snapshot.file_sha256();
         snapshot.visit_lines([&](std::string_view line, std::uint64_t line_number) {
             try {
                 if (probabilities_.size()
@@ -1379,7 +1377,8 @@ NRankIndex build_n_rank(
             cursor = event.reference_end;
             break;
         default:
-            throw VariantStartIndexError("variant kind is outside the typed catalog");
+            throw VariantStartIndexError(
+                "variant kind is outside the prepared variant set");
         }
     }
     append_reference_n(
@@ -1433,7 +1432,7 @@ public:
                         continue;
                     }
                     throw VariantStartIndexError(
-                        "variant kind is outside the typed catalog");
+                        "variant kind is outside the prepared variant set");
                 }
             }
             ++reference_cursor_;

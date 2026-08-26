@@ -46,7 +46,6 @@ class TargetFile {
 public:
     TargetFile(
         const std::string &path,
-        const crypto::Sha256Digest &expected_file_sha256,
         const std::vector<reference::ContigMetadata> &reference_catalog);
 
     const std::vector<Target> &targets(std::uint32_t contig_index) const;

@@ -5,6 +5,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -37,8 +38,10 @@ std::vector<std::string> base_arguments()
         "--run-id", "12345678-1234-4234-8234-123456789abc",
         "--config-sha256", std::string(64, '1'),
         "--seed", "0",
+        "--seed-mut", "1",
+        "--seed-phase", "2",
+        "--seed-meth", "3",
         "--reference", "/data/reference.fa",
-        "--reference-sha256", std::string(64, '2'),
         "--technology", "WGBS",
         "--paired-end", "true",
         "--read-length-1", "100",
@@ -46,8 +49,8 @@ std::vector<std::string> base_arguments()
         "--insert-min", "100",
         "--insert-mean", "400",
         "--insert-max", "1000",
-        "--insert-stddev", "25",
-        "--read-pairs", "20",
+        "--insert-sd", "25",
+        "--fragments", "20",
         "--max-ambiguous-fraction", "0.05",
         "--chunk-size", "10000",
         "--mutation-rate", "0.001",
@@ -100,7 +103,7 @@ void test_valid_wgbs_projection()
     require(config.master_seed == 0, "seed zero was not preserved");
     require(config.paired_end && config.read_length_2 == 100,
             "paired-end projection was not parsed");
-    require(config.read_pairs == 20 && !config.depth.has_value(),
+    require(config.fragment_count == 20 && !config.depth.has_value(),
             "read-count mode was not parsed");
     require(config.coverage == CoverageMode::uniform,
             "uniform coverage was not parsed");
@@ -155,42 +158,31 @@ void test_valid_optional_input_projection()
     arguments.insert(
         arguments.end(),
         {"--vcf", "/data/sample.vcf.gz",
-         "--vcf-sha256", std::string(64, 'a'),
          "--cgmap", "/data/sample.cgmap.gz",
-         "--cgmap-sha256", std::string(64, 'b'),
-         "--asm", "/data/sample.asm.gz",
-         "--asm-sha256", std::string(64, 'c')});
+         "--asm", "/data/sample.asm.gz"});
     const auto config = parse_core_config(arguments);
-    require(config.vcf_path == "/data/sample.vcf.gz"
-                && config.vcf_sha256->front() == 0xaa,
-            "VCF path/digest projection was lost");
-    require(config.cgmap_path == "/data/sample.cgmap.gz"
-                && config.cgmap_sha256->front() == 0xbb,
-            "CGmap path/digest projection was lost");
-    require(config.asm_path == "/data/sample.asm.gz"
-                && config.asm_sha256->front() == 0xcc,
-            "ASM path/digest projection was lost");
+    require(config.vcf_path == "/data/sample.vcf.gz",
+            "VCF path projection was lost");
+    require(config.cgmap_path == "/data/sample.cgmap.gz",
+            "CGmap path projection was lost");
+    require(config.asm_path == "/data/sample.asm.gz",
+            "ASM path projection was lost");
 
     auto bed_arguments = base_arguments();
     replace_value(bed_arguments, "--mutation-rate", "0");
     bed_arguments.insert(
         bed_arguments.end(),
         {"--vcf", "/data/sample.vcf.gz",
-         "--vcf-sha256", std::string(64, 'a'),
          "--bed-methyl", "/data/sample.bedmethyl.gz",
-         "--bed-methyl-sha256", std::string(64, 'd'),
-         "--asm-bed", "/data/sample.asm.bed.gz",
-         "--asm-bed-sha256", std::string(64, 'e')});
+         "--asm-bed", "/data/sample.asm.bed.gz"});
     const auto bed_config = parse_core_config(bed_arguments);
     require(
         bed_config.bed_methyl_path == "/data/sample.bedmethyl.gz"
-            && bed_config.bed_methyl_sha256->front() == 0xdd
-            && bed_config.asm_bed_path == "/data/sample.asm.bed.gz"
-            && bed_config.asm_bed_sha256->front() == 0xee,
-        "bedMethyl/ASM BED path and digest projection was lost");
+            && bed_config.asm_bed_path == "/data/sample.asm.bed.gz",
+        "bedMethyl/ASM BED path projection was lost");
 }
 
-void test_cgmap_pool_requires_its_input_pair()
+void test_cgmap_pool_requires_its_input()
 {
     auto missing = base_arguments();
     replace_value(missing, "--cgmap-pool", "true");
@@ -200,8 +192,7 @@ void test_cgmap_pool_requires_its_input_pair()
 
     missing.insert(
         missing.end(),
-        {"--cgmap", "/data/sample.cgmap.gz",
-         "--cgmap-sha256", std::string(64, 'b')});
+        {"--cgmap", "/data/sample.cgmap.gz"});
     const auto pooled = parse_core_config(missing);
     require(pooled.cgmap_pool && pooled.cgmap_path.has_value(),
             "valid CGmap pooling projection was lost");
@@ -210,8 +201,7 @@ void test_cgmap_pool_requires_its_input_pair()
     replace_value(bed, "--cgmap-pool", "true");
     bed.insert(
         bed.end(),
-        {"--bed-methyl", "/data/sample.bedmethyl",
-         "--bed-methyl-sha256", std::string(64, 'd')});
+        {"--bed-methyl", "/data/sample.bedmethyl"});
     const auto bed_pooled = parse_core_config(bed);
     require(bed_pooled.cgmap_pool && bed_pooled.bed_methyl_path.has_value(),
             "valid bedMethyl pooling projection was lost");
@@ -233,24 +223,24 @@ void test_valid_rrbs_tbs_and_profile_projection()
     const auto rrbs_profile = parse_core_config(rrbs_arguments);
     require(rrbs_profile.coverage == CoverageMode::profile
                 && rrbs_profile.rrbs_candidate_bed_path
-                    == "/data/rrbs-candidates.bed"
-                && !rrbs_profile.coverage_profile_sha256,
-            "RRBS no-hash candidate profile projection was lost");
+                    == "/data/rrbs-candidates.bed",
+            "RRBS candidate profile projection was lost");
 
     auto tbs_arguments = base_arguments();
     replace_value(tbs_arguments, "--technology", "TBS");
-    replace_value(tbs_arguments, "--insert-mean", "100");
-    replace_value(tbs_arguments, "--insert-max", "100");
-    replace_value(tbs_arguments, "--insert-stddev", "0");
+    replace_value(tbs_arguments, "--insert-mean", "300");
+    replace_value(tbs_arguments, "--insert-sd", "0");
     tbs_arguments.insert(
         tbs_arguments.end(),
         {"--tbs-bed", "/data/targets.bed",
-         "--tbs-bed-sha256", std::string(64, '3'),
          "--tbs-center-stddev", "50"});
     const auto tbs = parse_core_config(tbs_arguments);
     require(tbs.tbs_bed_path == "/data/targets.bed"
                 && tbs.tbs_center_stddev == 50.0
-                && tbs.tbs_bed_sha256->front() == 0x33,
+                && tbs.insert_min == 100U
+                && tbs.insert_mean == 300U
+                && tbs.insert_max == 1000U
+                && tbs.insert_sd == 0.0,
             "TBS projection was not parsed");
     replace_value(tbs_arguments, "--coverage", "target-score");
     const auto target_score = parse_core_config(tbs_arguments);
@@ -262,22 +252,45 @@ void test_valid_rrbs_tbs_and_profile_projection()
     replace_value(profile_arguments, "--mutation-rate", "0");
     profile_arguments.insert(
         profile_arguments.end(),
-        {"--coverage-profile", "/data/coverage.tsv",
-         "--coverage-profile-format", "tsv",
-         "--coverage-profile-version", "wgbs-gc-target-v2",
-         "--coverage-profile-sha256", std::string(64, '4')});
+        {"--coverage-profile", "/data/coverage.tsv"});
     const auto profile = parse_core_config(profile_arguments);
     require(profile.coverage_profile_path == "/data/coverage.tsv",
             "coverage profile path was lost");
-    require(profile.coverage_profile_format == "tsv"
-                && profile.coverage_profile_version == "wgbs-gc-target-v2"
-                && profile.coverage_profile_sha256->front() == 0x44,
-            "coverage profile metadata was lost");
     require(profile.insert_min == 100U
                 && profile.insert_mean == 400U
                 && profile.insert_max == 1000U
-                && profile.insert_stddev == 25.0,
+                && profile.insert_sd == 25.0,
             "profile coverage did not retain variable insert parameters");
+}
+
+void test_standard_technology_projection()
+{
+    auto wgs_arguments = base_arguments();
+    replace_value(wgs_arguments, "--technology", "WGS");
+    const auto wgs = parse_core_config(wgs_arguments);
+    require(wgs.technology == Technology::wgs,
+            "WGS technology projection was lost");
+
+    for (const auto &[name, expected] : {
+             std::pair<std::string, Technology>{"WES", Technology::wes},
+             std::pair<std::string, Technology>{"TS", Technology::ts}}) {
+        auto arguments = base_arguments();
+        replace_value(arguments, "--technology", name);
+        replace_value(arguments, "--insert-sd", "0");
+        arguments.insert(
+            arguments.end(),
+            {"--tbs-bed", "/data/targets.bed",
+             "--tbs-center-stddev", "50"});
+        require(parse_core_config(arguments).technology == expected,
+                name + " technology projection was lost");
+    }
+
+    auto methylation_input = wgs_arguments;
+    methylation_input.insert(
+        methylation_input.end(), {"--cgmap", "/data/sample.cgmap"});
+    require_error(
+        [&] {parse_core_config(methylation_input);},
+        "standard sequencing accepted a methylation input");
 }
 
 void test_unknown_duplicate_and_missing_options_fail()
@@ -326,7 +339,7 @@ void test_number_boolean_and_identity_boundaries()
         {"--mutation-rate", "0x1p-1"},
         {"--mutation-rate", "01e-2"},
         {"--indel-fraction", "1.1"},
-        {"--insert-stddev", "-0.1"},
+        {"--insert-sd", "-0.1"},
         {"--chunk-size", "0"},
         {"--config-sha256", std::string(64, 'A')},
         {"--run-id", "not-a-uuid"},
@@ -355,6 +368,15 @@ void test_cross_field_boundaries()
         [&] {parse_core_config(read_longer_than_minimum_insert);},
         "read length greater than the minimum insert was accepted");
 
+    auto fixed_insert = base_arguments();
+    replace_value(fixed_insert, "--read-length-1", "150");
+    replace_value(fixed_insert, "--read-length-2", "150");
+    replace_value(fixed_insert, "--insert-mean", "300");
+    replace_value(fixed_insert, "--insert-sd", "0");
+    const auto fixed = parse_core_config(fixed_insert);
+    require(fixed.read_length_1 == 150U && fixed.insert_mean == 300U,
+            "fixed mean insert incorrectly used insert_min as its read boundary");
+
     auto asymmetric = base_arguments();
     replace_value(asymmetric, "--read-length-2", "101");
     require_error(
@@ -365,12 +387,12 @@ void test_cross_field_boundaries()
     both_counts.insert(both_counts.end(), {"--depth", "10"});
     require_error(
         [&] {parse_core_config(both_counts);},
-        "depth and read-pairs were accepted together");
+        "depth and fragments were accepted together");
 
     auto asm_without_vcf = base_arguments();
     asm_without_vcf.insert(
         asm_without_vcf.end(),
-        {"--asm", "/data/a.asm", "--asm-sha256", std::string(64, '5')});
+        {"--asm", "/data/a.asm"});
     require_error(
         [&] {parse_core_config(asm_without_vcf);},
         "ASM without VCF was accepted");
@@ -378,8 +400,7 @@ void test_cross_field_boundaries()
     auto asm_bed_without_vcf = base_arguments();
     asm_bed_without_vcf.insert(
         asm_bed_without_vcf.end(),
-        {"--asm-bed", "/data/a.asm.bed",
-         "--asm-bed-sha256", std::string(64, '5')});
+        {"--asm-bed", "/data/a.asm.bed"});
     require_error(
         [&] {parse_core_config(asm_bed_without_vcf);},
         "ASM BED without VCF was accepted");
@@ -388,9 +409,7 @@ void test_cross_field_boundaries()
     duplicate_methylation_formats.insert(
         duplicate_methylation_formats.end(),
         {"--cgmap", "/data/a.cgmap",
-         "--cgmap-sha256", std::string(64, '4'),
-         "--bed-methyl", "/data/a.bedmethyl",
-         "--bed-methyl-sha256", std::string(64, '5')});
+         "--bed-methyl", "/data/a.bedmethyl"});
     require_error(
         [&] {parse_core_config(duplicate_methylation_formats);},
         "CGmap and bedMethyl were accepted together");
@@ -400,11 +419,8 @@ void test_cross_field_boundaries()
     duplicate_asm_formats.insert(
         duplicate_asm_formats.end(),
         {"--vcf", "/data/a.vcf",
-         "--vcf-sha256", std::string(64, '3'),
          "--asm", "/data/a.asm",
-         "--asm-sha256", std::string(64, '4'),
-         "--asm-bed", "/data/a.asm.bed",
-         "--asm-bed-sha256", std::string(64, '5')});
+         "--asm-bed", "/data/a.asm.bed"});
     require_error(
         [&] {parse_core_config(duplicate_asm_formats);},
         "ASM and ASM BED were accepted together");
@@ -452,57 +468,39 @@ void test_cross_field_boundaries()
     target_score_with_artifact.insert(
         target_score_with_artifact.end(),
         {"--tbs-bed", "/data/targets.bed",
-         "--tbs-bed-sha256", std::string(64, '3'),
          "--tbs-center-stddev", "50",
-         "--coverage-profile", "/data/coverage.json",
-         "--coverage-profile-format", "json",
-         "--coverage-profile-version", "1",
-         "--coverage-profile-sha256", std::string(64, '8')});
+         "--coverage-profile", "/data/coverage.tsv"});
     require_error(
         [&] {parse_core_config(target_score_with_artifact);},
         "TBS target-score coverage accepted a second profile artifact");
 
-    const std::vector<std::pair<std::string, std::string>> digest_pairs = {
-        {"--vcf", "--vcf-sha256"},
-        {"--cgmap", "--cgmap-sha256"},
-        {"--bed-methyl", "--bed-methyl-sha256"},
-        {"--asm", "--asm-sha256"},
-        {"--asm-bed", "--asm-bed-sha256"},
-    };
-    for (const auto &[path_option, digest_option] : digest_pairs) {
-        auto path_without_digest = base_arguments();
-        path_without_digest.insert(
-            path_without_digest.end(), {path_option, "/data/input"});
+    for (const std::string retired_digest_option : {
+             "--reference-sha256", "--vcf-sha256", "--cgmap-sha256",
+             "--bed-methyl-sha256", "--methdb-sha256", "--asm-sha256",
+             "--asm-bed-sha256", "--coverage-profile-sha256",
+             "--tbs-bed-sha256"}) {
+        auto retired = base_arguments();
+        retired.insert(
+            retired.end(), {retired_digest_option, std::string(64, '6')});
         require_error(
-            [&] {parse_core_config(path_without_digest);},
-            "input path without digest was accepted for " + path_option);
-
-        auto digest_without_path = base_arguments();
-        digest_without_path.insert(
-            digest_without_path.end(), {digest_option, std::string(64, '6')});
-        require_error(
-            [&] {parse_core_config(digest_without_path);},
-            "input digest without path was accepted for " + digest_option);
+            [&] {parse_core_config(retired);},
+            "retired input digest option was accepted: "
+                + retired_digest_option);
     }
 
-    auto profile_without_metadata = base_arguments();
-    replace_value(profile_without_metadata, "--coverage", "profile");
-    profile_without_metadata.insert(
-        profile_without_metadata.end(),
-        {"--coverage-profile", "/data/coverage.json",
-         "--coverage-profile-sha256", std::string(64, '7')});
+    auto profile_without_path = base_arguments();
+    replace_value(profile_without_path, "--coverage", "profile");
     require_error(
-        [&] {parse_core_config(profile_without_metadata);},
-        "coverage profile without format/version was accepted");
+        [&] {parse_core_config(profile_without_path);},
+        "coverage profile without a path was accepted");
 
-    auto tbs_without_digest = base_arguments();
-    replace_value(tbs_without_digest, "--technology", "TBS");
-    tbs_without_digest.insert(
-        tbs_without_digest.end(),
-        {"--tbs-bed", "/data/targets.bed", "--tbs-center-stddev", "50"});
+    auto tbs_without_center = base_arguments();
+    replace_value(tbs_without_center, "--technology", "TBS");
+    tbs_without_center.insert(
+        tbs_without_center.end(), {"--tbs-bed", "/data/targets.bed"});
     require_error(
-        [&] {parse_core_config(tbs_without_digest);},
-        "TBS BED path without digest was accepted");
+        [&] {parse_core_config(tbs_without_center);},
+        "TBS BED path without center standard deviation was accepted");
 
     auto invalid_rrbs_site = base_arguments();
     replace_value(invalid_rrbs_site, "--technology", "RRBS");
@@ -542,10 +540,14 @@ void test_programmatic_config_uses_the_same_validator()
         "programmatic configuration bypassed worker validation");
 
     config = parse_core_config(base_arguments());
+    config.mutation_rate = 0.0;
     config.vcf_path = "/data/sample.vcf";
+    validate_core_config(config);
+    config.vcf_path.reset();
+    config.asm_path = "/data/sample.asm";
     require_error(
         [&] {validate_core_config(config);},
-        "programmatic configuration bypassed input-pair validation");
+        "programmatic configuration bypassed ASM/VCF validation");
 }
 
 } // namespace
@@ -556,8 +558,9 @@ int main()
         test_valid_wgbs_projection();
         test_output_controls();
         test_valid_optional_input_projection();
-        test_cgmap_pool_requires_its_input_pair();
+        test_cgmap_pool_requires_its_input();
         test_valid_rrbs_tbs_and_profile_projection();
+        test_standard_technology_projection();
         test_unknown_duplicate_and_missing_options_fail();
         test_core_worker_projection_and_boundaries();
         test_number_boolean_and_identity_boundaries();

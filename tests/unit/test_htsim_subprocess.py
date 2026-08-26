@@ -11,7 +11,7 @@ import unittest
 
 from bsreadsim.htsim.subprocess import CoreProcess, CoreProcessError
 from bsreadsim.htsim.protocol import (
-    CONFIG_SCHEMA_VERSION,
+    PROTOCOL_VERSION,
     RNG_CONTRACT,
     AmbiguityPolicy,
     BaseEncoding,
@@ -81,7 +81,6 @@ else:
 HEADER = Header(
     run_id="00000000-0000-4000-8000-0000000000aa",
     core_version="1.2.3",
-    config_schema_version=CONFIG_SCHEMA_VERSION,
     rng_contract=RNG_CONTRACT,
     master_seed=17,
     normalized_config_sha256=hashlib.sha256(b"config").digest(),
@@ -163,7 +162,7 @@ class CoreProcessSuccessTests(unittest.TestCase):
 
         with core as running:
             self.assertEqual(running.header, HEADER)
-            self.assertEqual(running.protocol_version, (2, 1))
+            self.assertEqual(running.protocol_version, PROTOCOL_VERSION)
             batches = tuple(running.iter_batches())
             self.assertEqual(len(batches), 1)
             self.assertEqual(tuple(batches[0].template_bases), (0, 1, 2, 3))

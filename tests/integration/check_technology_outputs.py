@@ -1,4 +1,4 @@
-"""Exercise RRBS and TBS through the real annotated BAM pipeline."""
+"""Exercise bisulfite and standard technologies through annotated BAM."""
 
 from __future__ import annotations
 
@@ -38,6 +38,7 @@ def _run(core: Path, root: Path, name: str, technology_arguments):
         "-m",
         "bsreadsim",
         "run",
+        technology_arguments[0],
         "-r",
         str(root / "mock-reference.fa"),
         "-o",
@@ -52,8 +53,6 @@ def _run(core: Path, root: Path, name: str, technology_arguments):
         "0",
         "--mutation-rate",
         "0",
-        "--conversion-rate",
-        "1",
         "--phred",
         "35",
         "--error-rate",
@@ -66,12 +65,15 @@ def _run(core: Path, root: Path, name: str, technology_arguments):
         "4",
         "--prefix",
         "sample",
-        "--bam",
+        "--format",
+        "bam",
         "--fragment-summary",
         "--core",
         str(core),
-        *technology_arguments,
+        *technology_arguments[1:],
     ]
+    if technology_arguments[0] in ("wgbs", "rrbs", "tbs"):
+        command.extend(("--conversion-rate", "1"))
     completed = subprocess.run(
         command,
         cwd=str(root),
@@ -95,7 +97,43 @@ def _run(core: Path, root: Path, name: str, technology_arguments):
     _, _, records, _ = _parse_bam(output / "sample.bam")
     if len(records) != 24:
         raise SystemExit("{} emitted the wrong BAM record count".format(name))
-    return records
+    return manifest, records
+
+
+def _validate_standard(
+    name: str, manifest: dict, records: list, references: tuple[str, ...]
+) -> None:
+    if manifest["summary"]["methylation_site_count"] != 0:
+        raise SystemExit("{} emitted methylation sites".format(name))
+    effective = manifest["details"]["configuration"]
+    if effective["technology"] != name.upper():
+        raise SystemExit("{} lost its technology identity".format(name))
+    if manifest["details"]["models"]["methylation_state"] != {
+        "effective": "disabled",
+        "requested": "disabled",
+    }:
+        raise SystemExit("{} manifest enabled methylation".format(name))
+    if effective["sequencing"]["conversion_rate"] != 0:
+        raise SystemExit("{} retained bisulfite chemistry".format(name))
+    for record in records:
+        summary = record["aux"]["zf"][1]
+        if ((summary[0] >> 4) & 0x7) != 2 or any(summary[1:9]):
+            raise SystemExit("{} emitted bisulfite annotations".format(name))
+        start = record["position"]
+        end = start + record["reference_consumed"]
+        expected = references[record["reference_id"]][start:end]
+        if record["sequence"] != expected:
+            raise SystemExit(
+                "{} changed a reference read sequence: qname={} flag={} "
+                "position={} observed={} expected={}".format(
+                    name,
+                    record["query_name"],
+                    record["flag"],
+                    record["position"],
+                    record["sequence"],
+                    expected,
+                )
+            )
 
 
 def main(argv) -> int:
@@ -107,11 +145,23 @@ def main(argv) -> int:
         shutil.copy2(FIXTURE_ROOT / "mock-reference.fa", root)
         shutil.copy2(FIXTURE_ROOT / "mock-targets.bed", root)
 
-        rrbs = _run(
+        _, rrbs = _run(
             core,
             root,
             "rrbs",
-            ("--technology", "RRBS", "--cut-site", "C|CGG", "--insert-size", "8"),
+            (
+                "rrbs",
+                "--cut-site",
+                "C|CGG",
+                "--insert-min",
+                "8",
+                "--insert-mean",
+                "8",
+                "--insert-max",
+                "8",
+                "--insert-sd",
+                "0",
+            ),
         )
         for record in rrbs[::2]:
             contig, left, right, _ = _qname_envelope(record["query_name"])
@@ -120,20 +170,22 @@ def main(argv) -> int:
             if (record["aux"]["zf"][1][0] >> 4) & 0x7:
                 raise SystemExit("RRBS changed its directional conversion mode")
 
-        tbs = _run(
+        _, tbs = _run(
             core,
             root,
             "tbs",
             (
-                "--technology",
-                "TBS",
+                "tbs",
                 "--targets",
                 str(root / "mock-targets.bed"),
-                "--target-score",
+                "--sampling",
+                "score",
                 "--fragment-center-stddev",
                 "0",
-                "--insert-size",
+                "--insert-mean",
                 "12",
+                "--insert-sd",
+                "0",
             ),
         )
         expected_modes = {(11, 22): 0, (27, 38): 1}
@@ -149,6 +201,50 @@ def main(argv) -> int:
             observed.add(envelope)
         if observed != set(expected_modes):
             raise SystemExit("TBS weighted fixture did not exercise both targets")
+
+        references = []
+        for line in (root / "mock-reference.fa").read_text(
+            encoding="ascii"
+        ).splitlines():
+            if line.startswith(">"):
+                references.append("")
+            else:
+                references[-1] += line.strip()
+        standard_cases = (
+            (
+                "wgs",
+                "--insert-mean",
+                "8",
+                "--insert-sd",
+                "0",
+            ),
+            (
+                "wes",
+                "--targets",
+                str(root / "mock-targets.bed"),
+                "--fragment-center-stddev",
+                "0",
+                "--insert-mean",
+                "12",
+                "--insert-sd",
+                "0",
+            ),
+            (
+                "ts",
+                "--targets",
+                str(root / "mock-targets.bed"),
+                "--fragment-center-stddev",
+                "0",
+                "--insert-mean",
+                "12",
+                "--insert-sd",
+                "0",
+            ),
+        )
+        for arguments in standard_cases:
+            name = arguments[0]
+            manifest, records = _run(core, root, name, arguments)
+            _validate_standard(name, manifest, records, tuple(references))
     return 0
 
 

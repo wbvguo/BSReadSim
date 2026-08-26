@@ -28,8 +28,8 @@ from .._cext import (
 MAGIC = b"BSRSTRM\x00"
 PROTOCOL_MAJOR = 2
 PROTOCOL_MINOR = 1
+PROTOCOL_VERSION = "{}.{}".format(PROTOCOL_MAJOR, PROTOCOL_MINOR)
 PREAMBLE_FLAGS = 0
-CONFIG_SCHEMA_VERSION = "1.1"
 
 MAX_STRING_BYTES = 1024 * 1024
 MAX_FRAME_PAYLOAD = 64 * 1024 * 1024
@@ -86,6 +86,9 @@ class Technology(IntEnum):
     WGBS = 1
     RRBS = 2
     TBS = 3
+    WGS = 4
+    WES = 5
+    TS = 6
 
 
 class BaseEncoding(IntEnum):
@@ -94,7 +97,6 @@ class BaseEncoding(IntEnum):
 
 class AmbiguityPolicy(IntEnum):
     PRESERVE_N = 0
-    RESOLVE_ONCE = 1
 
 
 class CaptureStrand(IntEnum):
@@ -147,7 +149,6 @@ class Contig:
 class Header:
     run_id: str
     core_version: str
-    config_schema_version: str
     rng_contract: str
     master_seed: int
     normalized_config_sha256: bytes
@@ -369,8 +370,6 @@ def _validate_header(header: Header) -> None:
     _validated_string("header.core_version", header.core_version, nonempty=True)
     if _SEMVER.fullmatch(header.core_version) is None:
         raise ProtocolError("header.core_version must be a semantic version")
-    if header.config_schema_version != CONFIG_SCHEMA_VERSION:
-        raise ProtocolError("unsupported config schema version")
     if header.rng_contract != RNG_CONTRACT:
         raise ProtocolError("unsupported RNG contract")
     _require_u64("header.master_seed", header.master_seed)
@@ -385,7 +384,7 @@ def _validate_header(header: Header) -> None:
     if header.base_encoding != BaseEncoding.ACGTN_U8:
         raise ProtocolError("unsupported base encoding")
     if header.ambiguity_policy != AmbiguityPolicy.PRESERVE_N:
-        raise ProtocolError("the first v2 implementation requires PRESERVE_N")
+        raise ProtocolError("unsupported ambiguity policy")
     _require_u32("header.read_length_r1", header.read_length_r1)
     _require_u32("header.read_length_r2", header.read_length_r2)
     if header.read_length_r1 == 0:
@@ -1165,7 +1164,6 @@ def _decode_header_payload(payload: bytes) -> Header:
     decoder = _Decoder(payload)
     run_id = decoder.string("header.run_id")
     core_version = decoder.string("header.core_version")
-    config_schema_version = decoder.string("header.config_schema_version")
     rng_contract = decoder.string("header.rng_contract")
     master_seed = decoder.u64("header.master_seed")
     normalized_config_sha256 = decoder.raw(32, "header.normalized_config_sha256")
@@ -1194,11 +1192,14 @@ def _decode_header_payload(payload: bytes) -> Header:
     header = Header(
         run_id=run_id,
         core_version=core_version,
-        config_schema_version=config_schema_version,
         rng_contract=rng_contract,
         master_seed=master_seed,
         normalized_config_sha256=normalized_config_sha256,
-        technology=Technology(technology) if technology in (1, 2, 3) else technology,
+        technology=(
+            Technology(technology)
+            if technology in tuple(item.value for item in Technology)
+            else technology
+        ),
         has_details=bool(has_details) if has_details in (0, 1) else has_details,
         mates_per_fragment=mates_per_fragment,
         base_encoding=(
@@ -1206,7 +1207,7 @@ def _decode_header_payload(payload: bytes) -> Header:
         ),
         ambiguity_policy=(
             AmbiguityPolicy(ambiguity_policy)
-            if ambiguity_policy in (0, 1)
+            if ambiguity_policy == 0
             else ambiguity_policy
         ),
         read_length_r1=read_length_r1,
@@ -1684,7 +1685,6 @@ class ProtocolReader:
 __all__ = [
     "AmbiguityPolicy",
     "BaseEncoding",
-    "CONFIG_SCHEMA_VERSION",
     "CaptureStrand",
     "Contig",
     "CoreReportedError",
@@ -1702,6 +1702,7 @@ __all__ = [
     "PREAMBLE_FLAGS",
     "PROTOCOL_MAJOR",
     "PROTOCOL_MINOR",
+    "PROTOCOL_VERSION",
     "ProtocolError",
     "ProtocolReader",
     "ProtocolStream",

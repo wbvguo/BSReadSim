@@ -307,9 +307,6 @@ void validate_header(const Header &header)
     if (!semantic_version(header.core_version)) {
         throw ProtocolError("header.core_version must be a semantic version");
     }
-    if (header.config_schema_version != protocol::config_schema_version) {
-        throw ProtocolError("unsupported config schema version");
-    }
     if (header.rng_contract != protocol::rng_contract) {
         throw ProtocolError("unsupported RNG contract");
     }
@@ -317,6 +314,9 @@ void validate_header(const Header &header)
     case Technology::wgbs:
     case Technology::rrbs:
     case Technology::tbs:
+    case Technology::wgs:
+    case Technology::wes:
+    case Technology::ts:
         break;
     default:
         throw ProtocolError("header technology is invalid");
@@ -329,7 +329,7 @@ void validate_header(const Header &header)
         throw ProtocolError("unsupported base encoding");
     }
     if (header.ambiguity_policy != AmbiguityPolicy::preserve_n) {
-        throw ProtocolError("the first v2 implementation requires PRESERVE_N");
+        throw ProtocolError("unsupported ambiguity policy");
     }
     if (header.read_length_r1 == 0U
         || (header.mates_per_fragment == 1U && header.read_length_r2 != 0U)
@@ -443,7 +443,6 @@ std::vector<std::uint8_t> encode_header_payload(const Header &header)
     Encoder encoder(payload);
     encoder.string(header.run_id);
     encoder.string(header.core_version);
-    encoder.string(header.config_schema_version);
     encoder.string(header.rng_contract);
     encoder.u64(header.master_seed);
     encoder.raw(header.normalized_config_sha256);

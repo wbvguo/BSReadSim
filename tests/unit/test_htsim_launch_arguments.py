@@ -21,19 +21,19 @@ RUN_ID = "00000000-0000-4000-8000-0000000000ab"
 
 def base_config(technology="WGBS"):
     config = {
-        "schema_version": "1.1",
         "seed": "0",
         "reference": "reference.fa",
         "inputs": {},
         "technology": technology,
         "mutation": {},
+        "seeds": {"mutation": "11", "phasing": "12", "methylation": "13"},
         "fragments": {
             "paired_end": False,
             "read_length_1": 4,
             "insert_min": 4,
             "insert_mean": 6,
             "insert_max": 10,
-            "read_pairs": 2,
+            "count": 2,
         },
         "methylation": {
             "beta": {
@@ -52,16 +52,18 @@ def base_config(technology="WGBS"):
         "output": {
             "directory": "output",
             "prefix": "sample",
-            "compression": "gzip",
+            "format": "fastq.gz",
         },
     }
     if technology == "RRBS":
         config["rrbs"] = {"cut_sites": ["C|CGG", "CCTN|AGG"]}
-    elif technology == "TBS":
+    elif technology in ("TBS", "WES", "TS"):
         config["tbs"] = {
             "bed": "targets.bed",
             "fragment_center_stddev": 12.5,
         }
+    if technology in ("WGS", "WES", "TS"):
+        config["sequencing"]["conversion_rate"] = 0.0
     return config
 
 
@@ -83,19 +85,16 @@ class CoreArgvTests(unittest.TestCase):
         loaded = normalize_run_config(config, self.directory)
         return prepare_run(loaded)
 
-    def artifact(self, filename, artifact_format, version):
+    def artifact(self, filename):
         payload = ("artifact:" + filename).encode("utf-8")
         (self.directory / filename).write_bytes(payload)
         return {
             "path": filename,
-            "format": artifact_format,
-            "version": version,
             "sha256": hashlib.sha256(payload).hexdigest(),
         }
 
     def test_wgbs_single_end_projection_is_exact_and_deterministic(self):
         prepared = self.prepared()
-        reference_digest = hashlib.sha256(self.reference_bytes).hexdigest()
 
         observed = build_core_argv(prepared, RUN_ID, Path("/opt/bin/htsim-core"))
         expected = (
@@ -108,14 +107,16 @@ class CoreArgvTests(unittest.TestCase):
             prepared.config.sha256,
             "--seed",
             "0",
-            "--catalog-seed",
-            "0",
+            "--seed-mut",
+            "11",
+            "--seed-phase",
+            "12",
+            "--seed-meth",
+            "13",
             "--protocol-batch-fragments",
             "64",
             "--reference",
             str((self.directory / "reference.fa").resolve()),
-            "--reference-sha256",
-            reference_digest,
             "--technology",
             "WGBS",
             "--paired-end",
@@ -128,9 +129,9 @@ class CoreArgvTests(unittest.TestCase):
             "6",
             "--insert-max",
             "10",
-            "--insert-stddev",
+            "--insert-sd",
             "25",
-            "--read-pairs",
+            "--fragments",
             "2",
             "--max-ambiguous-fraction",
             "0.05",
@@ -213,6 +214,24 @@ class CoreArgvTests(unittest.TestCase):
                         protocol_batch_fragments=batch_fragments,
                     )
 
+    def test_standard_technology_identity_reaches_the_core(self):
+        (self.directory / "targets.bed").write_text(
+            "chr1\t0\t4\ttarget\t1\t+\n", encoding="ascii"
+        )
+        for technology in ("WGS", "WES", "TS"):
+            with self.subTest(technology=technology):
+                document = base_config(technology)
+                if technology in ("WES", "TS"):
+                    document["fragments"]["insert_sd"] = 0
+                prepared = self.prepared(document)
+                argv = build_core_argv(prepared, RUN_ID, "htsim-core")
+
+                self.assertEqual(option_value(argv, "--technology"), technology)
+                self.assertEqual(
+                    "--tbs-bed" in argv,
+                    technology in ("WES", "TS"),
+                )
+
     def test_core_worker_count_crosses_only_the_core_boundary(self):
         document = base_config()
         document["execution"]["core_workers"] = 4
@@ -233,7 +252,7 @@ class CoreArgvTests(unittest.TestCase):
             "insert_min": 4,
             "insert_mean": 6,
             "insert_max": 10,
-            "insert_stddev": 2.5,
+            "insert_sd": 2.5,
             "depth": 3.25,
         }
         for filename in (
@@ -248,9 +267,9 @@ class CoreArgvTests(unittest.TestCase):
             "cgmap": "sample.cgmap",
             "asm": "sample.asm",
         }
-        coverage_artifact = self.artifact("coverage.json", "json", "coverage-v1")
-        quality_artifact = self.artifact("quality.npz", "npz", "quality-v8")
-        error_artifact = self.artifact("error.json", "json", "error-v7")
+        coverage_artifact = self.artifact("coverage.tsv")
+        quality_artifact = self.artifact("quality.json")
+        error_artifact = self.artifact("error.json")
         document["coverage"] = {
             "kind": "profile",
             "artifact": coverage_artifact,
@@ -271,23 +290,24 @@ class CoreArgvTests(unittest.TestCase):
         self.assertEqual(option_value(argv, "--paired-end"), "true")
         self.assertEqual(option_value(argv, "--read-length-2"), "4")
         self.assertEqual(option_value(argv, "--depth"), "3.25")
-        self.assertNotIn("--read-pairs", argv)
+        self.assertNotIn("--fragments", argv)
         for name in ("vcf", "cgmap", "asm"):
             role = prepared.file_for_role("input." + name)
             self.assertEqual(option_value(argv, "--" + name), str(role.path))
-            self.assertEqual(option_value(argv, "--" + name + "-sha256"), role.sha256)
         tbs = prepared.file_for_role("input.tbs-bed")
         self.assertEqual(option_value(argv, "--tbs-bed"), str(tbs.path))
-        self.assertEqual(option_value(argv, "--tbs-bed-sha256"), tbs.sha256)
         self.assertEqual(option_value(argv, "--tbs-center-stddev"), "12.5")
         profile = prepared.file_for_role("model.coverage")
         self.assertEqual(option_value(argv, "--coverage-profile"), str(profile.path))
-        self.assertEqual(option_value(argv, "--coverage-profile-format"), "json")
-        self.assertEqual(
-            option_value(argv, "--coverage-profile-version"), "coverage-v1"
+        self.assertNotIn("--coverage-profile-format", argv)
+        self.assertNotIn("--coverage-profile-version", argv)
+        self.assertFalse(
+            any(
+                option.endswith("-sha256")
+                for option in argv
+                if option.startswith("--") and option != "--config-sha256"
+            )
         )
-
-        self.assertEqual(option_value(argv, "--coverage-profile-sha256"), profile.sha256)
 
         python_only_options = {
             "--conversion-rate",
@@ -297,18 +317,17 @@ class CoreArgvTests(unittest.TestCase):
             "--workers",
             "--max-in-flight-fragments",
             "--output",
-            "--compression",
+            "--format",
         }
         self.assertTrue(python_only_options.isdisjoint(argv))
         for artifact in (quality_artifact, error_artifact):
             self.assertNotIn(str((self.directory / artifact["path"]).resolve()), argv)
-            self.assertNotIn(artifact["version"], argv)
         self.assertIn(
             str((self.directory / "sample; literal.vcf").resolve()), argv
         )
         self.assertTrue(all(isinstance(argument, str) for argument in argv))
 
-    def test_bed_methyl_inputs_project_distinct_core_options_and_digests(self):
+    def test_bed_methyl_inputs_project_distinct_core_paths(self):
         for filename in ("sample.vcf", "levels.bedmethyl", "levels.asm.bed"):
             (self.directory / filename).write_bytes(filename.encode("utf-8"))
         document = base_config()
@@ -326,7 +345,6 @@ class CoreArgvTests(unittest.TestCase):
             role = prepared.file_for_role("input." + name)
             option = "--" + name.replace("_", "-")
             self.assertEqual(option_value(argv, option), str(role.path))
-            self.assertEqual(option_value(argv, option + "-sha256"), role.sha256)
         self.assertNotIn("--cgmap", argv)
         self.assertNotIn("--asm", argv)
 
@@ -388,9 +406,9 @@ class CoreArgvTests(unittest.TestCase):
 
     def test_json_number_and_boolean_spellings_are_stable(self):
         document = base_config()
-        document["fragments"].pop("read_pairs")
+        document["fragments"].pop("count")
         document["fragments"]["depth"] = 2.5
-        document["fragments"]["insert_stddev"] = -0.0
+        document["fragments"]["insert_sd"] = -0.0
         document["mutation"]["rate"] = 1e-7
         document["mutation"]["indel_fraction"] = 1.0
         document["mutation"]["homozygous_only"] = True
@@ -400,7 +418,7 @@ class CoreArgvTests(unittest.TestCase):
         argv = build_core_argv(prepared, RUN_ID, "htsim-core")
 
         self.assertEqual(option_value(argv, "--depth"), json.dumps(2.5))
-        self.assertEqual(option_value(argv, "--insert-stddev"), json.dumps(-0.0))
+        self.assertEqual(option_value(argv, "--insert-sd"), json.dumps(-0.0))
         self.assertEqual(option_value(argv, "--mutation-rate"), json.dumps(1e-7))
         self.assertEqual(option_value(argv, "--indel-fraction"), json.dumps(1.0))
         self.assertEqual(option_value(argv, "--homozygous-only"), "true")

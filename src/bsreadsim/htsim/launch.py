@@ -35,9 +35,10 @@ def build_core_argv(
 ) -> tuple[str, ...]:
     """Return one complete, deterministic ``htsim-core`` argv tuple.
 
-    Only fields owned by the C++ generator cross this boundary.  Input paths and
-    digests come from ``PreparedRun.files`` rather than being copied directly
-    from the normalized config.
+    Only fields owned by the C++ generator cross this boundary. Input paths
+    come from ``PreparedRun.files`` rather than being copied directly from the
+    normalized config; file digests remain manifest metadata and are not core
+    command-line inputs.
     """
 
     executable = _path_argument("core_executable", core_executable)
@@ -55,6 +56,7 @@ def build_core_argv(
     fragments = _mapping(config, "fragments")
     execution = _mapping(config, "execution")
     mutation = _mapping(config, "mutation")
+    seeds = _mapping(config, "seeds")
     methylation = _mapping(config, "methylation")
     beta = _mapping(methylation, "beta")
     coverage = _mapping(config, "coverage")
@@ -70,10 +72,22 @@ def build_core_argv(
         _digest("config.sha256", prepared.config.sha256),
         "--seed",
         _unsigned("config.seed", prepared.config.master_seed, UINT64_MAX),
-        "--catalog-seed",
+        "--seed-mut",
         _unsigned(
-            "methylation.catalog_seed",
-            int(_text("methylation.catalog_seed", methylation["catalog_seed"]), 10),
+            "seeds.mutation",
+            int(_text("seeds.mutation", seeds["mutation"]), 10),
+            UINT64_MAX,
+        ),
+        "--seed-phase",
+        _unsigned(
+            "seeds.phasing",
+            int(_text("seeds.phasing", seeds["phasing"]), 10),
+            UINT64_MAX,
+        ),
+        "--seed-meth",
+        _unsigned(
+            "seeds.methylation",
+            int(_text("seeds.methylation", seeds["methylation"]), 10),
             UINT64_MAX,
         ),
     ]
@@ -131,8 +145,8 @@ def build_core_argv(
         )
     arguments.extend(
         (
-            "--insert-stddev",
-            _number("fragments.insert_stddev", fragments["insert_stddev"]),
+            "--insert-sd",
+            _number("fragments.insert_sd", fragments["insert_sd"]),
         )
     )
     if "depth" in fragments:
@@ -140,9 +154,9 @@ def build_core_argv(
     else:
         arguments.extend(
             (
-                "--read-pairs",
+                "--fragments",
                 _unsigned(
-                    "fragments.read_pairs", fragments["read_pairs"], UINT32_MAX
+                    "fragments.count", fragments["count"], UINT32_MAX
                 ),
             )
         )
@@ -178,7 +192,7 @@ def build_core_argv(
                     _path_text("rrbs.candidate_bed", candidate_bed),
                 )
             )
-    elif technology == "TBS":
+    elif technology in ("TBS", "WES", "TS"):
         tbs = _mapping(config, "tbs")
         _append_file(arguments, "--tbs-bed", roles["input.tbs-bed"])
         arguments.extend(
@@ -189,24 +203,19 @@ def build_core_argv(
                 ),
             )
         )
-    elif technology != "WGBS":
-        raise CoreArgvError("technology must be WGBS, RRBS, or TBS")
+    elif technology not in ("WGBS", "WGS"):
+        raise CoreArgvError(
+            "technology must be WGBS, RRBS, TBS, WGS, WES, or TS"
+        )
 
     coverage_kind = _text("coverage.kind", coverage["kind"])
     arguments.extend(("--coverage", coverage_kind))
     if coverage_kind == "profile" and "artifact" in coverage:
-        artifact = _mapping(coverage, "artifact")
         profile = roles["model.coverage"]
         arguments.extend(
             (
                 "--coverage-profile",
                 _path_text("model.coverage.path", profile.path),
-                "--coverage-profile-format",
-                _text("coverage.artifact.format", artifact["format"]),
-                "--coverage-profile-version",
-                _text("coverage.artifact.version", artifact["version"]),
-                "--coverage-profile-sha256",
-                _digest("model.coverage.sha256", profile.sha256),
             )
         )
     elif coverage_kind == "profile" and technology == "RRBS":
@@ -331,7 +340,7 @@ def _expected_roles(
     for name in ("vcf", "cgmap", "bed_methyl", "methdb", "asm", "asm_bed"):
         if name in inputs:
             add("input." + name, inputs[name])
-    if config["technology"] == "TBS":
+    if config["technology"] in ("TBS", "WES", "TS"):
         add("input.tbs-bed", _mapping(config, "tbs")["bed"])
 
     model_containers = (
@@ -465,8 +474,6 @@ def _append_file(arguments: list, option: str, file_digest: FileDigest) -> None:
         (
             option,
             _path_text(file_digest.role + ".path", file_digest.path),
-            option + "-sha256",
-            _digest(file_digest.role + ".sha256", file_digest.sha256),
         )
     )
 

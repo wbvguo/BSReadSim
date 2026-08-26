@@ -23,6 +23,7 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
+from pathlib import Path
 from typing import BinaryIO
 import math
 import os
@@ -34,8 +35,7 @@ from types import TracebackType
 from .protocol import (
     DecodedBatchView,
     Header,
-    PROTOCOL_MAJOR,
-    PROTOCOL_MINOR,
+    PROTOCOL_VERSION,
     ProtocolReader,
     Trailer,
 )
@@ -440,12 +440,12 @@ class CoreProcess:
         return self._state == "succeeded"
 
     @property
-    def protocol_version(self) -> tuple[int, int]:
+    def protocol_version(self) -> str:
         if self._reader is None:
             raise self._error(
                 "protocol version is unavailable before process startup"
             )
-        return PROTOCOL_MAJOR, PROTOCOL_MINOR
+        return PROTOCOL_VERSION
 
     @property
     def header(self) -> Header:

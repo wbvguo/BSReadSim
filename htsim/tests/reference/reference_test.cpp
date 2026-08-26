@@ -172,8 +172,7 @@ std::string require_reference_error(Operation operation, const std::string &mess
 
 ReferenceSnapshot snapshot_for(const TempFile &file)
 {
-    const auto bytes = read_bytes(file.path());
-    return ReferenceSnapshot(file.path(), digest(bytes));
+    return ReferenceSnapshot(file.path());
 }
 
 std::vector<Contig> collect_contigs(ReferenceSnapshot &snapshot)
@@ -220,13 +219,13 @@ void test_plain_gzip_catalog_and_repeatable_visits()
     TempFile plain;
     write_text(plain.path(), fasta);
     const auto plain_bytes = read_bytes(plain.path());
-    ReferenceSnapshot plain_snapshot(plain.path(), digest(plain_bytes));
+    ReferenceSnapshot plain_snapshot(plain.path());
     verify_two_contigs(plain_snapshot, digest(plain_bytes));
 
     TempFile gzip;
     const auto compressed = gzip_bytes(fasta);
     write_bytes(gzip.path(), compressed);
-    ReferenceSnapshot gzip_snapshot(gzip.path(), digest(compressed));
+    ReferenceSnapshot gzip_snapshot(gzip.path());
     verify_two_contigs(gzip_snapshot, digest(compressed));
 }
 
@@ -247,25 +246,13 @@ void test_path_replacement_does_not_redirect_snapshot()
             "a path replacement redirected the open snapshot descriptor");
 }
 
-void test_digest_gate_precedes_decompression()
-{
-    TempFile file;
-    write_bytes(file.path(), {0x1fU, 0x8bU, 0, 0, 0, 0});
-    Sha256Digest wrong = {};
-    const std::string message = require_reference_error(
-        [&] {(void)ReferenceSnapshot(file.path(), wrong);},
-        "a wrong digest reached gzip decompression");
-    require(message.find("SHA-256") != std::string::npos,
-            "digest mismatch did not fail at the raw hash gate");
-}
-
 void test_non_regular_input_is_rejected_without_blocking()
 {
     TempFile fifo;
     require(unlink(fifo.path().c_str()) == 0, "failed to prepare FIFO fixture");
     require(mkfifo(fifo.path().c_str(), 0600) == 0, "failed to create FIFO fixture");
     require_reference_error(
-        [&] {(void)ReferenceSnapshot(fifo.path(), Sha256Digest{});},
+        [&] {(void)ReferenceSnapshot(fifo.path());},
         "a FIFO was accepted as a reference");
 }
 
@@ -275,7 +262,7 @@ void test_gzip_member_and_trailing_data_rules()
         gzip_bytes(">chr1\nAC"), gzip_bytes("GT\n>chr2\nNN\n"));
     TempFile continued;
     write_bytes(continued.path(), continuation);
-    ReferenceSnapshot continued_snapshot(continued.path(), digest(continuation));
+    ReferenceSnapshot continued_snapshot(continued.path());
     const auto continued_contigs = collect_contigs(continued_snapshot);
     require(continued_contigs.size() == 2
                 && continued_contigs[0].bases == Bases({0, 1, 2, 3}),
@@ -285,7 +272,7 @@ void test_gzip_member_and_trailing_data_rules()
         gzip_bytes(""), gzip_bytes(">chr1\nA\n"));
     TempFile empty_member;
     write_bytes(empty_member.path(), empty_then_fasta);
-    ReferenceSnapshot empty_snapshot(empty_member.path(), digest(empty_then_fasta));
+    ReferenceSnapshot empty_snapshot(empty_member.path());
     require(empty_snapshot.catalog().size() == 1,
             "an empty leading gzip member broke the FASTA stream");
 
@@ -299,8 +286,7 @@ void test_gzip_member_and_trailing_data_rules()
         std::move(many_members), gzip_bytes(">chr1\nA\n"));
     TempFile many_member_file;
     write_bytes(many_member_file.path(), many_members);
-    ReferenceSnapshot many_member_snapshot(
-        many_member_file.path(), digest(many_members));
+    ReferenceSnapshot many_member_snapshot(many_member_file.path());
     require(many_member_snapshot.catalog().size() == 1,
             "a long iterative gzip-member chain was rejected");
 
@@ -310,7 +296,7 @@ void test_gzip_member_and_trailing_data_rules()
         boundary_member, gzip_bytes(">chr2\nGT\n"));
     TempFile split;
     write_bytes(split.path(), split_magic);
-    ReferenceSnapshot split_snapshot(split.path(), digest(split_magic));
+    ReferenceSnapshot split_snapshot(split.path());
     require(split_snapshot.catalog().size() == 2,
             "gzip member magic split across input buffers was rejected");
 
@@ -325,8 +311,7 @@ void test_gzip_member_and_trailing_data_rules()
         write_bytes(trailing.path(), trailing_cases[index]);
         require_reference_error(
             [&] {
-                (void)ReferenceSnapshot(
-                    trailing.path(), digest(trailing_cases[index]));
+                (void)ReferenceSnapshot(trailing.path());
             },
             "gzip trailing data case was accepted");
     }
@@ -338,7 +323,7 @@ void test_gzip_member_and_trailing_data_rules()
     TempFile corrupt_file;
     write_bytes(corrupt_file.path(), corrupt);
     require_reference_error(
-        [&] {(void)ReferenceSnapshot(corrupt_file.path(), digest(corrupt));},
+        [&] {(void)ReferenceSnapshot(corrupt_file.path());},
         "a corrupt second gzip member was accepted");
 
     auto truncated = valid_member;
@@ -346,7 +331,7 @@ void test_gzip_member_and_trailing_data_rules()
     TempFile truncated_file;
     write_bytes(truncated_file.path(), truncated);
     require_reference_error(
-        [&] {(void)ReferenceSnapshot(truncated_file.path(), digest(truncated));},
+        [&] {(void)ReferenceSnapshot(truncated_file.path());},
         "a truncated gzip stream was accepted");
 }
 
@@ -377,7 +362,7 @@ void test_fasta_line_and_header_semantics()
         write_text(invalid.path(), document);
         const auto bytes = read_bytes(invalid.path());
         require_reference_error(
-            [&] {(void)ReferenceSnapshot(invalid.path(), digest(bytes));},
+            [&] {(void)ReferenceSnapshot(invalid.path());},
             "an invalid FASTA line/header document was accepted");
     }
 
@@ -385,7 +370,7 @@ void test_fasta_line_and_header_semantics()
     write_bytes(invalid_utf8.path(), {'>', 0xffU, '\n', 'A', '\n'});
     const auto invalid_name = read_bytes(invalid_utf8.path());
     require_reference_error(
-        [&] {(void)ReferenceSnapshot(invalid_utf8.path(), digest(invalid_name));},
+        [&] {(void)ReferenceSnapshot(invalid_utf8.path());},
         "an invalid UTF-8 contig name was accepted");
 
     // Descriptions are discarded at the input boundary, so only the retained
@@ -394,7 +379,7 @@ void test_fasta_line_and_header_semantics()
     write_bytes(
         ignored_description.path(), {'>', 'x', ' ', 0xffU, '\n', 'A', '\n'});
     const auto ignored_bytes = read_bytes(ignored_description.path());
-    ReferenceSnapshot ignored(ignored_description.path(), digest(ignored_bytes));
+    ReferenceSnapshot ignored(ignored_description.path());
     require(ignored.catalog()[0].name == "x",
             "discarded header description changed the retained contig name");
 
@@ -410,7 +395,7 @@ void test_fasta_line_and_header_semantics()
     write_text(oversized.path(), ">" + maximum_name + "\nA\n");
     const auto oversized_bytes = read_bytes(oversized.path());
     require_reference_error(
-        [&] {(void)ReferenceSnapshot(oversized.path(), digest(oversized_bytes));},
+        [&] {(void)ReferenceSnapshot(oversized.path());},
         "an oversized contig name was accepted");
 }
 
@@ -427,7 +412,7 @@ void test_sha_and_io_boundaries()
         TempFile file;
         write_text(file.path(), fasta);
         const auto bytes = read_bytes(file.path());
-        ReferenceSnapshot snapshot(file.path(), digest(bytes));
+        ReferenceSnapshot snapshot(file.path());
         require(snapshot.file_sha256() == digest(bytes)
                     && snapshot.catalog()[0].reference_sha256
                         == digest(std::string(total_size - 4, 'A')),
@@ -447,7 +432,7 @@ void test_duplicate_empty_and_invalid_base_inputs()
         write_text(file.path(), document);
         const auto bytes = read_bytes(file.path());
         require_reference_error(
-            [&] {(void)ReferenceSnapshot(file.path(), digest(bytes));},
+            [&] {(void)ReferenceSnapshot(file.path());},
             "duplicate, empty, or invalid-base FASTA was accepted");
     }
 }
@@ -545,7 +530,6 @@ int main()
 {
     test_plain_gzip_catalog_and_repeatable_visits();
     test_path_replacement_does_not_redirect_snapshot();
-    test_digest_gate_precedes_decompression();
     test_non_regular_input_is_rejected_without_blocking();
     test_gzip_member_and_trailing_data_rules();
     test_fasta_line_and_header_semantics();

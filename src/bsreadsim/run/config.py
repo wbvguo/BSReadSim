@@ -17,10 +17,7 @@ from jsonschema.exceptions import SchemaError, ValidationError
 
 PathLike = str | Path
 UINT64_MAX = (1 << 64) - 1
-RUN_CONFIG_SCHEMA_VERSION = "1.1"
 RUN_CONFIG_SCHEMA_FILENAME = "run-config.schema.json"
-WGBS_GC_PROFILE_FORMAT = "tsv"
-WGBS_GC_PROFILE_VERSION = "wgbs-gc-target-v2"
 
 
 class ConfigError(ValueError):
@@ -105,11 +102,11 @@ def normalize_run_config(
         raise ConfigValidationError(_format_schema_errors(errors))
 
     master_seed = _parse_seed(normalized.get("seed"))
-    catalog_seed = int(normalized["methylation"]["catalog_seed"], 10)
-    if catalog_seed > UINT64_MAX:
-        raise ConfigValidationError(
-            "$.methylation.catalog_seed: value exceeds unsigned 64-bit maximum"
-        )
+    for name, seed in normalized["seeds"].items():
+        if int(seed, 10) > UINT64_MAX:
+            raise ConfigValidationError(
+                "$.seeds.{}: value exceeds unsigned 64-bit maximum".format(name)
+            )
     _validate_cross_field_rules(normalized)
 
     try:
@@ -200,15 +197,25 @@ def _validate_cross_field_rules(config: Mapping[str, Any]) -> None:
     read_lengths = [fragments["read_length_1"]]
     if fragments["paired_end"]:
         read_lengths.append(fragments["read_length_2"])
-    if any(read_length > insert_min for read_length in read_lengths):
+    fixed_mean_insert = (
+        config["technology"] in ("WGBS", "TBS", "WGS", "WES", "TS")
+        and fragments["insert_sd"] == 0
+    )
+    read_boundary = insert_mean if fixed_mean_insert else insert_min
+    if any(read_length > read_boundary for read_length in read_lengths):
         raise ConfigValidationError(
-            "$.fragments: every read length must be <= insert_min"
+            "$.fragments: every read length must be <= {}".format(
+                "insert_mean" if fixed_mean_insert else "insert_min"
+            )
         )
 
     expected_sections = {
         "WGBS": (False, False),
         "RRBS": (True, False),
         "TBS": (False, True),
+        "WGS": (False, False),
+        "WES": (False, True),
+        "TS": (False, True),
     }
     observed_sections = ("rrbs" in config, "tbs" in config)
     if observed_sections != expected_sections[config["technology"]]:
@@ -219,13 +226,13 @@ def _validate_cross_field_rules(config: Mapping[str, Any]) -> None:
         )
 
     output = config["output"]
-    if output["fragment_summary"] and not output["bam"]:
+    if output["fragment_summary"] and output["format"] != "bam":
         raise ConfigValidationError(
-            "$.output.fragment_summary: requires bam=true"
+            "$.output.fragment_summary: requires format='bam'"
         )
-    if output["fragment_realization"] and not output["bam"]:
+    if output["fragment_realization"] and output["format"] != "bam":
         raise ConfigValidationError(
-            "$.output.fragment_realization: requires bam=true"
+            "$.output.fragment_realization: requires format='bam'"
         )
     if output["fragment_realization"] and not output["fragment_summary"]:
         raise ConfigValidationError(
@@ -252,6 +259,33 @@ def _validate_cross_field_rules(config: Mapping[str, Any]) -> None:
                     "$.rrbs.candidate_bed: RRBS profile coverage requires a candidate BED"
                 )
     inputs = config["inputs"]
+    if technology in ("WGS", "WES", "TS"):
+        unsupported = sorted(set(inputs) - {"vcf"})
+        if unsupported:
+            raise ConfigValidationError(
+                "$.inputs: standard sequencing forbids methylation input(s): {}".format(
+                    ", ".join(unsupported)
+                )
+            )
+        if config["output"]["save_methdb"]:
+            raise ConfigValidationError(
+                "$.output.save_methdb: standard sequencing has no MethDB truth"
+            )
+        if config["output"]["fragment_realization"]:
+            raise ConfigValidationError(
+                "$.output.fragment_realization: standard sequencing has no "
+                "methylation/conversion realization"
+            )
+        sequencing = config["sequencing"]
+        if sequencing["conversion_rate"] != 0:
+            raise ConfigValidationError(
+                "$.sequencing.conversion_rate: standard sequencing requires 0"
+            )
+        if not sequencing["directional"]:
+            raise ConfigValidationError(
+                "$.sequencing.directional: standard sequencing requires the "
+                "inert value true"
+            )
     if "methdb" in inputs:
         conflicts = ("cgmap", "bed_methyl", "asm", "asm_bed")
         if any(name in inputs for name in conflicts):
@@ -262,9 +296,6 @@ def _validate_cross_field_rules(config: Mapping[str, Any]) -> None:
             raise ConfigValidationError(
                 "$.inputs.methdb: cannot be combined with cgmap_pool=true"
             )
-    mutation = config["mutation"]
-
-
 def _resolve_paths(config: dict[str, Any], base_directory: Path) -> None:
     for path in (
         ("reference",),
@@ -363,9 +394,6 @@ __all__ = [
     "ConfigValidationError",
     "LoadedRunConfig",
     "PathLike",
-    "RUN_CONFIG_SCHEMA_VERSION",
     "UINT64_MAX",
-    "WGBS_GC_PROFILE_FORMAT",
-    "WGBS_GC_PROFILE_VERSION",
     "normalize_run_config",
 ]

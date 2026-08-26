@@ -50,9 +50,7 @@ using ContigVisitor = std::function<void(const Contig &)>;
 // permanently poisons the snapshot; subsequent visits are rejected.
 class ReferenceSnapshot {
 public:
-    ReferenceSnapshot(
-        const std::string &path,
-        const crypto::Sha256Digest &expected_file_sha256);
+    explicit ReferenceSnapshot(const std::string &path);
     ~ReferenceSnapshot();
 
     ReferenceSnapshot(const ReferenceSnapshot &) = delete;

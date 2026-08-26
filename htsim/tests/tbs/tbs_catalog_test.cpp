@@ -122,8 +122,7 @@ Bases encode(const std::string &text)
 TargetFile load(const std::vector<std::uint8_t> &bytes, TempFile &file)
 {
     write_bytes(file.path(), bytes);
-    return TargetFile(
-        file.path(), htsim::crypto::sha256(bytes), reference_catalog());
+    return TargetFile(file.path(), reference_catalog());
 }
 
 void test_bed6_projection_and_canonical_order()
@@ -183,18 +182,10 @@ void test_bed_rejections()
         write_bytes(file.path(), bytes);
         require_error(
             [&] {
-                (void)TargetFile(
-                    file.path(), htsim::crypto::sha256(bytes), catalog);
+                (void)TargetFile(file.path(), catalog);
             },
             "invalid BED input was accepted: " + bed);
     }
-
-    TempFile file;
-    const auto valid = bytes_of("chr1\t1\t2\tname\t0\t+\n");
-    write_bytes(file.path(), valid);
-    require_error(
-        [&] {(void)TargetFile(file.path(), {}, catalog);},
-        "BED digest mismatch was accepted");
 }
 
 void test_fixed_center_candidates_and_ambiguity()
@@ -348,7 +339,7 @@ void test_target_score_sampling_is_exact_and_chunk_independent()
                 "TBS target-score selection left its frozen RNG address");
     }
     require(observed == frozen,
-            "TBS target-score exact v1 selection vector changed");
+            "TBS target-score exact selection vector changed");
     require(std::find(observed.begin(), observed.end(), 0U) == observed.end(),
             "zero-weight TBS target was sampled");
 

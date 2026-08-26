@@ -256,10 +256,10 @@ def _iter_file_descriptors(
         if name in inputs:
             yield "input.{}".format(name), str(inputs[name]), None
 
-    if config["technology"] == "TBS":
+    if config["technology"] in ("TBS", "WES", "TS"):
         tbs = config["tbs"]
         if not isinstance(tbs, Mapping):
-            raise PreparationError("normalized TBS section is not an object")
+            raise PreparationError("normalized target section is not an object")
         yield "input.tbs-bed", str(tbs["bed"]), None
 
     model_containers = (

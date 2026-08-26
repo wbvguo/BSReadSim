@@ -90,8 +90,6 @@ std::vector<std::uint32_t> sample_valid_starts(
 
 namespace htsim::wgbs {
 
-inline constexpr std::string_view wgbs_gc_format = "tsv";
-inline constexpr std::string_view wgbs_gc_version = "wgbs-gc-target-v2";
 inline constexpr std::uint32_t maximum_attempts_per_fragment = 100000;
 
 class CoverageProfileError : public std::runtime_error {
@@ -102,13 +100,11 @@ public:
 // A verified line-oriented WGBS GC target distribution. Every physical line
 // is exactly one probability; its zero-based line index is its bin. The
 // probabilities must sum to one. Empty lines, comments, and extra fields are
-// invalid. Plain and gzip input are distinguished by their bytes and therefore
-// by their required digest.
+// invalid. Plain and gzip input are distinguished by their raw bytes and
+// retain different computed digests.
 class WgbsGcProfile {
 public:
-    WgbsGcProfile(
-        const std::string &path,
-        const crypto::Sha256Digest &expected_file_sha256);
+    explicit WgbsGcProfile(const std::string &path);
 
     std::uint32_t bin_count() const noexcept;
     std::uint32_t bin_for_counts(

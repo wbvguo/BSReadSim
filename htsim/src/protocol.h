@@ -25,7 +25,6 @@ inline constexpr std::size_t maximum_string_bytes = 1024U * 1024U;
 inline constexpr std::size_t maximum_frame_payload = 64U * 1024U * 1024U;
 inline constexpr std::uint32_t no_reference_position = UINT32_C(0xffffffff);
 inline constexpr std::uint8_t details_present = UINT8_C(0x01);
-inline constexpr std::string_view config_schema_version = "1.1";
 inline constexpr std::string_view rng_contract = rng::contract_id;
 
 using Digest = crypto::Sha256Digest;
@@ -49,9 +48,16 @@ enum class FrameType : std::uint8_t {
     error = 255,
 };
 
-enum class Technology : std::uint8_t {wgbs = 1, rrbs = 2, tbs = 3};
+enum class Technology : std::uint8_t {
+    wgbs = 1,
+    rrbs = 2,
+    tbs = 3,
+    wgs = 4,
+    wes = 5,
+    ts = 6,
+};
 enum class BaseEncoding : std::uint8_t {acgtn_u8 = 1};
-enum class AmbiguityPolicy : std::uint8_t {preserve_n = 0, resolve_once = 1};
+enum class AmbiguityPolicy : std::uint8_t {preserve_n = 0};
 enum class CaptureStrand : std::uint8_t {unknown = 0, forward = 1, reverse = 2};
 enum class VariantKind : std::uint8_t {snv = 1, insertion = 2, deletion = 3};
 enum class VariantSource : std::uint8_t {vcf = 1, de_novo = 2};
@@ -84,7 +90,6 @@ struct Contig {
 struct Header {
     std::string run_id;
     std::string core_version;
-    std::string config_schema_version;
     std::string rng_contract;
     std::uint64_t master_seed = 0;
     Digest normalized_config_sha256 = {};

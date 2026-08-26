@@ -90,7 +90,9 @@ def main(argv):
         read_stream(error)
     except CoreReportedError as reported:
         if reported.error_code != 1204 or reported.message != "batch exceeds limit":
-            raise SystemExit("Python decoded incorrect C++ error fields")
+            raise SystemExit(
+                "Python decoded incorrect C++ error fields"
+            ) from reported
     else:
         raise SystemExit("Python accepted the C++ terminal error stream")
     return 0

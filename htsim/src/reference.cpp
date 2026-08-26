@@ -326,14 +326,11 @@ private:
 
 class ReferenceSnapshot::Impl {
 public:
-    Impl(
-        const std::string &path,
-        const crypto::Sha256Digest &expected_digest)
-        : file_sha256(expected_digest)
+    explicit Impl(const std::string &path)
     {
         try {
-            snapshot = std::make_unique<text::TextSnapshot>(
-                path, expected_digest);
+            snapshot = std::make_unique<text::TextSnapshot>(path);
+            file_sha256 = snapshot->file_sha256();
             FastaParser parser(false, [this](ParsedContig &&contig) {
                 catalog.push_back(ContigMetadata{
                     std::move(contig.name),
@@ -361,10 +358,8 @@ public:
     std::atomic<bool> poisoned{false};
 };
 
-ReferenceSnapshot::ReferenceSnapshot(
-    const std::string &path,
-    const crypto::Sha256Digest &expected_file_sha256)
-    : impl_(std::make_unique<Impl>(path, expected_file_sha256))
+ReferenceSnapshot::ReferenceSnapshot(const std::string &path)
+    : impl_(std::make_unique<Impl>(path))
 {
 }
 

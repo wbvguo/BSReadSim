@@ -33,7 +33,6 @@ htsim::protocol::Header make_header(bool has_details)
     Header header;
     header.run_id = "12345678-1234-4234-8234-123456789abc";
     header.core_version = "0.2.0";
-    header.config_schema_version = std::string(config_schema_version);
     header.rng_contract = std::string(rng_contract);
     header.master_seed = 9U;
     header.normalized_config_sha256.fill(0x11U);

@@ -4,6 +4,7 @@
 
 #include "bam.h"
 #include "core.h"
+#include "methdb.h"
 
 namespace {
 
@@ -13,6 +14,8 @@ void print_help(std::ostream &output)
         << "Usage: htsim-core [core contract options]\n"
         << "       htsim-core rrbs-catalog [core contract options]\n"
         << "       htsim-core methdb-catalog [core contract options]\n"
+        << "       htsim-core variant-catalog [core contract options]\n"
+        << "       htsim-core methdb-export INPUT.methdb\n"
         << "       htsim-core --sam-to-bam LEVEL\n"
         << "Run bsreadsim --help for the supported public interface.\n"
         << "Output controls: --emit-details none|full.\n";
@@ -49,6 +52,17 @@ int main(int argc, char *argv[])
                 "-", "-", static_cast<int>(level_text.front() - '0'));
             return 0;
         }
+        if (argc == 3 && argv != nullptr && argv[1] != nullptr
+            && argv[2] != nullptr
+            && std::string_view(argv[1]) == "methdb-export") {
+            htsim::methdb::export_snapshot_bed(argv[2], std::cout);
+            std::cout.flush();
+            if (!std::cout) {
+                throw htsim::methdb::SnapshotError(
+                    "failed while flushing the MethDB BED");
+            }
+            return 0;
+        }
         if (argc >= 2 && argv != nullptr && argv[1] != nullptr
             && std::string_view(argv[1]) == "rrbs-catalog") {
             const htsim::core::CoreConfig config =
@@ -70,6 +84,18 @@ int main(int argc, char *argv[])
             if (!std::cout) {
                 throw htsim::core::CoreGeneratorError(
                     "failed while flushing the MethDB snapshot");
+            }
+            return 0;
+        }
+        if (argc >= 2 && argv != nullptr && argv[1] != nullptr
+            && std::string_view(argv[1]) == "variant-catalog") {
+            const htsim::core::CoreConfig config =
+                htsim::core::parse_core_config(argc - 1, argv + 1);
+            htsim::core::generate_variant_catalog_vcf(config, std::cout);
+            std::cout.flush();
+            if (!std::cout) {
+                throw htsim::core::CoreGeneratorError(
+                    "failed while flushing the variant VCF");
             }
             return 0;
         }

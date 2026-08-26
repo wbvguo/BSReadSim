@@ -36,27 +36,22 @@ namespace {
 
 using Values = std::unordered_map<std::string, std::vector<std::string>>;
 
-constexpr std::array<std::string_view, 53> known_options = {{
+constexpr std::array<std::string_view, 46> known_options = {{
     "--emit-details",
     "--protocol-batch-fragments",
     "--run-id",
     "--config-sha256",
     "--seed",
-    "--catalog-seed",
+    "--seed-mut",
+    "--seed-phase",
+    "--seed-meth",
     "--reference",
-    "--reference-sha256",
     "--vcf",
-    "--vcf-sha256",
     "--cgmap",
-    "--cgmap-sha256",
     "--bed-methyl",
-    "--bed-methyl-sha256",
     "--methdb",
-    "--methdb-sha256",
     "--asm",
-    "--asm-sha256",
     "--asm-bed",
-    "--asm-bed-sha256",
     "--technology",
     "--paired-end",
     "--read-length-1",
@@ -64,9 +59,9 @@ constexpr std::array<std::string_view, 53> known_options = {{
     "--insert-min",
     "--insert-mean",
     "--insert-max",
-    "--insert-stddev",
+    "--insert-sd",
     "--depth",
-    "--read-pairs",
+    "--fragments",
     "--max-ambiguous-fraction",
     "--chunk-size",
     "--core-workers",
@@ -82,13 +77,9 @@ constexpr std::array<std::string_view, 53> known_options = {{
     "--beta-chh",
     "--coverage",
     "--coverage-profile",
-    "--coverage-profile-format",
-    "--coverage-profile-version",
-    "--coverage-profile-sha256",
     "--rrbs-cut-site",
     "--rrbs-candidate-bed",
     "--tbs-bed",
-    "--tbs-bed-sha256",
     "--tbs-center-stddev",
 }};
 
@@ -243,15 +234,6 @@ crypto::Sha256Digest parse_digest(std::string_view text, std::string_view name)
     return digest;
 }
 
-std::optional<crypto::Sha256Digest> optional_digest(
-    const Values &values,
-    const std::string &name)
-{
-    const auto found = values.find(name);
-    if (found == values.end()) {return std::nullopt;}
-    return parse_digest(found->second.front(), name);
-}
-
 bool canonical_uuid(std::string_view value)
 {
     if (value.size() != 36) {return false;}
@@ -305,7 +287,28 @@ Technology parse_technology(std::string_view value)
     if (value == "WGBS") {return Technology::wgbs;}
     if (value == "RRBS") {return Technology::rrbs;}
     if (value == "TBS") {return Technology::tbs;}
-    throw CoreConfigError("--technology must be WGBS, RRBS, or TBS");
+    if (value == "WGS") {return Technology::wgs;}
+    if (value == "WES") {return Technology::wes;}
+    if (value == "TS") {return Technology::ts;}
+    throw CoreConfigError(
+        "--technology must be WGBS, RRBS, TBS, WGS, WES, or TS");
+}
+
+bool whole_genome_technology(Technology technology) noexcept
+{
+    return technology == Technology::wgbs || technology == Technology::wgs;
+}
+
+bool targeted_technology(Technology technology) noexcept
+{
+    return technology == Technology::tbs || technology == Technology::wes
+        || technology == Technology::ts;
+}
+
+bool bisulfite_technology(Technology technology) noexcept
+{
+    return technology == Technology::wgbs || technology == Technology::rrbs
+        || technology == Technology::tbs;
 }
 
 CoverageMode parse_coverage(std::string_view value)
@@ -315,14 +318,6 @@ CoverageMode parse_coverage(std::string_view value)
     if (value == "target-score") {return CoverageMode::target_score;}
     throw CoreConfigError(
         "--coverage must be uniform, profile, or target-score");
-}
-
-void require_input_pair(bool has_path, bool has_digest, const char *name)
-{
-    if (has_path != has_digest) {
-        throw CoreConfigError(
-            std::string(name) + " path and digest must appear together");
-    }
 }
 
 void require_nonempty(
@@ -362,8 +357,6 @@ void validate_core_config(const CoreConfig &config)
     require_nonempty(config.asm_path, "ASM path");
     require_nonempty(config.asm_bed_path, "ASM BED path");
     require_nonempty(config.coverage_profile_path, "coverage-profile path");
-    require_nonempty(config.coverage_profile_format, "coverage-profile format");
-    require_nonempty(config.coverage_profile_version, "coverage-profile version");
     require_nonempty(config.rrbs_candidate_bed_path, "RRBS candidate BED path");
     require_nonempty(config.tbs_bed_path, "TBS BED path");
 
@@ -373,25 +366,6 @@ void validate_core_config(const CoreConfig &config)
     const bool has_methdb = config.methdb_path.has_value();
     const bool has_asm = config.asm_path.has_value();
     const bool has_asm_bed = config.asm_bed_path.has_value();
-    require_input_pair(has_vcf, config.vcf_sha256.has_value(), "VCF");
-    require_input_pair(has_cgmap, config.cgmap_sha256.has_value(), "CGmap");
-    require_input_pair(
-        has_bed_methyl,
-        config.bed_methyl_sha256.has_value(),
-        "bedMethyl");
-    require_input_pair(
-        has_methdb,
-        config.methdb_sha256.has_value(),
-        "MethDB");
-    require_input_pair(has_asm, config.asm_sha256.has_value(), "ASM");
-    require_input_pair(
-        has_asm_bed,
-        config.asm_bed_sha256.has_value(),
-        "ASM BED");
-    require_input_pair(
-        config.tbs_bed_path.has_value(),
-        config.tbs_bed_sha256.has_value(),
-        "TBS BED");
     if (has_cgmap && has_bed_methyl) {
         throw CoreConfigError(
             "CGmap and bedMethyl inputs are mutually exclusive");
@@ -432,15 +406,25 @@ void validate_core_config(const CoreConfig &config)
           && config.insert_mean <= config.insert_max)) {
         throw CoreConfigError("insert_min <= insert_mean <= insert_max must hold");
     }
-    if (config.read_length_1 > config.insert_min) {
-        throw CoreConfigError("read length must not exceed insert_min");
+    if (!std::isfinite(config.insert_sd) || config.insert_sd < 0.0) {
+        throw CoreConfigError("insert_sd must be finite and non-negative");
+    }
+    const bool fixed_mean_insert =
+        (whole_genome_technology(config.technology)
+         || targeted_technology(config.technology))
+        && config.insert_sd == 0.0;
+    const std::uint32_t read_boundary =
+        fixed_mean_insert ? config.insert_mean : config.insert_min;
+    if (config.read_length_1 > read_boundary) {
+        throw CoreConfigError(
+            "read length exceeds the fixed mean or minimum variable insert");
     }
     if (config.paired_end) {
         if (!config.read_length_2) {
             throw CoreConfigError("paired-end mode requires read_length_2");
         }
         if (*config.read_length_2 == 0
-            || *config.read_length_2 > config.insert_min) {
+            || *config.read_length_2 > read_boundary) {
             throw CoreConfigError("read length 2 is outside the insert boundary");
         }
         if (*config.read_length_2 != config.read_length_1) {
@@ -450,18 +434,15 @@ void validate_core_config(const CoreConfig &config)
     } else if (config.read_length_2) {
         throw CoreConfigError("single-end mode forbids read_length_2");
     }
-    if (!std::isfinite(config.insert_stddev) || config.insert_stddev < 0.0) {
-        throw CoreConfigError("insert_stddev must be finite and non-negative");
-    }
-    if (config.depth.has_value() == config.read_pairs.has_value()) {
-        throw CoreConfigError("exactly one of depth and read_pairs is required");
+    if (config.depth.has_value() == config.fragment_count.has_value()) {
+        throw CoreConfigError("exactly one of depth and fragment_count is required");
     }
     if (config.depth
         && (!std::isfinite(*config.depth) || *config.depth <= 0.0)) {
         throw CoreConfigError("depth must be finite and positive");
     }
-    if (config.read_pairs && *config.read_pairs == 0U) {
-        throw CoreConfigError("read_pairs must be positive");
+    if (config.fragment_count && *config.fragment_count == 0U) {
+        throw CoreConfigError("fragment_count must be positive");
     }
 
     if (!valid_probability(config.max_ambiguous_fraction)) {
@@ -481,7 +462,8 @@ void validate_core_config(const CoreConfig &config)
         throw CoreConfigError(
             "VCF and de novo mutation generation are mutually exclusive");
     }
-    if ((has_vcf || config.mutation_rate > 0.0)
+    if (bisulfite_technology(config.technology)
+        && (has_vcf || config.mutation_rate > 0.0)
         && !config.update_variant_boundaries) {
         throw CoreConfigError(
             "variant generation requires update_variant_boundaries=true");
@@ -501,67 +483,60 @@ void validate_core_config(const CoreConfig &config)
         if (config.rrbs_cut_sites.empty()) {
             throw CoreConfigError("RRBS requires at least one cut site");
         }
-        if (config.tbs_bed_path || config.tbs_bed_sha256
-            || config.tbs_center_stddev) {
+        if (config.tbs_bed_path || config.tbs_center_stddev) {
             throw CoreConfigError("RRBS forbids TBS inputs");
         }
-    } else if (config.technology == Technology::tbs) {
+    } else if (targeted_technology(config.technology)) {
         if (!config.rrbs_cut_sites.empty()) {
-            throw CoreConfigError("TBS forbids RRBS cut sites");
+            throw CoreConfigError("targeted technologies forbid RRBS cut sites");
         }
         if (config.rrbs_candidate_bed_path) {
-            throw CoreConfigError("TBS forbids an RRBS candidate BED");
-        }
-        if (!config.tbs_bed_path || !config.tbs_bed_sha256
-            || !config.tbs_center_stddev) {
             throw CoreConfigError(
-                "TBS requires a BED path, digest, and center standard deviation");
+                "targeted technologies forbid an RRBS candidate BED");
+        }
+        if (!config.tbs_bed_path || !config.tbs_center_stddev) {
+            throw CoreConfigError(
+                "targeted technologies require a BED path and center standard deviation");
         }
         if (!std::isfinite(*config.tbs_center_stddev)
             || *config.tbs_center_stddev < 0.0) {
             throw CoreConfigError(
                 "TBS center standard deviation must be finite and non-negative");
         }
-        if (config.insert_mean != config.insert_min
-            || config.insert_max != config.insert_min
-            || config.insert_stddev != 0.0) {
-            throw CoreConfigError("TBS requires one fixed insert length");
+        if (config.insert_sd != 0.0) {
+            throw CoreConfigError(
+                "targeted technologies require --insert-sd 0");
         }
-    } else if (config.technology == Technology::wgbs) {
+    } else if (whole_genome_technology(config.technology)) {
         if (!config.rrbs_cut_sites.empty()) {
-            throw CoreConfigError("WGBS forbids RRBS cut sites");
+            throw CoreConfigError(
+                "whole-genome technologies forbid RRBS cut sites");
         }
         if (config.rrbs_candidate_bed_path) {
-            throw CoreConfigError("WGBS forbids an RRBS candidate BED");
+            throw CoreConfigError(
+                "whole-genome technologies forbid an RRBS candidate BED");
         }
-        if (config.tbs_bed_path || config.tbs_bed_sha256
-            || config.tbs_center_stddev) {
-            throw CoreConfigError("WGBS forbids TBS inputs");
+        if (config.tbs_bed_path || config.tbs_center_stddev) {
+            throw CoreConfigError(
+                "whole-genome technologies forbid targeted inputs");
         }
     } else {
         throw CoreConfigError("technology is outside the core contract");
     }
-    const bool has_coverage_artifact = config.coverage_profile_path.has_value()
-        || config.coverage_profile_format.has_value()
-        || config.coverage_profile_version.has_value()
-        || config.coverage_profile_sha256.has_value();
+    if (!bisulfite_technology(config.technology)
+        && (has_cgmap || has_bed_methyl || has_methdb || has_asm
+            || has_asm_bed || config.cgmap_pool)) {
+        throw CoreConfigError(
+            "standard sequencing forbids methylation inputs and pooling");
+    }
+    const bool has_coverage_artifact = config.coverage_profile_path.has_value();
     if (config.coverage == CoverageMode::profile) {
-        if (config.technology == Technology::wgbs) {
-            if (!config.coverage_profile_path
-                || !config.coverage_profile_format
-                || !config.coverage_profile_version
-                || !config.coverage_profile_sha256) {
+        if (whole_genome_technology(config.technology)) {
+            if (!config.coverage_profile_path) {
                 throw CoreConfigError(
-                    "WGBS profile coverage requires path, format, version, and digest");
+                    "whole-genome profile coverage requires a profile path");
             }
-            if (*config.coverage_profile_format != wgbs::wgbs_gc_format
-                || *config.coverage_profile_version != wgbs::wgbs_gc_version) {
-                throw CoreConfigError(
-                    "unsupported WGBS coverage profile format or version");
-            }
-            if ((config.insert_mean != config.insert_min
-                 || config.insert_max != config.insert_min
-                 || config.insert_stddev != 0.0)
+            if (config.insert_sd != 0.0
                 && (has_vcf || config.mutation_rate != 0.0)) {
                 throw CoreConfigError(
                     "variable-insert target GC does not yet support variants");
@@ -573,15 +548,15 @@ void validate_core_config(const CoreConfig &config)
             }
             if (has_coverage_artifact) {
                 throw CoreConfigError(
-                    "RRBS profile coverage forbids WGBS profile inputs");
+                    "RRBS profile coverage forbids whole-genome profile inputs");
             }
         } else {
             throw CoreConfigError(
-                "profile coverage supports WGBS or RRBS only");
+                "profile coverage supports WGBS, WGS, or RRBS only");
         }
     } else if (config.coverage == CoverageMode::target_score) {
-        if (config.technology != Technology::tbs) {
-            throw CoreConfigError("target-score coverage requires TBS");
+        if (!targeted_technology(config.technology)) {
+            throw CoreConfigError("target-score coverage requires TBS, WES, or TS");
         }
         if (has_coverage_artifact) {
             throw CoreConfigError(
@@ -618,26 +593,19 @@ CoreConfig parse_core_config(const std::vector<std::string> &arguments)
         required(values, "--config-sha256"), "--config-sha256");
     config.master_seed = parse_unsigned<std::uint64_t>(
         required(values, "--seed"), "--seed");
-    if (values.find("--catalog-seed") != values.end()) {
-        config.catalog_seed = parse_unsigned<std::uint64_t>(
-            required(values, "--catalog-seed"), "--catalog-seed");
-    }
+    config.mutation_seed = parse_unsigned<std::uint64_t>(
+        required(values, "--seed-mut"), "--seed-mut");
+    config.phasing_seed = parse_unsigned<std::uint64_t>(
+        required(values, "--seed-phase"), "--seed-phase");
+    config.methylation_seed = parse_unsigned<std::uint64_t>(
+        required(values, "--seed-meth"), "--seed-meth");
     config.reference_path = required(values, "--reference");
-    config.reference_sha256 = parse_digest(
-        required(values, "--reference-sha256"), "--reference-sha256");
     config.vcf_path = optional_text(values, "--vcf");
-    config.vcf_sha256 = optional_digest(values, "--vcf-sha256");
     config.cgmap_path = optional_text(values, "--cgmap");
-    config.cgmap_sha256 = optional_digest(values, "--cgmap-sha256");
     config.bed_methyl_path = optional_text(values, "--bed-methyl");
-    config.bed_methyl_sha256 = optional_digest(
-        values, "--bed-methyl-sha256");
     config.methdb_path = optional_text(values, "--methdb");
-    config.methdb_sha256 = optional_digest(values, "--methdb-sha256");
     config.asm_path = optional_text(values, "--asm");
-    config.asm_sha256 = optional_digest(values, "--asm-sha256");
     config.asm_bed_path = optional_text(values, "--asm-bed");
-    config.asm_bed_sha256 = optional_digest(values, "--asm-bed-sha256");
     config.technology = parse_technology(required(values, "--technology"));
 
     config.paired_end = parse_boolean(
@@ -654,14 +622,14 @@ CoreConfig parse_core_config(const std::vector<std::string> &arguments)
         required(values, "--insert-mean"), "--insert-mean");
     config.insert_max = parse_unsigned<std::uint32_t>(
         required(values, "--insert-max"), "--insert-max");
-    config.insert_stddev = parse_number(
-        required(values, "--insert-stddev"), "--insert-stddev");
+    config.insert_sd = parse_number(
+        required(values, "--insert-sd"), "--insert-sd");
     if (values.find("--depth") != values.end()) {
         config.depth = parse_number(required(values, "--depth"), "--depth");
     }
-    if (values.find("--read-pairs") != values.end()) {
-        config.read_pairs = parse_unsigned<std::uint32_t>(
-            required(values, "--read-pairs"), "--read-pairs");
+    if (values.find("--fragments") != values.end()) {
+        config.fragment_count = parse_unsigned<std::uint32_t>(
+            required(values, "--fragments"), "--fragments");
     }
     config.max_ambiguous_fraction = parse_number(
         required(values, "--max-ambiguous-fraction"),
@@ -698,12 +666,6 @@ CoreConfig parse_core_config(const std::vector<std::string> &arguments)
 
     config.coverage = parse_coverage(required(values, "--coverage"));
     config.coverage_profile_path = optional_text(values, "--coverage-profile");
-    config.coverage_profile_format = optional_text(
-        values, "--coverage-profile-format");
-    config.coverage_profile_version = optional_text(
-        values, "--coverage-profile-version");
-    config.coverage_profile_sha256 = optional_digest(
-        values, "--coverage-profile-sha256");
     const auto rrbs = values.find("--rrbs-cut-site");
     if (rrbs != values.end()) {
         for (const std::string &site : rrbs->second) {
@@ -713,7 +675,6 @@ CoreConfig parse_core_config(const std::vector<std::string> &arguments)
     config.rrbs_candidate_bed_path = optional_text(
         values, "--rrbs-candidate-bed");
     config.tbs_bed_path = optional_text(values, "--tbs-bed");
-    config.tbs_bed_sha256 = optional_digest(values, "--tbs-bed-sha256");
     if (values.find("--tbs-center-stddev") != values.end()) {
         config.tbs_center_stddev = parse_number(
             required(values, "--tbs-center-stddev"),
@@ -749,10 +710,8 @@ namespace {
 
 bool uses_variable_wgbs_insert(const CoreConfig &config) noexcept
 {
-    return config.technology == Technology::wgbs
-        && (config.insert_mean != config.insert_min
-            || config.insert_max != config.insert_min
-            || config.insert_stddev != 0.0);
+    return whole_genome_technology(config.technology)
+        && config.insert_sd != 0.0;
 }
 
 tbs::SamplingMode tbs_sampling_mode(const CoreConfig &config) noexcept
@@ -769,9 +728,10 @@ void require_generation_environment(const CoreConfig &config)
         throw CoreGeneratorError("minimal core requires round-to-nearest floating point");
     }
     fragment_builder::require_payload_fits_protocol({
-        config.technology == Technology::tbs
-            ? config.insert_min
-            : config.insert_max,
+        config.technology == Technology::rrbs
+            || uses_variable_wgbs_insert(config)
+            ? config.insert_max
+            : config.insert_mean,
         config.read_length_1,
         config.paired_end});
 }
@@ -787,7 +747,10 @@ std::uint64_t checked_add(
     return left + right;
 }
 
-crypto::Sha256Digest methdb_binding(const CoreConfig &config)
+crypto::Sha256Digest methdb_binding(
+    const CoreConfig &config,
+    const crypto::Sha256Digest &reference_sha256,
+    const std::optional<crypto::Sha256Digest> &vcf_sha256)
 {
     crypto::Sha256 hash;
     const auto bytes = [&](const void *data, std::size_t size) {
@@ -806,17 +769,20 @@ crypto::Sha256Digest methdb_binding(const CoreConfig &config)
         std::memcpy(&encoded, &value, sizeof(encoded));
         u64(encoded);
     };
-    static constexpr char contract[] = "bsreadsim-methdb-binding-v1";
+    static constexpr char contract[] = "methdb-binding";
     bytes(contract, sizeof(contract) - 1U);
-    bytes(config.reference_sha256.data(), config.reference_sha256.size());
-    u64(config.catalog_seed);
-    if (config.vcf_sha256) {
+    bytes(reference_sha256.data(), reference_sha256.size());
+    if (vcf_sha256) {
+        u64(config.methylation_seed);
+        u64(config.phasing_seed);
         const std::uint8_t marker = 1U;
         bytes(&marker, 1U);
-        bytes(config.vcf_sha256->data(), config.vcf_sha256->size());
+        bytes(vcf_sha256->data(), vcf_sha256->size());
     } else {
+        u64(config.methylation_seed);
         const std::uint8_t marker = 0U;
         bytes(&marker, 1U);
+        if (config.mutation_rate > 0.0) {u64(config.mutation_seed);}
         f64(config.mutation_rate);
         f64(config.indel_fraction);
         f64(config.indel_extension_probability);
@@ -969,11 +935,9 @@ void require_header_fits_protocol(
     const CoreConfig &config,
     const std::vector<reference::ContigMetadata> &catalog)
 {
-    // Four strings, seed, config digest, and contig count.
+    // Three strings, seed, config digest, and contig count.
     std::uint64_t bytes = UINT64_C(4) + config.run_id.size();
     bytes = checked_add(bytes, UINT64_C(4) + sizeof(core_version) - 1U, "header");
-    bytes = checked_add(
-        bytes, UINT64_C(4) + protocol::config_schema_version.size(), "header");
     bytes = checked_add(
         bytes, UINT64_C(4) + protocol::rng_contract.size(), "header");
     bytes = checked_add(bytes, UINT64_C(8) + 32U, "header");
@@ -993,7 +957,7 @@ void require_header_fits_protocol(
 wgbs::FixedFragmentShape sampling_shape(const CoreConfig &config)
 {
     return {
-        config.insert_min,
+        config.insert_mean,
         config.read_length_1,
         config.paired_end,
         config.max_ambiguous_fraction,
@@ -1031,8 +995,6 @@ protocol::Header make_header(
     protocol::Header header;
     header.run_id = config.run_id;
     header.core_version = core_version;
-    header.config_schema_version =
-        std::string(protocol::config_schema_version);
     header.rng_contract = std::string(protocol::rng_contract);
     header.master_seed = config.master_seed;
     header.normalized_config_sha256 = config.normalized_config_sha256;
@@ -1045,6 +1007,15 @@ protocol::Header make_header(
         break;
     case Technology::tbs:
         header.technology = protocol::Technology::tbs;
+        break;
+    case Technology::wgs:
+        header.technology = protocol::Technology::wgs;
+        break;
+    case Technology::wes:
+        header.technology = protocol::Technology::wes;
+        break;
+    case Technology::ts:
+        header.technology = protocol::Technology::ts;
         break;
     }
     header.has_details = config.emit_details;
@@ -1081,8 +1052,7 @@ void generate_rrbs_candidate_bed(
             throw CoreGeneratorError(
                 "RRBS candidate export requires uniform coverage and forbids a candidate BED input");
         }
-        reference::ReferenceSnapshot snapshot(
-            config.reference_path, config.reference_sha256);
+        reference::ReferenceSnapshot snapshot(config.reference_path);
         const auto &catalog = snapshot.catalog();
         for (const reference::ContigMetadata &contig : catalog) {
             if (contig.length > std::numeric_limits<std::uint32_t>::max()) {
@@ -1094,9 +1064,8 @@ void generate_rrbs_candidate_bed(
         if (config.vcf_path) {
             variant_file = std::make_unique<variant::VariantFile>(
                 *config.vcf_path,
-                *config.vcf_sha256,
                 catalog,
-                config.catalog_seed);
+                config.phasing_seed);
         }
         const bool generate_mutations = config.mutation_rate > 0.0;
         const variant::MutationParameters mutation_parameters{
@@ -1116,7 +1085,7 @@ void generate_rrbs_candidate_bed(
                 variant_records = &variant_file->variants(contig.index);
             } else if (generate_mutations) {
                 generated_variants = variant::generate_de_novo_events(
-                    contig, config.catalog_seed, mutation_parameters);
+                    contig, config.mutation_seed, mutation_parameters);
                 variant_records = &generated_variants;
             }
             std::unique_ptr<variant::ContigVariants> contig_variants;
@@ -1170,8 +1139,7 @@ void generate_methdb_catalog(
             throw CoreGeneratorError(
                 "MethDB export cannot load another MethDB snapshot");
         }
-        reference::ReferenceSnapshot snapshot(
-            config.reference_path, config.reference_sha256);
+        reference::ReferenceSnapshot snapshot(config.reference_path);
         const auto &catalog = snapshot.catalog();
         if (catalog.size() > std::numeric_limits<std::uint32_t>::max()) {
             throw CoreGeneratorError("MethDB contig count exceeds uint32");
@@ -1180,10 +1148,11 @@ void generate_methdb_catalog(
         if (config.vcf_path) {
             variant_file = std::make_unique<variant::VariantFile>(
                 *config.vcf_path,
-                *config.vcf_sha256,
                 catalog,
-                config.catalog_seed);
+                config.phasing_seed);
         }
+        std::optional<crypto::Sha256Digest> vcf_sha256;
+        if (variant_file) {vcf_sha256 = variant_file->file_sha256();}
         const bool generate_mutations = config.mutation_rate > 0.0;
         const variant::MutationParameters mutation_parameters{
             config.mutation_rate,
@@ -1196,9 +1165,6 @@ void generate_methdb_catalog(
             const bool bed_methyl = config.bed_methyl_path.has_value();
             cgmap_profile = std::make_unique<methdb::CgmapProfile>(
                 bed_methyl ? *config.bed_methyl_path : *config.cgmap_path,
-                bed_methyl
-                    ? *config.bed_methyl_sha256
-                    : *config.cgmap_sha256,
                 catalog,
                 bed_methyl
                     ? methdb::MethylationProfileFormat::bed_methyl
@@ -1214,7 +1180,6 @@ void generate_methdb_catalog(
             const bool asm_bed = config.asm_bed_path.has_value();
             asm_profile = std::make_unique<methdb::AsmProfile>(
                 asm_bed ? *config.asm_bed_path : *config.asm_path,
-                asm_bed ? *config.asm_bed_sha256 : *config.asm_sha256,
                 catalog,
                 asm_bed
                     ? methdb::AsmProfileFormat::bed
@@ -1223,7 +1188,7 @@ void generate_methdb_catalog(
         const methdb::ContextShapes shapes = methylation_shapes(config);
         methdb::SnapshotWriter writer(
             sink,
-            methdb_binding(config),
+            methdb_binding(config, snapshot.file_sha256(), vcf_sha256),
             static_cast<std::uint32_t>(catalog.size()));
         snapshot.visit_contigs([&](const reference::Contig &contig) {
             std::vector<methdb::CgmapRecord> cgmap_records;
@@ -1244,7 +1209,7 @@ void generate_methdb_catalog(
                 variant_records = &variant_file->variants(contig.index);
             } else if (generate_mutations) {
                 generated_variants = variant::generate_de_novo_events(
-                    contig, config.catalog_seed, mutation_parameters);
+                    contig, config.mutation_seed, mutation_parameters);
                 variant_records = &generated_variants;
             }
             if (variant_records) {
@@ -1253,7 +1218,7 @@ void generate_methdb_catalog(
                 const methdb::DiploidMethylationCatalog methylation(
                     contig,
                     contig_variants,
-                    config.catalog_seed,
+                    config.methylation_seed,
                     config.collect_non_cpg,
                     shapes,
                     cgmap_or_null,
@@ -1264,7 +1229,7 @@ void generate_methdb_catalog(
                 const methdb::MethylationCatalog methylation(
                     contig.bases,
                     contig.index,
-                    config.catalog_seed,
+                    config.methylation_seed,
                     config.collect_non_cpg,
                     shapes,
                     cgmap_or_null,
@@ -1280,14 +1245,55 @@ void generate_methdb_catalog(
     }
 }
 
+void generate_variant_catalog_vcf(
+    const CoreConfig &config,
+    std::ostream &sink)
+{
+    try {
+        require_generation_environment(config);
+        reference::ReferenceSnapshot snapshot(config.reference_path);
+        const auto &catalog = snapshot.catalog();
+        std::unique_ptr<variant::VariantFile> variant_file;
+        if (config.vcf_path) {
+            variant_file = std::make_unique<variant::VariantFile>(
+                *config.vcf_path, catalog, config.phasing_seed);
+        }
+        const variant::MutationParameters mutation_parameters{
+            config.mutation_rate,
+            config.indel_fraction,
+            config.indel_extension_probability,
+            config.homozygous_only,
+        };
+
+        variant::write_vcf_header(sink);
+        snapshot.visit_contigs([&](const reference::Contig &contig) {
+            if (variant_file) {
+                variant::write_vcf_contig(
+                    sink, contig, variant_file->variants(contig.index));
+            } else {
+                const std::vector<variant::Variant> events =
+                    variant::generate_de_novo_events(
+                        contig, config.mutation_seed, mutation_parameters);
+                variant::write_vcf_contig(sink, contig, events);
+            }
+        });
+        if (!sink) {
+            throw CoreGeneratorError("failed while flushing the variant VCF");
+        }
+    } catch (const CoreGeneratorError &) {
+        throw;
+    } catch (const std::exception &error) {
+        throw CoreGeneratorError(error.what());
+    }
+}
+
 protocol::Trailer generate_core_stream(
     const CoreConfig &config,
     std::ostream &sink)
 {
     try {
         require_generation_environment(config);
-        reference::ReferenceSnapshot snapshot(
-            config.reference_path, config.reference_sha256);
+        reference::ReferenceSnapshot snapshot(config.reference_path);
         const auto &catalog = snapshot.catalog();
         for (const reference::ContigMetadata &contig : catalog) {
             if (contig.length > std::numeric_limits<std::uint32_t>::max()) {
@@ -1301,10 +1307,11 @@ protocol::Trailer generate_core_stream(
         if (config.vcf_path) {
             variant_file = std::make_unique<variant::VariantFile>(
                 *config.vcf_path,
-                *config.vcf_sha256,
                 catalog,
-                config.catalog_seed);
+                config.phasing_seed);
         }
+        std::optional<crypto::Sha256Digest> vcf_sha256;
+        if (variant_file) {vcf_sha256 = variant_file->file_sha256();}
         const bool generate_mutations = config.mutation_rate > 0.0;
         const variant::MutationParameters mutation_parameters{
             config.mutation_rate,
@@ -1317,9 +1324,6 @@ protocol::Trailer generate_core_stream(
             const bool bed_methyl = config.bed_methyl_path.has_value();
             cgmap_profile = std::make_unique<methdb::CgmapProfile>(
                 bed_methyl ? *config.bed_methyl_path : *config.cgmap_path,
-                bed_methyl
-                    ? *config.bed_methyl_sha256
-                    : *config.cgmap_sha256,
                 catalog,
                 bed_methyl
                     ? methdb::MethylationProfileFormat::bed_methyl
@@ -1335,7 +1339,6 @@ protocol::Trailer generate_core_stream(
             const bool asm_bed = config.asm_bed_path.has_value();
             asm_profile = std::make_unique<methdb::AsmProfile>(
                 asm_bed ? *config.asm_bed_path : *config.asm_path,
-                asm_bed ? *config.asm_bed_sha256 : *config.asm_sha256,
                 catalog,
                 asm_bed
                     ? methdb::AsmProfileFormat::bed
@@ -1346,7 +1349,7 @@ protocol::Trailer generate_core_stream(
         const wgbs::FixedFragmentShape sampler_shape = sampling_shape(config);
         const bool variable_wgbs_insert = uses_variable_wgbs_insert(config);
         const wgbs::FixedFragmentShape target_calibration_shape{
-            variable_wgbs_insert ? config.insert_mean : config.insert_min,
+            config.insert_mean,
             config.read_length_1,
             config.paired_end,
             config.max_ambiguous_fraction,
@@ -1355,7 +1358,7 @@ protocol::Trailer generate_core_stream(
             config.insert_min,
             config.insert_mean,
             config.insert_max,
-            config.insert_stddev,
+            config.insert_sd,
         };
         const std::vector<rrbs::CutSite> rrbs_cut_sites =
             config.technology == Technology::rrbs
@@ -1369,16 +1372,15 @@ protocol::Trailer generate_core_stream(
                 *config.rrbs_candidate_bed_path, catalog);
         }
         std::unique_ptr<tbs::TargetFile> tbs_targets;
-        if (config.technology == Technology::tbs) {
+        if (targeted_technology(config.technology)) {
             tbs_targets = std::make_unique<tbs::TargetFile>(
-                *config.tbs_bed_path, *config.tbs_bed_sha256, catalog);
+                *config.tbs_bed_path, catalog);
         }
         std::unique_ptr<wgbs::WgbsGcProfile> coverage_profile;
-        if (config.technology == Technology::wgbs
+        if (whole_genome_technology(config.technology)
             && config.coverage == CoverageMode::profile) {
             coverage_profile = std::make_unique<wgbs::WgbsGcProfile>(
-                *config.coverage_profile_path,
-                *config.coverage_profile_sha256);
+                *config.coverage_profile_path);
         }
         const bool haplotype_gc_profile = coverage_profile
             && (variant_file || generate_mutations);
@@ -1386,8 +1388,8 @@ protocol::Trailer generate_core_stream(
         if (config.methdb_path) {
             fixed_methdb = std::make_unique<methdb::Snapshot>(
                 *config.methdb_path,
-                *config.methdb_sha256,
-                methdb_binding(config),
+                methdb_binding(
+                    config, snapshot.file_sha256(), vcf_sha256),
                 catalog);
         }
         std::vector<std::uint32_t> candidate_weights(catalog.size(), 0);
@@ -1411,7 +1413,7 @@ protocol::Trailer generate_core_stream(
                 variants = &variant_file->variants(contig.index);
             } else if (generate_mutations) {
                 generated_events = variant::generate_de_novo_events(
-                    contig, config.catalog_seed, mutation_parameters);
+                    contig, config.mutation_seed, mutation_parameters);
                 variants = &generated_events;
             }
             std::unique_ptr<variant::ContigVariants> planned_variants;
@@ -1425,14 +1427,14 @@ protocol::Trailer generate_core_stream(
                         ? config.insert_max
                         : (config.technology == Technology::rrbs
                             ? config.insert_max
-                            : config.insert_min),
+                            : config.insert_mean),
                     config.read_length_1,
                     config.paired_end,
-                    config.technology == Technology::wgbs
+                    whole_genome_technology(config.technology)
                         ? fragment_builder::ReadLayout::InsertCoordinate::reference
                         : fragment_builder::ReadLayout::InsertCoordinate::haplotype,
                 };
-                if (config.technology == Technology::wgbs) {
+                if (whole_genome_technology(config.technology)) {
                     require_variant_payload_fits_protocol(
                         *planned_variants, payload_layout);
                 } else {
@@ -1446,7 +1448,7 @@ protocol::Trailer generate_core_stream(
                 if (!asm_records.empty()) {
                     if (!planned_variants) {
                         throw CoreGeneratorError(
-                            "ASM planning lost its required VCF catalog");
+                            "ASM planning lost its required VCF variant set");
                     }
                     std::vector<methdb::CgmapRecord> cgmap_records;
                     if (cgmap_profile) {
@@ -1458,7 +1460,7 @@ protocol::Trailer generate_core_stream(
                     (void)methdb::DiploidMethylationCatalog(
                         contig,
                         *planned_variants,
-                        config.catalog_seed,
+                        config.methylation_seed,
                         config.collect_non_cpg,
                         context_shapes,
                         cgmap_records_or_null,
@@ -1466,7 +1468,7 @@ protocol::Trailer generate_core_stream(
                         config.cgmap_pool);
                 }
             }
-            if (config.technology == Technology::wgbs) {
+            if (whole_genome_technology(config.technology)) {
                 if (coverage_profile) {
                     if (variable_wgbs_insert) {
                         if (planned_variants) {
@@ -1612,7 +1614,7 @@ protocol::Trailer generate_core_stream(
                           *planned_variants,
                           tbs_targets->targets(contig.index),
                           *config.tbs_center_stddev,
-                          config.insert_min,
+                          config.insert_mean,
                           config.read_length_1,
                           config.paired_end,
                           config.max_ambiguous_fraction,
@@ -1622,7 +1624,7 @@ protocol::Trailer generate_core_stream(
                           tbs_targets->targets(contig.index),
                           contig.index,
                           *config.tbs_center_stddev,
-                          config.insert_min,
+                          config.insert_mean,
                           config.read_length_1,
                           config.paired_end,
                           config.max_ambiguous_fraction,
@@ -1643,13 +1645,13 @@ protocol::Trailer generate_core_stream(
         }
 
         std::uint32_t requested_fragment_count = 0U;
-        if (config.read_pairs) {
-            requested_fragment_count = *config.read_pairs;
+        if (config.fragment_count) {
+            requested_fragment_count = *config.fragment_count;
         } else {
             std::uint64_t effective_reference_bases = 0U;
             for (std::size_t index = 0U; index < catalog.size(); ++index) {
                 std::uint64_t contribution = target_reference_bases[index];
-                if (config.technology == Technology::wgbs) {
+                if (whole_genome_technology(config.technology)) {
                     const bool eligible = target_calibration
                         ? target_calibration->contig_allocation_weights[index] > 0.0
                         : candidate_weights[index] > 0U;
@@ -1660,7 +1662,7 @@ protocol::Trailer generate_core_stream(
                     contribution,
                     "target reference");
             }
-            requested_fragment_count = depth_count::read_pairs(
+            requested_fragment_count = depth_count::fragments(
                 *config.depth,
                 effective_reference_bases,
                 config.read_length_1,
@@ -1714,7 +1716,7 @@ protocol::Trailer generate_core_stream(
                 variants = &variant_file->variants(contig.index);
             } else if (generate_mutations) {
                 generated_events = variant::generate_de_novo_events(
-                    contig, config.catalog_seed, mutation_parameters);
+                    contig, config.mutation_seed, mutation_parameters);
                 variants = &generated_events;
             }
             std::unique_ptr<variant::ContigVariants> contig_variants;
@@ -1727,11 +1729,19 @@ protocol::Trailer generate_core_stream(
                     contig.bases,
                     *variants,
                     contig.index);
-                if (fixed_methdb) {
+                if (!bisulfite_technology(config.technology)) {
+                    diploid_methylation_catalog =
+                        std::make_unique<methdb::DiploidMethylationCatalog>(
+                            contig.index,
+                            static_cast<std::uint32_t>(contig.length),
+                            std::vector<methdb::DiploidSite>{},
+                            std::array<std::vector<methdb::DiploidSite>, 2>{});
+                } else if (fixed_methdb) {
                     const auto &saved = fixed_methdb->contig(contig.index);
                     if (!saved.diploid) {
                         throw CoreGeneratorError(
-                            "MethDB contig is not diploid for the variant catalog");
+                            "MethDB contig is not diploid for the prepared "
+                            "variant set");
                     }
                     diploid_methylation_catalog =
                         std::make_unique<methdb::DiploidMethylationCatalog>(
@@ -1744,7 +1754,7 @@ protocol::Trailer generate_core_stream(
                         std::make_unique<methdb::DiploidMethylationCatalog>(
                             contig,
                             *contig_variants,
-                            config.catalog_seed,
+                            config.methylation_seed,
                             config.collect_non_cpg,
                             context_shapes,
                             cgmap_records_or_null,
@@ -1752,11 +1762,17 @@ protocol::Trailer generate_core_stream(
                             config.cgmap_pool);
                 }
             } else {
-                if (fixed_methdb) {
+                if (!bisulfite_technology(config.technology)) {
+                    reference_methylation_catalog =
+                        std::make_unique<methdb::MethylationCatalog>(
+                            static_cast<std::uint32_t>(contig.length),
+                            std::vector<methdb::CatalogSite>{});
+                } else if (fixed_methdb) {
                     const auto &saved = fixed_methdb->contig(contig.index);
                     if (saved.diploid) {
                         throw CoreGeneratorError(
-                            "MethDB contig is diploid without a variant catalog");
+                            "MethDB contig is diploid without a prepared "
+                            "variant set");
                     }
                     reference_methylation_catalog =
                         std::make_unique<methdb::MethylationCatalog>(
@@ -1767,7 +1783,7 @@ protocol::Trailer generate_core_stream(
                         std::make_unique<methdb::MethylationCatalog>(
                             contig.bases,
                             contig.index,
-                            config.catalog_seed,
+                            config.methylation_seed,
                             config.collect_non_cpg,
                             context_shapes,
                             cgmap_records_or_null,
@@ -1821,7 +1837,7 @@ protocol::Trailer generate_core_stream(
                 const fragment_builder::ReadLayout &layout) {
                 if (!contig_variants || !diploid_methylation_catalog) {
                     throw CoreGeneratorError(
-                        "haplotype fragment lost its variant catalog");
+                        "haplotype fragment lost its prepared variant set");
                 }
                 auto projection = haplotype::project_interval(
                     contig,
@@ -1844,7 +1860,7 @@ protocol::Trailer generate_core_stream(
 
             std::uint32_t emitted_for_contig = 0;
             std::uint64_t candidate_ordinal = 0;
-            if (config.technology == Technology::wgbs) {
+            if (whole_genome_technology(config.technology)) {
                 std::unique_ptr<wgbs::VariableHaplotypeSampler>
                     variable_haplotype_starts;
                 std::unique_ptr<wgbs::VariableWgbsSampler>
@@ -1965,7 +1981,7 @@ protocol::Trailer generate_core_stream(
                     }
                 }
                 const fragment_builder::ReadLayout fixed_read_layout{
-                    config.insert_min,
+                    config.insert_mean,
                     config.read_length_1,
                     config.paired_end};
                 while (emitted_for_contig < requested) {
@@ -2108,8 +2124,8 @@ protocol::Trailer generate_core_stream(
                 std::unique_ptr<rrbs::CandidateCatalog> reference_catalog;
                 std::unique_ptr<rrbs::DiploidCandidateCatalog> diploid_catalog;
                 if (diploid_rrbs) {
-                    diploid_catalog =
-                        std::make_unique<rrbs::DiploidCandidateCatalog>(
+                        diploid_catalog =
+                            std::make_unique<rrbs::DiploidCandidateCatalog>(
                             contig,
                             *contig_variants,
                             rrbs_cut_sites,
@@ -2153,7 +2169,8 @@ protocol::Trailer generate_core_stream(
                     if (observed_allocation_weight
                         != candidate_weights[contig.index]) {
                         throw CoreGeneratorError(
-                            "RRBS catalog changed between planning and generation");
+                            "RRBS candidate set changed between planning "
+                            "and generation");
                     }
                 }
                 while (emitted_for_contig < requested) {
@@ -2222,13 +2239,13 @@ protocol::Trailer generate_core_stream(
                 std::unique_ptr<tbs::CandidateCatalog> reference_catalog;
                 std::unique_ptr<tbs::DiploidCandidateCatalog> diploid_catalog;
                 if (diploid_tbs) {
-                    diploid_catalog =
-                        std::make_unique<tbs::DiploidCandidateCatalog>(
+                        diploid_catalog =
+                            std::make_unique<tbs::DiploidCandidateCatalog>(
                             contig,
                             *contig_variants,
                             tbs_targets->targets(contig.index),
                             *config.tbs_center_stddev,
-                            config.insert_min,
+                            config.insert_mean,
                             config.read_length_1,
                             config.paired_end,
                             config.max_ambiguous_fraction,
@@ -2239,7 +2256,7 @@ protocol::Trailer generate_core_stream(
                         tbs_targets->targets(contig.index),
                         contig.index,
                         *config.tbs_center_stddev,
-                        config.insert_min,
+                        config.insert_mean,
                         config.read_length_1,
                         config.paired_end,
                         config.max_ambiguous_fraction,
@@ -2251,7 +2268,8 @@ protocol::Trailer generate_core_stream(
                 if (observed_allocation_weight
                     != candidate_weights[contig.index]) {
                     throw CoreGeneratorError(
-                        "TBS catalog changed between planning and generation");
+                        "TBS target set changed between planning and "
+                        "generation");
                 }
                 while (emitted_for_contig < requested) {
                     const std::uint32_t remaining =

@@ -11,7 +11,6 @@ import unittest
 from bsreadsim.htsim.protocol import (
     AmbiguityPolicy,
     BaseEncoding,
-    CONFIG_SCHEMA_VERSION,
     CaptureStrand,
     Contig,
     CoreReportedError,
@@ -48,10 +47,9 @@ def make_header(*, details: bool) -> Header:
     return Header(
         run_id="00000000-0000-4000-8000-000000000002",
         core_version="2.0.0-alpha.1",
-        config_schema_version=CONFIG_SCHEMA_VERSION,
         rng_contract=RNG_CONTRACT,
         master_seed=0x0123456789ABCDEF,
-        normalized_config_sha256=hashlib.sha256(b"protocol-v2-config").digest(),
+        normalized_config_sha256=hashlib.sha256(b"protocol-config").digest(),
         technology=Technology.WGBS,
         has_details=details,
         mates_per_fragment=1,
@@ -211,6 +209,17 @@ def rewrite_frame(stream: bytes, frame_index: int, mutate) -> bytes:
 
 
 class ProtocolRoundTripTests(unittest.TestCase):
+    def test_standard_technology_values_round_trip(self) -> None:
+        for technology in (Technology.WGS, Technology.WES, Technology.TS):
+            with self.subTest(technology=technology):
+                decoded = read_stream(
+                    encode_stream(
+                        replace(make_header(details=False), technology=technology),
+                        (),
+                    )
+                )
+                self.assertIs(decoded.header.technology, technology)
+
     def test_crc_primitive_remains_castagnoli(self) -> None:
         self.assertEqual(crc32c(b"123456789"), 0xE3069283)
 
@@ -300,8 +309,8 @@ class ProtocolGoldenFixtureTests(unittest.TestCase):
     def test_frozen_binary_lengths_and_sha256_are_manifested(self) -> None:
         expected = {
             "header-none": (
-                244,
-                "5bd464816d26450bbb801661077047092716bfafa1e81d06e924c957c726e61e",
+                232,
+                "c35704dd2df699639315d2520be77a933817983da0e3c9fcce9f003bc9a2bb53",
             ),
             "batch-none": (
                 156,
@@ -310,7 +319,7 @@ class ProtocolGoldenFixtureTests(unittest.TestCase):
             "batch-full": (496, "7fca502060dae056c67a28d68225de2a23fb069b5212af74120137ea6eeca74c"),
             "trailer-none": (
                 112,
-                "8065c6bdcc203aeb450b913d3dd1fbbeaa981d4722ea8f8b3cb4486deb5b337f",
+                "bf8620edb541be1061851877fffa05bedb1ceca91b748ee2feaf1d9dba40deef",
             ),
             "error": (
                 48,
