@@ -2,6 +2,24 @@ cmake_minimum_required(VERSION 3.20)
 
 project(BSReadSim LANGUAGES C CXX)
 
+file(
+    STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/src/bsreadsim/_version.py"
+    BSREADSIM_VERSION_ASSIGNMENT
+    REGEX
+        "^__version__ = \"[0-9]+\\.[0-9]+\\.[0-9]+([-.+][0-9A-Za-z.-]+)?\"$"
+)
+list(LENGTH BSREADSIM_VERSION_ASSIGNMENT BSREADSIM_VERSION_ASSIGNMENT_COUNT)
+if(NOT BSREADSIM_VERSION_ASSIGNMENT_COUNT EQUAL 1)
+    message(FATAL_ERROR "src/bsreadsim/_version.py must define one semantic version")
+endif()
+string(
+    REGEX REPLACE
+    "^__version__ = \"([^\"]+)\"$"
+    "\\1"
+    BSREADSIM_VERSION
+    "${BSREADSIM_VERSION_ASSIGNMENT}"
+)
+
 include(CTest)
 include(ExternalProject)
 
@@ -122,6 +140,9 @@ add_library(
     htsim/src/wgbs.cpp
 )
 target_include_directories(htsim PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/htsim/src")
+target_compile_definitions(
+    htsim PUBLIC BSREADSIM_VERSION="${BSREADSIM_VERSION}"
+)
 target_link_libraries(
     htsim
     PUBLIC ZLIB::ZLIB Threads::Threads
@@ -172,6 +193,10 @@ if(BUILD_TESTING AND EXISTS "${TEST_ROOT}")
             "${CMAKE_COMMAND}" -E copy_directory
             "${CMAKE_CURRENT_SOURCE_DIR}/src/bsreadsim"
             "${PYTHON_TEST_PACKAGE}/bsreadsim"
+        COMMAND
+            "${CMAKE_COMMAND}" -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/data"
+            "${PYTHON_TEST_PACKAGE}/bsreadsim/data"
         COMMAND
             "${Python3_EXECUTABLE}" setup.py build_ext
             --build-lib "${PYTHON_TEST_PACKAGE}"
@@ -227,6 +252,9 @@ if(BUILD_TESTING AND EXISTS "${TEST_ROOT}")
     bsreadsim_add_python_test(pipeline_cross_language check_pipeline_e2e.py)
     bsreadsim_add_python_test(bam_cross_language check_bam.py)
     bsreadsim_add_python_test(methdb_cross_language check_methdb.py)
+    bsreadsim_add_python_test(
+        variant_catalog_cross_language check_variant_catalog.py
+    )
     bsreadsim_add_python_test(
         technology_outputs_cross_language check_technology_outputs.py
     )

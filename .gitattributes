@@ -1,0 +1,26 @@
+* text=auto eol=lf
+
+*.a binary
+*.bam binary
+*.bai binary
+*.dll binary
+*.dylib binary
+*.exe binary
+*.gif binary
+*.gz binary
+*.ico binary
+*.jpeg binary
+*.jpg binary
+*.lib binary
+*.methdb binary
+*.npy binary
+*.npz binary
+*.o binary
+*.obj binary
+*.onnx binary
+*.pdf binary
+*.png binary
+*.pyd binary
+*.so binary
+*.woff binary
+*.woff2 binary

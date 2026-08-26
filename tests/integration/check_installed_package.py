@@ -5,11 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 import tempfile
 
 from bsreadsim import __version__
+from bsreadsim.htsim.protocol import PROTOCOL_VERSION
 from bsreadsim.run.manifest import verify_complete_manifest
 from bsreadsim.htsim.launch import packaged_core_candidate, resolve_core_executable
 
@@ -28,26 +30,25 @@ def _baseline_arguments(output_directory: str) -> list[str]:
         "0",
         "--read-length",
         "3",
-        "--insert-size",
+        "--insert-mean",
         "5",
+        "--insert-sd",
+        "0",
         "--max-ambiguous-fraction",
         "0",
         "--beta-cg",
-        "2",
-        "5",
+        "2,5",
         "--beta-chg",
-        "3",
-        "4",
+        "3,4",
         "--beta-chh",
-        "5",
-        "2",
+        "5,2",
         "--conversion-rate",
         "0.998",
         "--phred",
         "37",
         "--error-rate",
         "0.01",
-        "--coverage-profile",
+        "--gc-profile",
         "coverage.tsv",
         "--workers",
         "2",
@@ -57,8 +58,8 @@ def _baseline_arguments(output_directory: str) -> list[str]:
         "2",
         "--prefix",
         "sample",
-        "--compression",
-        "gzip",
+        "--format",
+        "fastq.gz",
     ]
 
 
@@ -71,6 +72,7 @@ def _run_cli(
         "-m",
         "bsreadsim",
         "run",
+        "wgbs",
         *_baseline_arguments(output_directory),
     ]
     completed = subprocess.run(
@@ -87,9 +89,20 @@ def _run_cli(
             )
         )
     manifest_path = Path(completed.stdout.strip())
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_text = manifest_path.read_text(encoding="utf-8")
+    manifest = json.loads(manifest_text)
     verify_complete_manifest(manifest)
-    if manifest["versions"]["protocol"] != "2.1":
+    expected_argv = [
+        "bsreadsim",
+        "run",
+        "wgbs",
+        *_baseline_arguments(output_directory),
+    ]
+    if shlex.split(manifest["command"]["user_command"]) != expected_argv:
+        raise SystemExit("installed CLI manifest did not preserve argv")
+    if not manifest_text.startswith("{\n  \"command\": {"):
+        raise SystemExit("installed CLI manifest is not pretty-printed JSON")
+    if manifest["details"]["protocol_version"] != PROTOCOL_VERSION:
         raise SystemExit("installed manifest recorded the wrong protocol")
     return manifest_path, manifest
 
@@ -110,6 +123,28 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="bsreadsim-installed-") as temporary:
         directory = Path(temporary).resolve()
+        bundled_reference = directory / "test.fa"
+        copied = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "bsreadsim",
+                "export",
+                "test-fasta",
+                "-o",
+                str(bundled_reference),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if copied.returncode != 0 or copied.stderr:
+            raise SystemExit("installed resource copy failed: {!r}".format(copied.stderr))
+        if Path(copied.stdout.strip()) != bundled_reference:
+            raise SystemExit("installed resource copy reported the wrong path")
+        if not bundled_reference.read_bytes().startswith(b">bsreadsim_test\n"):
+            raise SystemExit("installed wheel lost the bundled test FASTA")
+
         (directory / "tiny.fa").write_bytes(b">chr1\nACGTCGTAA\n")
         profile_bytes = b"0.5\n0.5\n"
         (directory / "coverage.tsv").write_bytes(profile_bytes)
@@ -117,15 +152,15 @@ def main() -> int:
         expected_manifest_path = directory / "output" / "sample.manifest.json"
         if manifest_path != expected_manifest_path:
             raise SystemExit("installed CLI reported the wrong manifest")
-        normalized = manifest["config"]["normalized"]
-        if normalized["technology"] != "WGBS":
+        effective = manifest["details"]["configuration"]
+        if effective["technology"] != "WGBS":
             raise SystemExit("installed WGBS default was not materialized")
-        artifact = normalized["coverage"]["artifact"]
+        artifact = effective["coverage"]["artifact"]
         if artifact["sha256"] != hashlib.sha256(profile_bytes).hexdigest():
             raise SystemExit("installed direct CLI recorded the wrong profile digest")
-        if artifact["version"] != "wgbs-gc-target-v2":
-            raise SystemExit("installed direct CLI recorded the wrong profile version")
-        if manifest["counts"]["core"]["fragment_count"] != 4:
+        if set(artifact) != {"path", "sha256"}:
+            raise SystemExit("installed direct CLI recorded obsolete artifact metadata")
+        if manifest["summary"]["fragment_count"] != 4:
             raise SystemExit("installed pipeline emitted the wrong fragment count")
 
         if {item["role"] for item in manifest["outputs"]} != {"read1", "read2"}:

@@ -1,5 +1,6 @@
 """Public package interface for BSReadSim."""
 
-__all__ = ["__version__"]
+from ._version import __version__
 
-__version__ = "0.4.0"
+
+__all__ = ["__version__"]

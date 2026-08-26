@@ -16,6 +16,7 @@ class FixtureRegistryTests(unittest.TestCase):
         document = json.loads(
             (FIXTURE_ROOT / "fixtures.json").read_text(encoding="utf-8")
         )
+        self.assertEqual(set(document), {"fixtures"})
         entries = document["fixtures"]
         registered = [entry["file"] for entry in entries]
         self.assertEqual(len(registered), len(set(registered)))
@@ -29,6 +30,10 @@ class FixtureRegistryTests(unittest.TestCase):
 
         for entry in entries:
             with self.subTest(file=entry["file"]):
+                self.assertLessEqual(
+                    set(entry),
+                    {"expected_result", "file", "format", "purpose", "valid"},
+                )
                 self.assertIs(type(entry.get("valid")), bool)
                 self.assertTrue(entry.get("purpose"))
                 if not entry["valid"]:

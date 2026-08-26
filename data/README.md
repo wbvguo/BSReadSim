@@ -1,17 +1,23 @@
-# Data workspace
+# Product data
 
-All non-test experiments and performance benchmarks belong under this
-directory. Correctness fixtures and regression checks remain under `tests/`;
-they are part of the package gate, not research output.
+This directory is the canonical source for immutable data released with
+BSReadSim: bundled models, supported profiles, and small user-facing examples.
 
-- `experiments/` contains small, reviewable experiment drivers and configs.
-- `benchmarks/` contains small, reviewable benchmark drivers and configs.
-- raw references, downloaded inputs, trained model artifacts, run directories,
-  FASTQ files, truth files, reports, and timing output stay untracked beneath
-  those directories. Intentionally tiny, reviewed mock fixtures may be tracked
-  beside their top-level experiment configs.
+Use `models/` for released pretrained models, `profiles/` for supported
+runtime parameter sets, and `examples/` for small inputs used by user
+documentation. Register every bundled resource in `registry.json` with its
+checksum, provenance, and license. The containing BSReadSim release and exact
+SHA-256 identify the resource bytes.
 
-Every retained run should record the command, normalized configuration, input
-and model SHA-256 digests, package/core versions, platform, seed, and output
-manifest. Large inputs or results must use external artifact storage rather
-than Git.
+External research datasets and local benchmark corpora do not belong here;
+they live in the ignored `workspace/datasets/` directory.
+
+The source distribution includes this directory directly. Wheel builds copy
+the registry and each registered resource into `bsreadsim/data/`; the top-level
+file remains the only source copy. Runtime code accesses installed resources
+through `importlib.resources` rather than assuming a site-packages path.
+
+Keep large optional models outside the wheel. They may still use registry
+metadata in a future download/cache workflow, but must not be added as bundled
+resources unless package-size and redistribution requirements have been
+reviewed.
