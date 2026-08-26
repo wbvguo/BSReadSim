@@ -1,30 +1,28 @@
-# annotated BAM v3
+# Annotated BAM
 
-Status: normative contract for the detailed BSReadSim details artifact.
-
-Annotated BAM replaces FASTQ sidecars when `--bam` is selected. It is an
+Annotated BAM replaces FASTQ output when `--format bam` is selected. It is an
 unsorted SAM/BAM 1.6 stream readable by HTSlib and samtools. Reads and
 qualities are recoverable with `samtools fastq`; the manifest remains the
 authoritative run-level audit record.
 
 ## Artifact set
 
-Without `--bam`, a run publishes R1, optional R2, and the manifest. With
-`--bam`, it publishes `<prefix>.bam` and `<prefix>.manifest.json`. A fixed
-MethDB snapshot is an additional, explicit artifact only when
-`--save-methdb PATH` is selected.
+With `--format fastq` or `--format fastq.gz`, a run publishes R1, optional R2,
+and the manifest. With `--format bam`, it publishes `<prefix>.bam` and
+`<prefix>.manifest.json`. The `--save-methdb`, `--save-vcf`, and `--save-truth`
+flags add automatically named artifacts beneath `OUTPUT/truth/`.
 
 ## Header
 
-Ordinary `@HD`, `@SQ`, `@RG`, and `@PG` records are followed by deterministic
-contract comments:
+Ordinary `@HD`, `@SQ`, `@RG`, and `@PG` records are followed by BSReadSim
+format comments:
 
 ```text
-@CO    BSREADSIM_BAM=bsreadsim-bam-v3
-@CO    BSREADSIM_ZT=state64-v1;ALPHABET=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_
-@CO    BSREADSIM_ZR=u16x12-v1;REQUIRED=1
-@CO    BSREADSIM_ZF=u16x12-v1;ENABLED=0|1
-@CO    BSREADSIM_ZX=packed-b64url-v1;ENABLED=0|1;BIT_ORDER=LSB0
+@CO    BSREADSIM_BAM_CONTRACT=bsreadsim-bam
+@CO    BSREADSIM_ZT=state64;ALPHABET=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_
+@CO    BSREADSIM_ZR=u16x12;REQUIRED=1
+@CO    BSREADSIM_ZF=u16x12;ENABLED=0|1
+@CO    BSREADSIM_ZX=packed-b64url;ENABLED=0|1;BIT_ORDER=LSB0
 ```
 
 The `@RG ID` is the run UUID. The manifest records the same UUID and complete
@@ -82,6 +80,9 @@ to both mate records.
 Summary flag bits are: haplotype 0-1, capture strand 2-3, conversion mode
 4-6, ASM 7, SNV 8, insertion 9, deletion 10, any methylation conversion 11,
 saturation 13; all other bits are zero.
+Conversion modes are 0 for C-to-T, 1 for G-to-A, and 2 for no bisulfite
+chemistry. WGS, WES, and TS records use mode 2 and zero methylation/conversion
+counts.
 
 ## Optional `zx:Z` complete-fragment realization
 
@@ -102,13 +103,12 @@ define the exact useful bit lengths and make padding unambiguous.
 Sequencing errors are intentionally absent from `zx`: they are read-specific,
 already represented by BAM SEQ/QUAL and `zt`, and do not exist in an uncovered
 fragment interior. Variant definitions and fixed methylation probabilities are
-catalog information supplied by VCF/MethDB, not repeated per fragment.
+part of the prepared variant set and methylation profile supplied by VCF and
+MethDB; they are not repeated per fragment.
 
-## Transaction and interoperability
+## Interoperability
 
-BAM is streamed through the HTSlib-backed `htsim-core --sam-to-bam` helper.
-Finalization, digest/count reconciliation, and manifest-last publication form
-one transaction. The stream is unsorted; coordinate-indexed consumers run:
+The stream is unsorted. Coordinate-indexed consumers should run:
 
 ```sh
 samtools sort -o sample.sorted.bam sample.bam

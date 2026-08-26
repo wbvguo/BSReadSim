@@ -1,4 +1,4 @@
-# Read-name contract v2
+# Read names
 
 FASTQ identifiers and BAM QNAMEs share one fragment identity:
 
