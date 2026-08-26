@@ -29,7 +29,7 @@ namespace {
 static_assert(std::numeric_limits<double>::is_iec559
                   && std::numeric_limits<double>::radix == 2
                   && std::numeric_limits<double>::digits == 53,
-              "normal sampler v1 requires IEEE-754 binary64");
+              "normal sampler requires IEEE-754 binary64");
 
 constexpr double two_pi = 0x1.921fb54442d18p+2;
 constexpr double inverse_uniform_scale = 0x1p-53;
@@ -53,7 +53,7 @@ double standard_normal(
     std::uint64_t local_index)
 {
     if (std::fegetround() != FE_TONEAREST) {
-        throw SamplingError("normal sampler v1 requires round-to-nearest mode");
+        throw SamplingError("normal sampler requires round-to-nearest mode");
     }
     const double radius_uniform =
         uniform_open_closed(key, entity_ordinal, local_index);
@@ -879,9 +879,8 @@ class TextSnapshot::Impl {
 public:
     Impl(
         const std::string &source_path,
-        const crypto::Sha256Digest &expected,
         std::size_t line_limit)
-        : path(source_path), file_sha256(expected), maximum_line_bytes(line_limit)
+        : path(source_path), maximum_line_bytes(line_limit)
     {
         if (maximum_line_bytes == 0U) {
             throw TextSnapshotError("text snapshot line limit must be positive");
@@ -892,10 +891,7 @@ public:
         }
         try {
             identity = read_identity(descriptor, path);
-            if (raw_hash_pass(descriptor, path, identity) != file_sha256) {
-                throw TextSnapshotError(
-                    "text input SHA-256 does not match the expected digest");
-            }
+            file_sha256 = raw_hash_pass(descriptor, path, identity);
         } catch (...) {
             (void)close(descriptor);
             descriptor = -1;
@@ -919,10 +915,8 @@ public:
 
 TextSnapshot::TextSnapshot(
     const std::string &path,
-    const crypto::Sha256Digest &expected_file_sha256,
     std::size_t maximum_decoded_line_bytes)
-    : impl_(std::make_unique<Impl>(
-          path, expected_file_sha256, maximum_decoded_line_bytes))
+    : impl_(std::make_unique<Impl>(path, maximum_decoded_line_bytes))
 {
 }
 

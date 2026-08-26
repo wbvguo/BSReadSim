@@ -17,7 +17,7 @@ struct htsFile;
 
 namespace htsim::normal_sampler {
 
-inline constexpr std::string_view algorithm_id = "box-muller-normal-v1";
+inline constexpr std::string_view algorithm_id = "box-muller-normal";
 
 class SamplingError : public std::runtime_error {
 public:
@@ -46,7 +46,7 @@ double standard_normal(
 namespace htsim::rng {
 
 inline constexpr std::string_view contract_id =
-    "philox4x32-10+philox-domain-v2";
+    "philox4x32-10+philox-domain";
 
 enum class Stage : std::uint32_t {
     mutation = 0,
@@ -235,7 +235,7 @@ using ChunkVisitor = std::function<void(std::string_view chunk)>;
 using HtsFileVisitor = std::function<void(::htsFile *file)>;
 
 // Stable fail-closed access to a plain or gzip-compressed regular text file.
-// Construction opens the path once and verifies its raw-byte SHA-256 before
+// Construction opens the path once and computes its raw-byte SHA-256 before
 // decompression. Every visit uses that descriptor, validates raw bytes while
 // decoding, then performs an independent final raw pass. LF and CRLF are
 // accepted; bare CR, corrupt/truncated/trailed gzip, and lines over 1 MiB are
@@ -244,7 +244,6 @@ class TextSnapshot {
 public:
     TextSnapshot(
         const std::string &path,
-        const crypto::Sha256Digest &expected_file_sha256,
         std::size_t maximum_decoded_line_bytes = maximum_line_bytes);
     ~TextSnapshot();
 

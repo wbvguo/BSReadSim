@@ -98,7 +98,7 @@ void test_context_classes_and_exact_addresses()
     // Temporary implementation vector output is intentionally kept tiny; the
     // asserted literal vector below freezes it independently of rng helpers.
     require(*cg0 == 0.125F && *cg1 == 0.125F && *chh == 0.5F,
-            "CGmap pool exact v1 vector changed");
+            "CGmap pool exact selection vector changed");
 }
 
 void test_empty_class_falls_back_without_a_draw()

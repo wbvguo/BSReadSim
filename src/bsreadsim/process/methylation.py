@@ -48,7 +48,7 @@ class MethylationStateModel(Protocol):
 class BernoulliStateModel:
     """Independent per-site sampling through the frozen Philox domain."""
 
-    contract: str = "bernoulli-site-v1"
+    contract: str = "bernoulli-site"
 
     def sample_fragment(
         self, fragment: Fragment, config: ProcessConfig
@@ -113,7 +113,7 @@ def _materialize_site_states(
             bool(state),
             float(site.methylation_probability),
         )
-        for site, state in zip(fragment.methylation_sites, sampled)
+        for site, state in zip(fragment.methylation_sites, sampled, strict=True)
     )
 
 

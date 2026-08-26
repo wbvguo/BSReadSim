@@ -168,7 +168,7 @@ void verify_valid_profile(const std::vector<std::uint8_t> &input)
     TempFile file;
     write_bytes(file.path(), input);
     const auto digest = htsim::crypto::sha256(input);
-    CgmapProfile profile(file.path(), digest, reference_catalog());
+    CgmapProfile profile(file.path(), reference_catalog());
     require(profile.file_sha256() == digest, "CGmap digest changed");
     require(profile.row_count() == 5U, "CGmap row count changed");
     require(
@@ -247,7 +247,6 @@ void verify_valid_bed_methyl(const std::vector<std::uint8_t> &input)
     const auto digest = htsim::crypto::sha256(input);
     CgmapProfile profile(
         file.path(),
-        digest,
         reference_catalog(),
         MethylationProfileFormat::bed_methyl);
     require(profile.file_sha256() == digest, "bedMethyl digest changed");
@@ -297,7 +296,6 @@ void require_bed_methyl_error(
         [&] {
             CgmapProfile profile(
                 file.path(),
-                htsim::crypto::sha256(bytes),
                 reference_catalog(),
                 MethylationProfileFormat::bed_methyl);
             if (validate_reference) {
@@ -342,8 +340,7 @@ void require_parse_error(const std::string &text, const std::string &message)
     require_error(
         [&] {
             (void)CgmapProfile(
-                file.path(), htsim::crypto::sha256(bytes),
-                reference_catalog());
+                file.path(), reference_catalog());
         },
         message);
 }
@@ -386,10 +383,7 @@ void test_strict_text_boundaries()
     const auto bytes = bytes_of(valid_text());
     write_bytes(file.path(), bytes);
     require_error(
-        [&] {(void)CgmapProfile(file.path(), {}, reference_catalog());},
-        "CGmap digest mismatch was accepted");
-    require_error(
-        [&] {(void)CgmapProfile(file.path(), htsim::crypto::sha256(bytes), {});},
+        [&] {(void)CgmapProfile(file.path(), {});},
         "empty reference catalog was accepted");
 }
 
@@ -398,8 +392,7 @@ void test_reference_validation_boundaries()
     TempFile file;
     const auto bytes = bytes_of(valid_text());
     write_bytes(file.path(), bytes);
-    CgmapProfile profile(
-        file.path(), htsim::crypto::sha256(bytes), reference_catalog());
+    CgmapProfile profile(file.path(), reference_catalog());
     require_error(
         [&] {profile.validate_contig(make_contig(0U, "chr1", "AGGACAGCAATCG"));},
         "CGmap nucleotide/reference mismatch was accepted");
@@ -443,7 +436,6 @@ void test_reference_validation_boundaries()
     write_bytes(dinucleotide_file.path(), dinucleotide_bytes);
     CgmapProfile dinucleotide_profile(
         dinucleotide_file.path(),
-        htsim::crypto::sha256(dinucleotide_bytes),
         reference_catalog());
     require_error(
         [&] {

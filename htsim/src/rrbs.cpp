@@ -763,7 +763,8 @@ std::vector<double> CandidateBed::match_scores(
     const auto &rows = rows_by_contig_[contig_index];
     if (rows.size() != candidates.size()) {
         throw RrbsCatalogError(
-            "RRBS candidate BED row count disagrees with the regenerated catalog for "
+            "RRBS candidate BED row count disagrees with the regenerated "
+            "candidate set for "
             + std::string(contig_name));
     }
     std::unordered_map<std::string_view, const CandidateBedRow *> by_id;
@@ -812,7 +813,7 @@ ProfileSampler::ProfileSampler(
 {
     if (scores.size() != candidates.size()) {
         throw RrbsCatalogError(
-            "RRBS profile score count disagrees with its candidate catalog");
+            "RRBS profile score count disagrees with its candidate set");
     }
     cumulative_weights_.reserve(candidates.size());
     for (std::size_t index = 0U; index < candidates.size(); ++index) {

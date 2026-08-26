@@ -112,8 +112,7 @@ void test_plain_and_gzip_lines()
     TempFile plain;
     const auto plain_bytes = bytes_of(text);
     write_bytes(plain.path(), plain_bytes);
-    TextSnapshot plain_snapshot(
-        plain.path(), htsim::crypto::sha256(plain_bytes));
+    TextSnapshot plain_snapshot(plain.path());
     const auto expected = std::vector<std::pair<std::uint64_t, std::string>>{
         {1, "first"}, {2, ""}, {3, "third"}};
     require(collect(plain_snapshot) == expected, "plain line decoding changed");
@@ -122,8 +121,7 @@ void test_plain_and_gzip_lines()
     TempFile gzip;
     const auto compressed = gzip_bytes(text);
     write_bytes(gzip.path(), compressed);
-    TextSnapshot gzip_snapshot(
-        gzip.path(), htsim::crypto::sha256(compressed));
+    TextSnapshot gzip_snapshot(gzip.path());
     require(collect(gzip_snapshot) == expected, "gzip line decoding changed");
 }
 
@@ -132,14 +130,9 @@ void test_fail_closed_boundaries()
     TempFile input;
     const auto text = bytes_of("one\ntwo\n");
     write_bytes(input.path(), text);
-    require_error(
-        [&] {TextSnapshot snapshot(input.path(), {});},
-        "digest mismatch was accepted");
-
     const auto bare_cr = bytes_of("one\rtwo");
     write_bytes(input.path(), bare_cr);
-    TextSnapshot bare_snapshot(
-        input.path(), htsim::crypto::sha256(bare_cr));
+    TextSnapshot bare_snapshot(input.path());
     require_error(
         [&] {(void)collect(bare_snapshot);},
         "bare carriage return was accepted");
@@ -150,8 +143,7 @@ void test_fail_closed_boundaries()
     auto trailed = gzip_bytes("one\n");
     trailed.push_back(0U);
     write_bytes(input.path(), trailed);
-    TextSnapshot trailing_snapshot(
-        input.path(), htsim::crypto::sha256(trailed));
+    TextSnapshot trailing_snapshot(input.path());
     require_error(
         [&] {(void)collect(trailing_snapshot);},
         "gzip trailing data was accepted");
@@ -160,8 +152,7 @@ void test_fail_closed_boundaries()
         htsim::text::maximum_line_bytes + 1U,
         static_cast<std::uint8_t>('A'));
     write_bytes(input.path(), long_line);
-    TextSnapshot long_snapshot(
-        input.path(), htsim::crypto::sha256(long_line));
+    TextSnapshot long_snapshot(input.path());
     require_error(
         [&] {(void)collect(long_snapshot);},
         "oversized line was accepted");
@@ -172,7 +163,7 @@ void test_reentry_and_mutation_poison()
     TempFile input;
     const auto text = bytes_of("one\ntwo\n");
     write_bytes(input.path(), text);
-    TextSnapshot snapshot(input.path(), htsim::crypto::sha256(text));
+    TextSnapshot snapshot(input.path());
     bool reentry_rejected = false;
     snapshot.visit_lines([&](std::string_view, std::uint64_t line) {
         if (line != 1U) {return;}
@@ -184,7 +175,7 @@ void test_reentry_and_mutation_poison()
     });
     require(reentry_rejected, "reentrant visit was accepted");
 
-    TextSnapshot mutating(input.path(), htsim::crypto::sha256(text));
+    TextSnapshot mutating(input.path());
     require_error(
         [&] {
             mutating.visit_lines([&](std::string_view, std::uint64_t line) {

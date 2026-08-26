@@ -97,10 +97,10 @@ void test_algorithm_identity_and_branches()
 {
     using htsim::beta_sampler::algorithm_id;
     using htsim::beta_sampler::site_entity_algorithm_id;
-    require(algorithm_id == "marsaglia-tsang-box-muller-beta-v1",
+    require(algorithm_id == "marsaglia-tsang-box-muller-beta",
             "Beta sampler algorithm identifier changed");
     require(site_entity_algorithm_id
-                == "marsaglia-tsang-box-muller-beta-site-entity-v2",
+                == "marsaglia-tsang-box-muller-beta-site-entity",
             "site-entity Beta sampler algorithm identifier changed");
 
     const float below_one = sample_beta(11, 0U, 3, 0.25, 0.75);

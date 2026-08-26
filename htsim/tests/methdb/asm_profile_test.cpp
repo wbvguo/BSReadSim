@@ -190,7 +190,7 @@ void verify_valid_profile(const std::vector<std::uint8_t> &input)
     TempFile file;
     write_bytes(file.path(), input);
     const auto digest = htsim::crypto::sha256(input);
-    AsmProfile profile(file.path(), digest, reference_catalog());
+    AsmProfile profile(file.path(), reference_catalog());
     require(profile.file_sha256() == digest, "ASM digest changed");
     require(profile.row_count() == 5U, "ASM row count changed");
 
@@ -258,7 +258,7 @@ void verify_valid_asm_bed(const std::vector<std::uint8_t> &input)
     write_bytes(file.path(), input);
     const auto digest = htsim::crypto::sha256(input);
     AsmProfile profile(
-        file.path(), digest, reference_catalog(), AsmProfileFormat::bed);
+        file.path(), reference_catalog(), AsmProfileFormat::bed);
     require(profile.file_sha256() == digest, "ASM BED digest changed");
     require(profile.row_count() == 5U, "ASM BED row count changed");
 
@@ -303,7 +303,6 @@ void require_asm_bed_error(
         [&] {
             AsmProfile profile(
                 file.path(),
-                htsim::crypto::sha256(bytes),
                 reference_catalog(),
                 AsmProfileFormat::bed);
             if (validate_reference) {
@@ -348,8 +347,7 @@ void require_parse_error(const std::string &text, const std::string &message)
     require_error(
         [&] {
             (void)AsmProfile(
-                file.path(), htsim::crypto::sha256(bytes),
-                reference_catalog());
+                file.path(), reference_catalog());
         },
         message);
 }
@@ -405,10 +403,7 @@ void test_strict_text_boundaries()
     const auto bytes = bytes_of(valid_text());
     write_bytes(file.path(), bytes);
     require_error(
-        [&] {(void)AsmProfile(file.path(), {}, reference_catalog());},
-        "ASM digest mismatch was accepted");
-    require_error(
-        [&] {(void)AsmProfile(file.path(), htsim::crypto::sha256(bytes), {});},
+        [&] {(void)AsmProfile(file.path(), {});},
         "empty reference catalog was accepted");
 }
 
@@ -417,8 +412,7 @@ void test_reference_validation_boundaries()
     TempFile file;
     const auto bytes = bytes_of(valid_text());
     write_bytes(file.path(), bytes);
-    AsmProfile profile(
-        file.path(), htsim::crypto::sha256(bytes), reference_catalog());
+    AsmProfile profile(file.path(), reference_catalog());
     require_error(
         [&] {profile.validate_contig(make_contig(0U, "chr1", "AGGACAGCAATCG"));},
         "ASM target/reference mismatch was accepted");

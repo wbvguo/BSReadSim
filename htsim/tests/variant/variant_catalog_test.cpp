@@ -135,7 +135,6 @@ VariantFile load(
     write_bytes(file.path(), bytes);
     return VariantFile(
         file.path(),
-        htsim::crypto::sha256(bytes),
         reference_catalog(),
         seed);
 }
@@ -211,6 +210,22 @@ void test_gzip_snapshot_and_format_versions()
             "VCF 4.2 was not accepted");
 }
 
+void test_equal_vcf_positions_are_allowed_for_distinct_normalized_events()
+{
+    const std::string text =
+        "##fileformat=VCFv4.3\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n"
+        "chr1\t2\tsnv\tC\tT\t.\tPASS\t.\tGT\t1|0\n"
+        "chr1\t2\tdel\tCG\tC\t.\tPASS\t.\tGT\t0|1\n";
+    TempFile file;
+    const VariantFile variants = load(bytes_of(text), file);
+    require(variants.variant_count() == 2U,
+            "distinct events sharing an anchored VCF POS were rejected");
+    require(variants.variants(0)[0].reference_start == 1U
+                && variants.variants(0)[1].reference_start == 2U,
+            "equal-POS VCF rows did not normalize into canonical order");
+}
+
 void test_file_rejections()
 {
     const std::string header =
@@ -250,22 +265,11 @@ void test_file_rejections()
             [&] {
                 (void)VariantFile(
                     file.path(),
-                    htsim::crypto::sha256(bytes),
                     reference_catalog(),
                     123);
             },
             "invalid VCF was accepted: " + text);
     }
-
-    TempFile digest_file;
-    const auto bytes = bytes_of(valid_vcf());
-    write_bytes(digest_file.path(), bytes);
-    require_error(
-        [&] {
-            (void)VariantFile(
-                digest_file.path(), {}, reference_catalog(), 123);
-        },
-        "VCF digest mismatch was accepted");
 }
 
 void test_typed_catalog_rejections()
@@ -322,6 +326,7 @@ int main()
     try {
         test_normalization_phasing_and_reference_validation();
         test_gzip_snapshot_and_format_versions();
+        test_equal_vcf_positions_are_allowed_for_distinct_normalized_events();
         test_file_rejections();
         test_typed_catalog_rejections();
         return EXIT_SUCCESS;

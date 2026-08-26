@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <optional>
+#include <iosfwd>
 
 #include "types.h"
 #include "reference.h"
@@ -38,7 +39,7 @@ struct Variant {
     model::VariantSource source = model::VariantSource::vcf;
 };
 
-// Verified text VCF snapshot projected into reference order. The frozen v1
+// Verified text VCF snapshot projected into reference order. The supported
 // subset requires one diploid sample, biallelic A/C/G/T records, and GT alleles
 // 0 or 1. Unphased heterozygotes receive deterministic phase from the
 // haplotype RNG domain before they enter this catalog.
@@ -46,7 +47,6 @@ class VariantFile {
 public:
     VariantFile(
         const std::string &path,
-        const crypto::Sha256Digest &expected_file_sha256,
         const std::vector<reference::ContigMetadata> &reference_catalog,
         std::uint64_t master_seed);
 
@@ -296,6 +296,15 @@ std::vector<Variant> generate_de_novo_events(
     const reference::Contig &contig,
     std::uint64_t master_seed,
     const MutationParameters &parameters);
+
+// Write a one-sample phased VCF representation of a typed de novo catalog.
+// The representation is accepted by VariantFile and preserves the selected
+// haplotypes. Indels receive the required adjacent VCF anchor base.
+void write_vcf_header(std::ostream &sink);
+void write_vcf_contig(
+    std::ostream &sink,
+    const reference::Contig &contig,
+    const std::vector<Variant> &variants);
 
 } // namespace htsim::variant
 

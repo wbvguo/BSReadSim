@@ -6,6 +6,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <ostream>
 #include <string_view>
 #include <tuple>
 #include <unordered_map>
@@ -70,7 +71,7 @@ model::Bases parse_allele(std::string_view text, const char *field)
         throw VariantCatalogError(std::string("VCF ") + field + " is empty");
     }
     if (text.find(',') != std::string_view::npos) {
-        throw VariantCatalogError("VCF v1 subset requires one ALT allele");
+        throw VariantCatalogError("VCF subset requires one ALT allele");
     }
     model::Bases bases;
     bases.reserve(text.size());
@@ -80,9 +81,11 @@ model::Bases parse_allele(std::string_view text, const char *field)
         case 'C': bases.push_back(1U); break;
         case 'G': bases.push_back(2U); break;
         case 'T': bases.push_back(3U); break;
+        case 'N': bases.push_back(4U); break;
         default:
             throw VariantCatalogError(
-                std::string("VCF ") + field + " must contain only uppercase A/C/G/T");
+                std::string("VCF ") + field
+                + " must contain only uppercase A/C/G/T/N");
         }
     }
     return bases;
@@ -110,7 +113,7 @@ public:
     HtsLogGuard() : lock_(mutex()), previous_(hts_get_log_level())
     {
         // Undefined contig/unused FORMAT declarations are intentionally
-        // tolerated by the v1 subset. Keep HTSlib errors, but do not turn
+        // tolerated by the supported subset. Keep HTSlib errors, but do not turn
         // those expected warnings into htsim-core stderr on a valid run.
         hts_set_log_level(HTS_LOG_ERROR);
     }
@@ -336,6 +339,15 @@ Variant normalize_event(
     if (normalized_ref.empty() && normalized_alt.empty()) {
         throw VariantCatalogError("VCF normalization produced no variant");
     }
+    const auto resolved = [](const model::Bases &bases) {
+        return std::all_of(
+            bases.begin(), bases.end(),
+            [](std::uint8_t base) {return base < 4U;});
+    };
+    if (!resolved(normalized_ref) || !resolved(normalized_alt)) {
+        throw VariantCatalogError(
+            "VCF N is allowed only in a common indel anchor");
+    }
 
     model::VariantKind kind = model::VariantKind::snv;
     if (normalized_ref.empty()) {
@@ -350,7 +362,7 @@ Variant normalize_event(
         kind = model::VariantKind::deletion;
     } else if (normalized_ref.size() != 1U || normalized_alt.size() != 1U) {
         throw VariantCatalogError(
-            "VCF v1 subset rejects MNP and complex replacement variants");
+            "VCF subset rejects MNP and complex replacement variants");
     }
 
     const std::uint64_t normalized_start = original_start + prefix;
@@ -400,11 +412,9 @@ bool event_less(const Variant &left, const Variant &right) noexcept
 
 VariantFile::VariantFile(
     const std::string &path,
-    const crypto::Sha256Digest &expected_file_sha256,
     const std::vector<reference::ContigMetadata> &reference_catalog,
     std::uint64_t master_seed)
-    : file_sha256_(expected_file_sha256),
-      variants_by_contig_(reference_catalog.size())
+    : variants_by_contig_(reference_catalog.size())
 {
     try {
         std::unordered_map<std::string, std::uint32_t> contig_indices;
@@ -424,7 +434,8 @@ VariantFile::VariantFile(
             }
         }
 
-        text::TextSnapshot snapshot(path, expected_file_sha256);
+        text::TextSnapshot snapshot(path);
+        file_sha256_ = snapshot.file_sha256();
         validate_vcf_surface(snapshot);
 
         std::uint32_t previous_contig = 0;
@@ -504,7 +515,7 @@ VariantFile::VariantFile(
                     }
                     if (record->n_allele != 2U) {
                         throw VariantCatalogError(
-                            "VCF v1 subset requires one ALT allele");
+                            "VCF subset requires one ALT allele");
                     }
                     const char *contig_name =
                         bcf_hdr_id2name(header.get(), record->rid);
@@ -529,9 +540,9 @@ VariantFile::VariantFile(
                     if (have_previous_record
                         && (contig_index < previous_contig
                             || (contig_index == previous_contig
-                                && position <= previous_position))) {
+                                && position < previous_position))) {
                         throw VariantCatalogError(
-                            "VCF rows must be strictly sorted in reference "
+                            "VCF rows must be sorted in reference "
                             "order");
                     }
                     previous_contig = contig_index;
@@ -891,7 +902,7 @@ ProjectedInterval project_interval(
         || variants.reference_length() != contig_length) {
         throw ProjectionError(
             ProjectionFailure::invalid_input,
-            "variant catalog does not match the materialized contig");
+            "variant set does not match the materialized contig");
     }
     if (reference_start > reference_end || reference_end > contig_length) {
         throw ProjectionError(
@@ -936,7 +947,7 @@ ProjectedInterval project_interval(
                     + static_cast<std::ptrdiff_t>(current.reference_start))) {
             throw ProjectionError(
                 ProjectionFailure::invariant,
-                "variant catalog does not match the materialized contig");
+                "variant set does not match the materialized contig");
         }
         const bool selected_end_insertion =
             current.kind == model::VariantKind::insertion
@@ -1124,7 +1135,7 @@ HaplotypeLayout::HaplotypeLayout(
         }
         default:
             throw HaplotypeLayoutError(
-                "variant kind is outside the typed catalog");
+                "variant kind is outside the prepared variant set");
         }
         active_events_.push_back({
             event.reference_start,
@@ -1716,6 +1727,127 @@ std::vector<Variant> generate_de_novo_events(
         throw;
     } catch (const std::exception &error) {
         throw MutationCatalogError(error.what());
+    }
+}
+
+namespace {
+
+char vcf_base(std::uint8_t base)
+{
+    constexpr char alphabet[] = "ACGTN";
+    if (base >= sizeof(alphabet) - 1U) {
+        throw MutationCatalogError("VCF export received an invalid allele base");
+    }
+    return alphabet[base];
+}
+
+void write_vcf_bases(std::ostream &sink, const model::Bases &bases)
+{
+    for (const std::uint8_t base : bases) {sink.put(vcf_base(base));}
+}
+
+const char *vcf_genotype(model::HaplotypeMask mask)
+{
+    switch (mask) {
+    case model::HaplotypeMask::haplotype_1: return "1|0";
+    case model::HaplotypeMask::haplotype_2: return "0|1";
+    case model::HaplotypeMask::both: return "1|1";
+    }
+    throw MutationCatalogError("VCF export received an invalid haplotype mask");
+}
+
+void require_vcf_token(std::string_view value, const char *field)
+{
+    if (value.empty()
+        || value.find_first_of("\t\r\n") != std::string_view::npos) {
+        throw MutationCatalogError(
+            std::string("VCF export received an invalid ") + field);
+    }
+}
+
+} // namespace
+
+void write_vcf_header(std::ostream &sink)
+{
+    sink
+        << "##fileformat=VCFv4.3\n"
+        << "##source=BSReadSim\n"
+        << "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n"
+        << "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSIMULATED\n";
+    if (!sink) {throw MutationCatalogError("failed while writing the VCF header");}
+}
+
+void write_vcf_contig(
+    std::ostream &sink,
+    const reference::Contig &contig,
+    const std::vector<Variant> &variants)
+{
+    // Reuse the typed catalog boundary before emitting any row for a contig.
+    const ContigVariants checked(contig.bases, variants, contig.index);
+    (void)checked;
+    require_vcf_token(contig.name, "contig name");
+
+    for (const Variant &event : variants) {
+        require_vcf_token(event.id, "variant ID");
+        std::uint32_t position = 0U;
+        model::Bases reference;
+        model::Bases alternate;
+        switch (event.kind) {
+        case model::VariantKind::snv:
+            position = event.reference_start + 1U;
+            reference = event.ref_bases;
+            alternate = event.alt_bases;
+            break;
+        case model::VariantKind::insertion: {
+            const std::uint32_t anchor = event.reference_start;
+            if (anchor == 0U || anchor > contig.bases.size()) {
+                throw MutationCatalogError(
+                    "VCF export cannot anchor an insertion at this boundary");
+            }
+            const std::uint8_t anchor_base = contig.bases[anchor - 1U];
+            (void)vcf_base(anchor_base);
+            position = anchor;
+            reference = {anchor_base};
+            alternate = reference;
+            alternate.insert(
+                alternate.end(), event.alt_bases.begin(), event.alt_bases.end());
+            break;
+        }
+        case model::VariantKind::deletion:
+            if (event.reference_start > 0U) {
+                const std::uint8_t anchor =
+                    contig.bases[event.reference_start - 1U];
+                position = event.reference_start;
+                reference = {anchor};
+                reference.insert(
+                    reference.end(),
+                    event.ref_bases.begin(),
+                    event.ref_bases.end());
+                alternate = {anchor};
+            } else if (event.reference_end < contig.bases.size()) {
+                const std::uint8_t anchor = contig.bases[event.reference_end];
+                position = event.reference_start + 1U;
+                reference = event.ref_bases;
+                reference.push_back(anchor);
+                alternate = {anchor};
+            } else {
+                throw MutationCatalogError(
+                    "VCF export cannot find a resolved deletion anchor");
+            }
+            break;
+        default:
+            throw MutationCatalogError("VCF export received an invalid event kind");
+        }
+
+        sink << contig.name << '\t' << position << '\t' << event.id << '\t';
+        write_vcf_bases(sink, reference);
+        sink.put('\t');
+        write_vcf_bases(sink, alternate);
+        sink << "\t.\tPASS\t.\tGT\t" << vcf_genotype(event.alt_haplotypes)
+             << '\n';
+        if (!sink) {
+            throw MutationCatalogError("failed while writing a VCF record");
+        }
     }
 }
 

@@ -44,7 +44,7 @@ std::uint64_t double_bits(double value) noexcept
 
 void test_identity_and_golden_vectors()
 {
-    require(htsim::normal_sampler::algorithm_id == "box-muller-normal-v1",
+    require(htsim::normal_sampler::algorithm_id == "box-muller-normal",
             "normal algorithm identifier changed");
     struct Golden {
         std::uint64_t key;

@@ -198,6 +198,39 @@ void test_addressed_golden_and_domain_separation()
             "mutation seed or contig domain did not isolate its stream");
 }
 
+void test_phased_vcf_export_and_adjacent_anchor_positions()
+{
+    Contig contig = make_contig("ACGTACGT", "chrExport");
+    contig.index = 0U;
+    const std::vector<Variant> events = {
+        {0U, 0U, 1U, VariantKind::snv, encode("A"), encode("G"),
+         HaplotypeMask::haplotype_1, "varsim_0",
+         htsim::model::VariantSource::de_novo},
+        {0U, 1U, 2U, VariantKind::deletion, encode("C"), {},
+         HaplotypeMask::haplotype_2, "varsim_1",
+         htsim::model::VariantSource::de_novo},
+        {0U, 3U, 3U, VariantKind::insertion, {}, encode("TA"),
+         HaplotypeMask::both, "varsim_2",
+         htsim::model::VariantSource::de_novo},
+    };
+
+    std::ostringstream output;
+    htsim::variant::write_vcf_header(output);
+    htsim::variant::write_vcf_contig(output, contig, events);
+    const std::string text = output.str();
+    require(text.find("##fileformat=VCFv4.3\n") == 0U,
+            "VCF export omitted its format header");
+    require(text.find(
+                "chrExport\t1\tvarsim_0\tA\tG\t.\tPASS\t.\tGT\t1|0\n"
+                "chrExport\t1\tvarsim_1\tAC\tA\t.\tPASS\t.\tGT\t0|1\n")
+                != std::string::npos,
+            "VCF export did not preserve adjacent SNV/deletion coordinates");
+    require(text.find(
+                "chrExport\t3\tvarsim_2\tG\tGTA\t.\tPASS\t.\tGT\t1|1\n")
+                != std::string::npos,
+            "VCF export did not anchor the insertion or preserve phasing");
+}
+
 void test_snv_distribution_sanity()
 {
     std::string sequence;
@@ -288,6 +321,7 @@ int main()
         test_snv_only_and_unresolved_reference();
         test_indel_shape_extension_and_canonical_order();
         test_addressed_golden_and_domain_separation();
+        test_phased_vcf_export_and_adjacent_anchor_positions();
         test_snv_distribution_sanity();
         test_invalid_inputs_fail_closed();
     } catch (const std::exception &error) {

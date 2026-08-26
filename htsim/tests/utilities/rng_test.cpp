@@ -41,7 +41,7 @@ int main()
     constexpr std::uint64_t maximum_u64 =
         std::numeric_limits<std::uint64_t>::max();
 
-    check(contract_id == "philox4x32-10+philox-domain-v2",
+    check(contract_id == "philox4x32-10+philox-domain",
           "RNG contract identifier changed");
     const std::array<std::string_view, 9> expected_stages = {{
         "mutation", "methylation-level", "fragment", "haplotype", "site-state",

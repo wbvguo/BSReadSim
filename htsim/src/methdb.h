@@ -162,7 +162,6 @@ class CgmapProfile {
 public:
     CgmapProfile(
         const std::string &path,
-        const crypto::Sha256Digest &expected_file_sha256,
         const std::vector<reference::ContigMetadata> &reference_catalog,
         MethylationProfileFormat format = MethylationProfileFormat::cgmap);
     ~CgmapProfile();
@@ -232,7 +231,6 @@ class AsmProfile {
 public:
     AsmProfile(
         const std::string &path,
-        const crypto::Sha256Digest &expected_file_sha256,
         const std::vector<reference::ContigMetadata> &reference_catalog,
         AsmProfileFormat format = AsmProfileFormat::htsim);
     ~AsmProfile();
@@ -262,9 +260,9 @@ namespace htsim::beta_sampler {
 // This identifier freezes both the distribution algorithm and the counter
 // layout documented below.  Any change to either requires a new identifier.
 inline constexpr std::string_view algorithm_id =
-    "marsaglia-tsang-box-muller-beta-v1";
+    "marsaglia-tsang-box-muller-beta";
 inline constexpr std::string_view site_entity_algorithm_id =
-    "marsaglia-tsang-box-muller-beta-site-entity-v2";
+    "marsaglia-tsang-box-muller-beta-site-entity";
 
 inline constexpr std::uint32_t default_max_gamma_attempts = 1024;
 
@@ -273,7 +271,7 @@ public:
     using std::runtime_error::runtime_error;
 };
 
-// The default is also the absolute hard maximum in algorithm v1.  A smaller
+// The default is also the absolute hard maximum in this algorithm. A smaller
 // value is useful for testing fail-closed exhaustion; changing the value cannot
 // change a successful draw, because every attempt has an explicit address.
 struct Options {
@@ -319,8 +317,8 @@ struct Options {
 // contig_index is the frozen zero-based reference-catalog ordinal and is part
 // of the RNG domain identity.
 //
-// This v1 address means a reference-derived site with no variant or
-// allele-specific identity.  A future variant/allele-aware sampler MUST define
+// This reference-coordinate address means a reference-derived site with no
+// variant or allele-specific identity. A future variant/allele-aware sampler MUST define
 // a new address contract and algorithm_id; it MUST NOT reuse this address while
 // silently changing the entity semantics.
 //
@@ -328,7 +326,7 @@ struct Options {
 // calls the platform log, sqrt, cos, and pow functions, so bitwise equality is
 // only guaranteed for a frozen compiler/libm environment.  Cross-platform
 // implementations must use the released numerical tolerance unless a portable
-// correctly-rounded math contract is added in a future algorithm version.
+// correctly-rounded math contract is added in a future algorithm change.
 float sample_beta(
     std::uint64_t master_seed,
     std::uint32_t contig_index,
@@ -338,9 +336,10 @@ float sample_beta(
     Options options = {});
 
 // Variant-aware entry point. The numerical algorithm and local-index roles are
-// identical to v1, but entity_ordinal is the validated 64-bit SiteEntity from
-// methylation-site-entity-v1 rather than an untyped reference position. Tag-0
-// reference entities deliberately preserve every v1 counter address.
+// identical to the reference-coordinate entry point, but entity_ordinal is
+// the validated 64-bit SiteEntity from
+// methylation-site-entity rather than an untyped reference position. Tag-0
+// reference entities deliberately preserve every reference counter address.
 float sample_beta_for_site(
     std::uint64_t master_seed,
     std::uint32_t contig_index,
@@ -453,7 +452,7 @@ private:
 namespace htsim::methdb {
 
 inline constexpr std::string_view cgmap_pool_algorithm_id =
-    "cgmap-context-pool-v1";
+    "cgmap-context-pool";
 inline constexpr std::uint64_t cgmap_pool_local_index = UINT64_MAX;
 
 class CgmapPoolError : public std::runtime_error {
@@ -557,9 +556,9 @@ private:
 
 namespace htsim::methdb {
 
-inline constexpr char methdb_snapshot_magic[] = "BSRMDB01";
-inline constexpr std::string_view methdb_snapshot_contract =
-    "bsreadsim-methdb-v1";
+inline constexpr char methdb_magic[] = "methdb";
+inline constexpr std::uint8_t methdb_version = 1U;
+inline constexpr std::string_view methdb_bed_format = "methdb-bed";
 
 class SnapshotError : public std::runtime_error {
 public:
@@ -576,12 +575,15 @@ struct SnapshotContig {
     std::array<std::vector<DiploidSite>, 2> haplotype_sites;
 };
 
+class SnapshotWriterImpl;
+
 class SnapshotWriter {
 public:
     SnapshotWriter(
         std::ostream &output,
         const crypto::Sha256Digest &binding,
         std::uint32_t contig_count);
+    ~SnapshotWriter();
 
     void write_reference(
         const reference::ContigMetadata &metadata,
@@ -593,6 +595,7 @@ public:
 
 private:
     std::ostream &output_;
+    std::unique_ptr<SnapshotWriterImpl> impl_;
     std::uint32_t contig_count_ = 0;
     std::uint32_t written_ = 0;
     bool finished_ = false;
@@ -602,7 +605,6 @@ class Snapshot {
 public:
     Snapshot(
         const std::string &path,
-        const crypto::Sha256Digest &expected_file_sha256,
         const crypto::Sha256Digest &expected_binding,
         const std::vector<reference::ContigMetadata> &reference_catalog);
 
@@ -615,6 +617,12 @@ private:
     crypto::Sha256Digest file_sha256_ = {};
     std::vector<SnapshotContig> contigs_;
 };
+
+// Decode every stored row without requiring the original run configuration.
+// Reference-backed origins receive half-open coordinates. Insertion origins
+// retain their event ordinal and insertion offset because MethDB alone does
+// not contain a reference coordinate for those bases.
+void export_snapshot_bed(const std::string &path, std::ostream &sink);
 
 } // namespace htsim::methdb
 
