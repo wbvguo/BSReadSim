@@ -36,7 +36,7 @@ namespace {
 
 using Values = std::unordered_map<std::string, std::vector<std::string>>;
 
-constexpr std::array<std::string_view, 46> known_options = {{
+constexpr std::array<std::string_view, 47> known_options = {{
     "--emit-details",
     "--protocol-batch-fragments",
     "--run-id",
@@ -53,6 +53,7 @@ constexpr std::array<std::string_view, 46> known_options = {{
     "--asm",
     "--asm-bed",
     "--technology",
+    "--directional",
     "--paired-end",
     "--read-length-1",
     "--read-length-2",
@@ -529,6 +530,10 @@ void validate_core_config(const CoreConfig &config)
         throw CoreConfigError(
             "standard sequencing forbids methylation inputs and pooling");
     }
+    if (!bisulfite_technology(config.technology) && !config.directional) {
+        throw CoreConfigError(
+            "standard sequencing requires directional=true as an inert value");
+    }
     const bool has_coverage_artifact = config.coverage_profile_path.has_value();
     if (config.coverage == CoverageMode::profile) {
         if (whole_genome_technology(config.technology)) {
@@ -607,6 +612,8 @@ CoreConfig parse_core_config(const std::vector<std::string> &arguments)
     config.asm_path = optional_text(values, "--asm");
     config.asm_bed_path = optional_text(values, "--asm-bed");
     config.technology = parse_technology(required(values, "--technology"));
+    config.directional = parse_boolean(
+        required(values, "--directional"), "--directional");
 
     config.paired_end = parse_boolean(
         required(values, "--paired-end"), "--paired-end");
@@ -719,6 +726,40 @@ tbs::SamplingMode tbs_sampling_mode(const CoreConfig &config) noexcept
     return config.coverage == CoverageMode::target_score
         ? tbs::SamplingMode::output_weight
         : tbs::SamplingMode::uniform;
+}
+
+struct LibraryOrientation {
+    model::CaptureStrand informative_strand;
+    bool reverse_molecule;
+};
+
+LibraryOrientation sample_library_orientation(
+    const CoreConfig &config,
+    std::uint64_t key,
+    std::uint64_t fragment_ordinal,
+    model::CaptureStrand constraint)
+{
+    if (!bisulfite_technology(config.technology)) {
+        return {constraint, false};
+    }
+    if (constraint != model::CaptureStrand::unknown
+        && constraint != model::CaptureStrand::forward
+        && constraint != model::CaptureStrand::reverse) {
+        throw CoreGeneratorError("fragment capture strand is invalid");
+    }
+
+    const bool informative_reverse =
+        constraint == model::CaptureStrand::reverse
+        || (constraint == model::CaptureStrand::unknown
+            && rng::bernoulli(key, fragment_ordinal, 0U, 0.5, 0U));
+    const bool complementary = !config.directional
+        && rng::bernoulli(key, fragment_ordinal, 0U, 0.5, 1U);
+    return {
+        informative_reverse
+            ? model::CaptureStrand::reverse
+            : model::CaptureStrand::forward,
+        informative_reverse != complementary,
+    };
 }
 
 void require_generation_environment(const CoreConfig &config)
@@ -1792,11 +1833,20 @@ protocol::Trailer generate_core_stream(
             }
             const std::uint64_t haplotype_key = rng::derive_key(
                 config.master_seed, rng::Stage::haplotype, contig.index);
+            const std::uint64_t library_orientation_key = rng::derive_key(
+                config.master_seed,
+                rng::Stage::library_orientation,
+                contig.index);
             const auto build_fragment = [&](
                 std::uint32_t start,
                 std::uint8_t haplotype,
                 model::CaptureStrand capture_strand,
                 const fragment_builder::ReadLayout &layout) {
+                const LibraryOrientation orientation = sample_library_orientation(
+                    config,
+                    library_orientation_key,
+                    fragment_ordinal,
+                    capture_strand);
                 if (!contig_variants) {
                     return fragment_builder::build_fragment(
                         contig,
@@ -1804,9 +1854,10 @@ protocol::Trailer generate_core_stream(
                         fragment_ordinal,
                         start,
                         haplotype,
-                        capture_strand,
+                        orientation.informative_strand,
                         layout,
-                        fragment_detail);
+                        fragment_detail,
+                        orientation.reverse_molecule);
                 }
                 if (layout.insert_length
                     > std::numeric_limits<std::uint32_t>::max() - start) {
@@ -1823,9 +1874,10 @@ protocol::Trailer generate_core_stream(
                     std::move(projection),
                     *diploid_methylation_catalog,
                     fragment_ordinal,
-                    capture_strand,
+                    orientation.informative_strand,
                     layout,
-                    fragment_detail);
+                    fragment_detail,
+                    orientation.reverse_molecule);
             };
             const auto build_haplotype_fragment = [&](
                 std::uint32_t reference_start,
@@ -1849,13 +1901,19 @@ protocol::Trailer generate_core_stream(
                         include_start_anchor_insertion,
                         include_end_anchor_insertion,
                     });
+                const LibraryOrientation orientation = sample_library_orientation(
+                    config,
+                    library_orientation_key,
+                    fragment_ordinal,
+                    capture_strand);
                 return fragment_builder::build_fragment(
                     std::move(projection),
                     *diploid_methylation_catalog,
                     fragment_ordinal,
-                    capture_strand,
+                    orientation.informative_strand,
                     layout,
-                    fragment_detail);
+                    fragment_detail,
+                    orientation.reverse_molecule);
             };
 
             std::uint32_t emitted_for_contig = 0;

@@ -286,7 +286,7 @@ def _add_direct_run_arguments(
         sequencing.add_argument(
             "--undirectional",
             action="store_true",
-            help="sample both directional bisulfite library orientations",
+            help="sample OT, OB, CTOT, and CTOB instead of directional OT/OB",
         )
     sequencing.add_argument(
         "-q", "--phred", type=int, help="uniform Phred score (default: 40)"

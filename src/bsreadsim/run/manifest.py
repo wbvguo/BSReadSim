@@ -18,6 +18,7 @@ from ..output.bam import (
     ANNOTATION_FRAGMENT_SUMMARY_SCHEMA,
     ANNOTATION_READ_SUMMARY_SCHEMA,
     ANNOTATION_STATE_SCHEMA,
+    ANNOTATION_STRAND_SCHEMA,
     BAM_CONTRACT,
     BAM_MAPQ,
 )
@@ -95,6 +96,18 @@ def build_complete_manifest(
             "requested": "disabled",
         }
     )
+    library_orientation_model = (
+        {
+            "effective": (
+                "directional-ot-ob-equal"
+                if normalized["sequencing"]["directional"]
+                else "nondirectional-ot-ob-ctot-ctob-equal"
+            ),
+            "rng_stage": "library-orientation",
+        }
+        if bisulfite
+        else {"effective": "disabled"}
+    )
     fragments = normalized["fragments"]
     read_base_count = trailer.fragment_count * (
         fragments["read_length_1"]
@@ -117,7 +130,10 @@ def build_complete_manifest(
             "read_name": READ_NAME_CONTRACT,
             "rng": RNG_CONTRACT,
         },
-        "models": {"methylation_state": methylation_state_model},
+        "models": {
+            "library_orientation": library_orientation_model,
+            "methylation_state": methylation_state_model,
+        },
         "protocol_version": PROTOCOL_VERSION,
         "randomness": {
             "master_seed": str(config.master_seed),
@@ -187,6 +203,11 @@ def build_complete_manifest(
             "fastq_sidecars": False,
             "fastq_recovery": "samtools fastq",
             "tags": {
+                "zs": {
+                    "required": True,
+                    "schema": ANNOTATION_STRAND_SCHEMA,
+                    "scope": "informative-fragment-strand-and-read-conversion",
+                },
                 "zx": {
                     "required": fragment_realization,
                     "schema": ANNOTATION_FRAGMENT_REALIZATION_SCHEMA,

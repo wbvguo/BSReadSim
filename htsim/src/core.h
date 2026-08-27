@@ -59,6 +59,7 @@ struct CoreConfig {
     std::optional<std::string> asm_bed_path;
 
     Technology technology = Technology::wgbs;
+    bool directional = true;
     bool paired_end = false;
     std::uint32_t read_length_1 = 0;
     std::optional<std::uint32_t> read_length_2;

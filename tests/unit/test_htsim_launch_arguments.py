@@ -119,6 +119,8 @@ class CoreArgvTests(unittest.TestCase):
             str((self.directory / "reference.fa").resolve()),
             "--technology",
             "WGBS",
+            "--directional",
+            "true",
             "--paired-end",
             "false",
             "--read-length-1",
@@ -287,6 +289,7 @@ class CoreArgvTests(unittest.TestCase):
         argv = build_core_argv(prepared, RUN_ID, "htsim-core")
 
         self.assertEqual(option_value(argv, "--technology"), "TBS")
+        self.assertEqual(option_value(argv, "--directional"), "true")
         self.assertEqual(option_value(argv, "--paired-end"), "true")
         self.assertEqual(option_value(argv, "--read-length-2"), "4")
         self.assertEqual(option_value(argv, "--depth"), "3.25")
@@ -311,7 +314,6 @@ class CoreArgvTests(unittest.TestCase):
 
         python_only_options = {
             "--conversion-rate",
-            "--directional",
             "--quality",
             "--error",
             "--workers",

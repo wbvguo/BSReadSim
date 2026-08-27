@@ -637,11 +637,69 @@ append_u16_summary_values(SamBuffer *buffer, const unsigned char *summary)
 
 
 static int
+append_strand_conversion_tag(SamBuffer *buffer, const unsigned char *summary)
+{
+    const uint16_t flags = load_u16_le_bytes(summary);
+    const unsigned int strand = (unsigned int)((flags >> 2) & UINT16_C(0x3));
+    const unsigned int conversion =
+        (unsigned int)((flags >> 4) & UINT16_C(0x7));
+    const char *strand_name;
+    const char *conversion_name;
+
+    switch (strand) {
+    case 0U:
+        strand_name = "N";
+        break;
+    case 1U:
+        strand_name = "W";
+        break;
+    case 2U:
+        strand_name = "C";
+        break;
+    default:
+        PyErr_SetString(PyExc_ValueError, "SAM summary has invalid strand bits");
+        return -1;
+    }
+    switch (conversion) {
+    case 0U:
+        conversion_name = "C2T";
+        break;
+    case 1U:
+        conversion_name = "G2A";
+        break;
+    case 2U:
+        conversion_name = "NONE";
+        break;
+    default:
+        PyErr_SetString(
+            PyExc_ValueError, "SAM summary has invalid conversion-mode bits"
+        );
+        return -1;
+    }
+    if ((strand == 0U) != (conversion == 2U)) {
+        PyErr_SetString(
+            PyExc_ValueError, "SAM summary strand and conversion mode disagree"
+        );
+        return -1;
+    }
+    return sam_buffer_append_literal(buffer, "\tzs:Z:") < 0
+        || sam_buffer_append_literal(buffer, strand_name) < 0
+        || sam_buffer_append_char(buffer, '_') < 0
+        || sam_buffer_append_literal(buffer, conversion_name) < 0
+        ? -1
+        : 0;
+}
+
+
+static int
 append_columnar_annotation_tags(SamBuffer *buffer, const MateAlignment *alignment)
 {
     Py_ssize_t offset;
     if (alignment->base_state_codes == NULL || alignment->read_summary == NULL) {
         PyErr_SetString(PyExc_ValueError, "SAM record has no ZT/ZR tags");
+        return -1;
+    }
+    if (append_strand_conversion_tag(buffer, alignment->read_summary) < 0) {
         return -1;
     }
     if (sam_buffer_append_literal(buffer, "\tzt:Z:") < 0) {

@@ -17,6 +17,8 @@ import subprocess
 
 from ..process.batch import (
     BaseState,
+    CaptureStrand,
+    ConversionMode,
     MethylationContext,
     MethylationSource,
     NO_VARIANT_INDEX,
@@ -41,6 +43,7 @@ ANNOTATION_STATE_ALPHABET = (
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 )
 ANNOTATION_STATE_SCHEMA = "state64"
+ANNOTATION_STRAND_SCHEMA = "informative-strand-conversion-v1"
 ANNOTATION_READ_SUMMARY_SCHEMA = "u16x12"
 ANNOTATION_FRAGMENT_SUMMARY_SCHEMA = "u16x12"
 ANNOTATION_FRAGMENT_REALIZATION_SCHEMA = "packed-b64url"
@@ -128,6 +131,10 @@ def build_sam_header(
             ),
             "@CO\tBSREADSIM_ZT={};ALPHABET={}".format(
                 ANNOTATION_STATE_SCHEMA, ANNOTATION_STATE_ALPHABET
+            ),
+            "@CO\tBSREADSIM_ZS={};REQUIRED=1;VALUES="
+            "W_C2T|W_G2A|C_C2T|C_G2A|N_NONE".format(
+                ANNOTATION_STRAND_SCHEMA
             ),
             "@CO\tBSREADSIM_ZR={};REQUIRED=1".format(
                 ANNOTATION_READ_SUMMARY_SCHEMA
@@ -369,6 +376,47 @@ _FLAG_COUNT_OVERFLOW = 1 << 13
 _SUMMARY_MAX = 0xFFFF
 
 
+def _informative_strand(
+    fragment: ProcessedFragment,
+) -> CaptureStrand:
+    if fragment.fragment_conversion_mode is ConversionMode.NONE:
+        return CaptureStrand.UNKNOWN
+    if fragment.capture_strand in (
+        CaptureStrand.FORWARD,
+        CaptureStrand.REVERSE,
+    ):
+        return fragment.capture_strand
+    if fragment.capture_strand is not CaptureStrand.UNKNOWN:
+        raise BamError("BAM fragment has an unsupported informative strand")
+    return (
+        CaptureStrand.FORWARD
+        if fragment.fragment_conversion_mode is ConversionMode.C2T
+        else CaptureStrand.REVERSE
+    )
+
+
+def _strand_conversion_tag(
+    fragment: ProcessedFragment,
+    mate: ProcessedMate,
+) -> str:
+    strand = _informative_strand(fragment)
+    strand_name = {
+        CaptureStrand.UNKNOWN: "N",
+        CaptureStrand.FORWARD: "W",
+        CaptureStrand.REVERSE: "C",
+    }[strand]
+    conversion_name = {
+        ConversionMode.C2T: "C2T",
+        ConversionMode.G2A: "G2A",
+        ConversionMode.NONE: "NONE",
+    }[mate.conversion_mode]
+    if (strand is CaptureStrand.UNKNOWN) != (
+        mate.conversion_mode is ConversionMode.NONE
+    ):
+        raise BamError("BAM informative strand and mate conversion disagree")
+    return "zs:Z:{}_{}".format(strand_name, conversion_name)
+
+
 def _site_state_suffixes(
     fragment: ProcessedFragment,
     mates: tuple[ProcessedMate, ...],
@@ -399,6 +447,7 @@ def _site_state_suffixes(
         if mate.reverse_complement:
             state_text = state_text[::-1]
         fields = [
+            _strand_conversion_tag(fragment, mate),
             "zt:Z:{}".format(state_text),
             _summary_tag("zr", _finalize_summary(raw_summary)),
         ]
@@ -502,9 +551,10 @@ def _read_summary_values(
         )
         state_characters.append(ANNOTATION_STATE_ALPHABET[state])
 
+    informative_strand = _informative_strand(fragment)
     flags = (
         (int(fragment.haplotype) & 0x3)
-        | ((int(fragment.capture_strand) & 0x3) << 2)
+        | ((int(informative_strand) & 0x3) << 2)
         | ((int(mate.conversion_mode) & 0x7) << 4)
     )
     if has_asm:
@@ -542,9 +592,10 @@ def _fragment_summary_values(
         context_counts[context_code - 1] += 1
         methylated_counts[context_code - 1] += int(bool(site.methylated))
         has_asm = has_asm or site.methylation_source is MethylationSource.ASM
+    informative_strand = _informative_strand(fragment)
     flags = (
         (int(fragment.haplotype) & 0x3)
-        | ((int(fragment.capture_strand) & 0x3) << 2)
+        | ((int(informative_strand) & 0x3) << 2)
         | ((int(fragment.fragment_conversion_mode) & 0x7) << 4)
     )
     if has_asm:
@@ -995,6 +1046,7 @@ __all__ = [
     "ANNOTATION_FRAGMENT_REALIZATION_SCHEMA",
     "ANNOTATION_FRAGMENT_SUMMARY_SCHEMA",
     "ANNOTATION_READ_SUMMARY_SCHEMA",
+    "ANNOTATION_STRAND_SCHEMA",
     "ANNOTATION_STATE_SCHEMA",
     "BAM_CONTRACT",
     "BAM_MAPQ",

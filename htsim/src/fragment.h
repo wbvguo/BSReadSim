@@ -156,7 +156,8 @@ model::Fragment build_fragment(
     std::uint8_t haplotype,
     model::CaptureStrand capture_strand,
     const ReadLayout &layout,
-    FragmentDetail detail = FragmentDetail::full);
+    FragmentDetail detail = FragmentDetail::full,
+    bool reverse_molecule = false);
 
 // Consume one typed haplotype projection and attach its diploid methylation
 // sites. This boundary performs no sampling or I/O. Passing by value allows a
@@ -168,7 +169,8 @@ model::Fragment build_fragment(
     std::uint64_t fragment_ordinal,
     model::CaptureStrand capture_strand,
     const ReadLayout &layout,
-    FragmentDetail detail = FragmentDetail::full);
+    FragmentDetail detail = FragmentDetail::full,
+    bool reverse_molecule = false);
 
 } // namespace htsim::fragment_builder
 

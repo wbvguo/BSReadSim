@@ -141,6 +141,13 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(
             details["contracts"]["read_name"], READ_NAME_CONTRACT
         )
+        self.assertEqual(
+            details["models"]["library_orientation"],
+            {
+                "effective": "directional-ot-ob-equal",
+                "rng_stage": "library-orientation",
+            },
+        )
         self.assertEqual(manifest.document["summary"]["fragment_count"], 1)
         self.assertEqual(manifest.document["summary"]["read_count"], 1)
         self.assertEqual(
@@ -315,6 +322,10 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(
             manifest.document["details"]["models"]["methylation_state"],
             {"effective": "disabled", "requested": "disabled"},
+        )
+        self.assertEqual(
+            manifest.document["details"]["models"]["library_orientation"],
+            {"effective": "disabled"},
         )
         with self.assertRaisesRegex(ManifestError, "methylation sites"):
             build_complete_manifest(

@@ -325,6 +325,7 @@ class DocumentationContractTests(unittest.TestCase):
             "@chr1:101-108:0/2",
             '"status": "complete"',
             "samtools view",
+            "zs:Z:W_C2T",
             "zt:Z:AAAAA",
             "00000000: 6d65 7468 6462",
             "truth/sim.variants.vcf.gz",

@@ -163,12 +163,18 @@ def main(argv) -> int:
                 "0",
             ),
         )
+        rrbs_modes = set()
         for record in rrbs[::2]:
             contig, left, right, _ = _qname_envelope(record["query_name"])
             if contig != "chrMock" or right - left + 1 != 8:
                 raise SystemExit("RRBS emitted a non-MspI fragment envelope")
-            if (record["aux"]["zf"][1][0] >> 4) & 0x7:
-                raise SystemExit("RRBS changed its directional conversion mode")
+            rrbs_modes.add((record["aux"]["zf"][1][0] >> 4) & 0x7)
+        if rrbs_modes != {0, 1}:
+            raise SystemExit(
+                "directional RRBS omitted Watson or Crick fragments: {!r}".format(
+                    rrbs_modes
+                )
+            )
 
         _, tbs = _run(
             core,

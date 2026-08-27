@@ -56,6 +56,7 @@ def build_core_argv(
     fragments = _mapping(config, "fragments")
     execution = _mapping(config, "execution")
     mutation = _mapping(config, "mutation")
+    sequencing = _mapping(config, "sequencing")
     seeds = _mapping(config, "seeds")
     methylation = _mapping(config, "methylation")
     beta = _mapping(methylation, "beta")
@@ -112,6 +113,12 @@ def build_core_argv(
 
     technology = _text("technology", config["technology"])
     arguments.extend(("--technology", technology))
+    arguments.extend(
+        (
+            "--directional",
+            _boolean("sequencing.directional", sequencing["directional"]),
+        )
+    )
 
     paired_end = _boolean("fragments.paired_end", fragments["paired_end"])
     arguments.extend(("--paired-end", paired_end))

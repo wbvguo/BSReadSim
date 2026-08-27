@@ -198,7 +198,7 @@ if(BUILD_TESTING AND EXISTS "${TEST_ROOT}")
             "${CMAKE_CURRENT_SOURCE_DIR}/data"
             "${PYTHON_TEST_PACKAGE}/bsreadsim/data"
         COMMAND
-            "${Python3_EXECUTABLE}" setup.py build_ext
+            "${Python3_EXECUTABLE}" setup.py build_ext --force
             --build-lib "${PYTHON_TEST_PACKAGE}"
             --build-temp "${PYTHON_TEST_ROOT}/build"
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"

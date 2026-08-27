@@ -679,7 +679,8 @@ model::Fragment build_fragment(
     std::uint8_t haplotype,
     model::CaptureStrand capture_strand,
     const ReadLayout &layout,
-    FragmentDetail detail)
+    FragmentDetail detail,
+    bool reverse_molecule)
 {
     validate_layout(layout);
     require_payload_fits_protocol(layout);
@@ -753,11 +754,19 @@ model::Fragment build_fragment(
                   template_start,
                   template_end));
     };
-    append_mate(0U, false, 0U, layout.read_length);
-    if (layout.paired_end) {
-        const std::uint32_t second_start =
-            layout.insert_length - layout.read_length;
-        append_mate(1U, true, second_start, layout.insert_length);
+    const std::uint32_t template_length = static_cast<std::uint32_t>(
+        fragment.template_bases.size());
+    const std::uint32_t reverse_start = template_length - layout.read_length;
+    if (reverse_molecule) {
+        append_mate(0U, true, reverse_start, template_length);
+        if (layout.paired_end) {
+            append_mate(1U, false, 0U, layout.read_length);
+        }
+    } else {
+        append_mate(0U, false, 0U, layout.read_length);
+        if (layout.paired_end) {
+            append_mate(1U, true, reverse_start, template_length);
+        }
     }
     return fragment;
 }
@@ -769,7 +778,8 @@ model::Fragment build_fragment(
     std::uint64_t fragment_ordinal,
     model::CaptureStrand capture_strand,
     const ReadLayout &layout,
-    FragmentDetail detail)
+    FragmentDetail detail,
+    bool reverse_molecule)
 {
     validate_capture_strand(capture_strand);
     require_payload_fits_protocol(projection, layout);
@@ -809,13 +819,17 @@ model::Fragment build_fragment(
                   template_start,
                   template_end));
     };
-    append_mate(0U, false, 0U, layout.read_length);
-    if (layout.paired_end) {
-        append_mate(
-            1U,
-            true,
-            template_length - layout.read_length,
-            template_length);
+    const std::uint32_t reverse_start = template_length - layout.read_length;
+    if (reverse_molecule) {
+        append_mate(0U, true, reverse_start, template_length);
+        if (layout.paired_end) {
+            append_mate(1U, false, 0U, layout.read_length);
+        }
+    } else {
+        append_mate(0U, false, 0U, layout.read_length);
+        if (layout.paired_end) {
+            append_mate(1U, true, reverse_start, template_length);
+        }
     }
     return fragment;
 }

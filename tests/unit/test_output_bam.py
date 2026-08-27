@@ -13,6 +13,7 @@ from bsreadsim.output.bam import (
 )
 from bsreadsim.process import (
     BaseState,
+    CaptureStrand,
     ConversionMode,
     ProcessedFragment,
     ProcessedMate,
@@ -99,6 +100,10 @@ class BamFormattingTests(unittest.TestCase):
         self.assertIn("@PG\tID:bsreadsim\tPN:bsreadsim\tVN:1.2.3\n", value)
         self.assertIn("MAPQ 60 denotes simulated origin", value)
         self.assertIn("BSREADSIM_ZT=state64", value)
+        self.assertIn(
+            "BSREADSIM_ZS=informative-strand-conversion-v1;REQUIRED=1",
+            value,
+        )
         self.assertIn("BSREADSIM_ZR=u16x12;REQUIRED=1", value)
         self.assertIn("BSREADSIM_ZF=u16x12;ENABLED=0", value)
 
@@ -118,6 +123,7 @@ class BamFormattingTests(unittest.TestCase):
         tags = tag_fields(value)
         self.assertEqual(tags["RG"], "RG:Z:" + RUN_ID)
         self.assertEqual(tags["AS"], "AS:i:5")
+        self.assertEqual(tags["zs"], "zs:Z:W_C2T")
         self.assertTrue(tags["zt"].startswith("zt:Z:"))
         self.assertTrue(tags["zr"].startswith("zr:B:S,"))
         self.assertNotIn("PG", tags)
@@ -187,7 +193,45 @@ class BamFormattingTests(unittest.TestCase):
         ])
         self.assertEqual(tag_fields(first)["MC"], "MC:Z:5M")
         self.assertEqual(tag_fields(second)["MC"], "MC:Z:5M")
+        self.assertEqual(tag_fields(first)["zs"], "zs:Z:W_C2T")
+        self.assertEqual(tag_fields(second)["zs"], "zs:Z:W_G2A")
         self.assertEqual(second[9], "TGTCG")
+
+    def test_crick_fragment_has_readable_strand_conversion_tags(self) -> None:
+        source = make_fragment(
+            paired_end=True,
+            capture_strand=CaptureStrand.REVERSE,
+        )
+        left, right = source.mates
+        original_bottom = replace(
+            source,
+            mates=(
+                replace(right, mate_index=0),
+                replace(left, mate_index=1),
+            ),
+        )
+        processed = process_fragment(
+            original_bottom,
+            "chrMini",
+            UniformProcessConfig(
+                master_seed=7,
+                conversion_rate=1,
+                error_rate=0,
+                quality_phred=30,
+            ),
+        )
+        first, second = tuple(
+            tag_fields(fields(record))
+            for record in format_sam_fragment(
+                processed,
+                paired_end=True,
+                read_group_id="run",
+                contig_length=1000,
+            )
+        )
+
+        self.assertEqual(first["zs"], "zs:Z:C_C2T")
+        self.assertEqual(second["zs"], "zs:Z:C_G2A")
 
     def test_rich_tags_are_required_and_fragment_summary_is_optional(self) -> None:
         fragment = fragment_for((10, 11, -1, 12, 15))
@@ -207,6 +251,7 @@ class BamFormattingTests(unittest.TestCase):
 
         self.assertEqual(len(regular["zt"].removeprefix("zt:Z:")), 5)
         self.assertEqual(len(regular["zr"].split(",")), 13)
+        self.assertEqual(regular["zs"], "zs:Z:W_C2T")
         self.assertNotIn("zf", regular)
         self.assertEqual(len(summarized["zf"].split(",")), 13)
 

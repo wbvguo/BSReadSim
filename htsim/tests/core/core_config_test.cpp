@@ -43,6 +43,7 @@ std::vector<std::string> base_arguments()
         "--seed-meth", "3",
         "--reference", "/data/reference.fa",
         "--technology", "WGBS",
+        "--directional", "true",
         "--paired-end", "true",
         "--read-length-1", "100",
         "--read-length-2", "100",
@@ -99,7 +100,8 @@ void test_valid_wgbs_projection()
     const auto config = parse_core_config(base_arguments());
     require(!config.emit_details,
             "direct invocation did not default to no-Details");
-    require(config.technology == Technology::wgbs, "WGBS technology changed");
+    require(config.technology == Technology::wgbs && config.directional,
+            "WGBS technology or directionality changed");
     require(config.master_seed == 0, "seed zero was not preserved");
     require(config.paired_end && config.read_length_2 == 100,
             "paired-end projection was not parsed");
@@ -291,6 +293,12 @@ void test_standard_technology_projection()
     require_error(
         [&] {parse_core_config(methylation_input);},
         "standard sequencing accepted a methylation input");
+
+    auto undirectional = wgs_arguments;
+    replace_value(undirectional, "--directional", "false");
+    require_error(
+        [&] {parse_core_config(undirectional);},
+        "standard sequencing accepted undirectional chemistry");
 }
 
 void test_unknown_duplicate_and_missing_options_fail()
@@ -333,6 +341,7 @@ void test_number_boolean_and_identity_boundaries()
     const std::vector<std::pair<std::string, std::string>> invalid = {
         {"--seed", "-1"},
         {"--seed", "18446744073709551616"},
+        {"--directional", "1"},
         {"--paired-end", "1"},
         {"--mutation-rate", "nan"},
         {"--mutation-rate", "+0.1"},

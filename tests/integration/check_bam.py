@@ -355,10 +355,21 @@ def main() -> int:
             raise SystemExit("BAM manifest omitted its SAM contract")
         if details["contracts"].get("read_name") != "bsreadsim-read-name":
             raise SystemExit("BAM manifest omitted the read-name contract")
+        if details["models"].get("library_orientation") != {
+            "effective": "directional-ot-ob-equal",
+            "rng_stage": "library-orientation",
+        }:
+            raise SystemExit("BAM manifest omitted its library orientation model")
         if details["alignment"]["tags"]["zf"]["required"] is not True:
             raise SystemExit("BAM manifest omitted the requested zf policy")
         if details["alignment"]["tags"]["zx"]["required"] is not True:
             raise SystemExit("BAM manifest omitted the requested zx policy")
+        if details["alignment"]["tags"]["zs"] != {
+            "required": True,
+            "schema": "informative-strand-conversion-v1",
+            "scope": "informative-fragment-strand-and-read-conversion",
+        }:
+            raise SystemExit("BAM manifest omitted the required zs policy")
 
         header, references, records, _ = _parse_bam(bam_path)
         if not header.startswith("@HD\tVN:1.6\tSO:unsorted\n"):
@@ -367,6 +378,12 @@ def main() -> int:
             raise SystemExit("BAM header omitted provenance records")
         if "BSREADSIM_ZX=packed-b64url;ENABLED=1;BIT_ORDER=LSB0" not in header:
             raise SystemExit("BAM header omitted the zx schema")
+        if (
+            "BSREADSIM_ZS=informative-strand-conversion-v1;REQUIRED=1;"
+            "VALUES=W_C2T|W_G2A|C_C2T|C_G2A|N_NONE"
+            not in header
+        ):
+            raise SystemExit("BAM header omitted the zs schema")
         if references != (("chr1", 9),):
             raise SystemExit("BAM reference dictionary is wrong")
         if len(records) != 24:
@@ -376,6 +393,7 @@ def main() -> int:
         ).exists():
             raise SystemExit("BAM run emitted forbidden FASTQ sidecars")
 
+        observed_informative_strands = set()
         for pair_offset in range(0, len(records), 2):
             first, second = records[pair_offset : pair_offset + 2]
             if first["query_name"] != second["query_name"]:
@@ -396,8 +414,6 @@ def main() -> int:
                 or ordinal_text != format(ordinal, "x")
             ):
                 raise SystemExit("BAM QNAME fields violate the read-name contract")
-            if first["flag"] != 99 or second["flag"] != 147:
-                raise SystemExit("BAM emitted incorrect paired-end flags")
             if first["mapq"] != 60 or second["mapq"] != 60:
                 raise SystemExit("BAM emitted the wrong synthetic MAPQ")
             if first["template_length"] != -second["template_length"]:
@@ -412,6 +428,37 @@ def main() -> int:
                 raise SystemExit("BAM MC tags are inconsistent")
             if first["aux"].get("zx") != second["aux"].get("zx"):
                 raise SystemExit("BAM paired records do not share fragment zx")
+            strand_conversion_pair = (
+                first["aux"].get("zs"),
+                second["aux"].get("zs"),
+            )
+            if strand_conversion_pair == (
+                ("Z", "W_C2T"),
+                ("Z", "W_G2A"),
+            ):
+                observed_informative_strands.add("W")
+                expected_flags = (99, 147)
+            elif strand_conversion_pair == (
+                ("Z", "C_C2T"),
+                ("Z", "C_G2A"),
+            ):
+                observed_informative_strands.add("C")
+                expected_flags = (83, 163)
+            else:
+                raise SystemExit(
+                    "BAM paired records have incorrect zs tags: {!r}".format(
+                        strand_conversion_pair
+                    )
+                )
+            if (first["flag"], second["flag"]) != expected_flags:
+                raise SystemExit("BAM flags disagree with its library strand")
+
+        if observed_informative_strands != {"W", "C"}:
+            raise SystemExit(
+                "directional BAM omitted an informative strand: {!r}".format(
+                    observed_informative_strands
+                )
+            )
 
         for record in records:
             if record["reference_id"] != 0 or record["next_reference_id"] != 0:
@@ -429,6 +476,15 @@ def main() -> int:
                 raise SystemExit("BAM AS is not the maximum origin score")
             if aux.get("MQ")[1] != 60:
                 raise SystemExit("BAM MQ tag disagrees with MAPQ")
+            zs = aux.get("zs")
+            if zs is None or zs[0] != "Z" or zs[1] not in {
+                "W_C2T",
+                "W_G2A",
+                "C_C2T",
+                "C_G2A",
+                "N_NONE",
+            }:
+                raise SystemExit("BAM zs is not a recognized strand/conversion")
             zt = aux.get("zt")
             if zt is None or zt[0] != "Z" or len(zt[1]) != len(record["sequence"]):
                 raise SystemExit("BAM zt does not cover BAM SEQ")
@@ -436,6 +492,13 @@ def main() -> int:
                 value = aux.get(name)
                 if value is None or value[0] != "B:S" or len(value[1]) != 12:
                     raise SystemExit("BAM {} violates u16x12".format(name))
+            flags = aux["zr"][1][0]
+            strand_name = {0: "N", 1: "W", 2: "C"}.get((flags >> 2) & 0x3)
+            conversion_name = {0: "C2T", 1: "G2A", 2: "NONE"}.get(
+                (flags >> 4) & 0x7
+            )
+            if zs[1] != "{}_{}".format(strand_name, conversion_name):
+                raise SystemExit("BAM zs disagrees with packed zr flags")
             zx = aux.get("zx")
             if zx is None or zx[0] != "Z":
                 raise SystemExit("BAM record omitted fragment realization zx")

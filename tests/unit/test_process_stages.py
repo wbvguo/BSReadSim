@@ -607,6 +607,7 @@ class UniformProcessTests(unittest.TestCase):
         )
 
         self.assertEqual(result.fragment_conversion_mode, ConversionMode.G2A)
+        self.assertEqual(result.capture_strand, CaptureStrand.REVERSE)
         self.assertEqual(result.mates[0].conversion_mode, ConversionMode.G2A)
         self.assertEqual(result.mates[1].conversion_mode, ConversionMode.C2T)
 
@@ -627,6 +628,7 @@ class UniformProcessTests(unittest.TestCase):
         second = process_fragment(fragment, "chrM", config)
         self.assertEqual(first, second)
         self.assertEqual(first.fragment_conversion_mode, ConversionMode.G2A)
+        self.assertEqual(first.capture_strand, CaptureStrand.REVERSE)
         self.assertEqual(tuple(mate.sequence for mate in first.mates), ("ACCAT", "TGATG"))
 
     def test_results_are_worker_and_completion_order_independent(self) -> None:
