@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import IntEnum, StrEnum
+from enum import Enum, IntEnum
 import math
 import struct
 
@@ -35,9 +35,12 @@ class VariantKind(IntEnum):
     DELETION = 3
 
 
-class VariantSource(StrEnum):
+class VariantSource(str, Enum):
     VCF = "vcf"
     DE_NOVO = "de_novo"
+
+    # Match enum.StrEnum while retaining Python 3.10 compatibility.
+    __str__ = str.__str__
 
 
 class MethylationContext(IntEnum):
