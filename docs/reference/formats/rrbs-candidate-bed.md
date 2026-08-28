@@ -23,7 +23,7 @@ row and all other fields. Run with the resulting file:
 bsreadsim run rrbs \
   --reference reference.fa \
   --output runs/rrbs \
-  --fragments 100000 \
+  --reads 100000 \
   --cut-site 'C|CGG' \
   --rrbs-candidates candidates.scored.bed \
   --sampling score \

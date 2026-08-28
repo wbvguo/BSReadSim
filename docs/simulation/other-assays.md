@@ -111,14 +111,14 @@ on ordinary sequencing reads.
 | Layer | Available choices |
 | --- | --- |
 | Genetic background | unchanged reference, de novo SNVs and indels, or a one-sample diploid VCF |
-| Dataset size | exact source-fragment count with `--fragments`, or assay-aware mean depth with `--depth` |
+| Dataset size | exact total read count with `--reads`, or assay-aware mean depth with `--depth` |
 | Read layout | single-end or paired-end reads with a configurable read length |
 | Sequencing | fixed or empirical base quality and uniform or model-based substitution errors |
 | Reproducibility | independent variant, phasing, and master seeds plus an automatic run manifest |
 
 For WGS, depth is calculated over contigs with eligible whole-genome fragment
 starts. For WES and TS, it is calculated over the union of eligible target
-intervals. Use `--fragments` when the exact dataset size is more important
+intervals. Use `--reads` when the exact output record count is more important
 than assay-aware depth.
 
 ## Outputs and ground truth

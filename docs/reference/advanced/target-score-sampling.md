@@ -8,7 +8,7 @@ target's relative expected output.
 bsreadsim run tbs \
   --reference reference.fa \
   --output runs/tbs-weighted \
-  --fragments 100000 \
+  --reads 100000 \
   --targets targets.bed \
   --sampling score \
   --insert-mean 300 \

@@ -8,7 +8,7 @@ for CG, CHG, and CHH contexts.
 bsreadsim run wgbs \
   --reference reference.fa \
   --output runs/pooled \
-  --fragments 100000 \
+  --reads 100000 \
   --cgmap sample.cgmap.gz \
   --cgmap-pool \
   --mutation-rate 0 \

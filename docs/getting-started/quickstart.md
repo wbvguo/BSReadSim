@@ -19,7 +19,8 @@ bsreadsim run wgbs -r test.fa -o test/ -n 1000 -s 42
 - `run wgbs` simulates Whole Genome Bisulfite Sequencing reads.
 - `-r` specifies the reference genome in FASTA format.
 - `-o` specifies the output directory for the simulated dataset.
-- `-n` specifies the number of source DNA fragments to sample.
+- `-n` specifies the total number of read records to emit; paired-end runs
+  divide that even count into complete R1/R2 pairs.
 - `-s` fixes the master seed for fragment selection and read realization.
 
 All unspecified fragment, read, sequencing, and output options use the WGBS defaults.
@@ -59,3 +60,5 @@ Choose the technology that matches your experiment:
 Open [Customize](../simulation/customize.md) to control genetic variation, methylation, fragment sampling, sequencing behavior, and output format.
 See [Tutorials](../simulation/tutorials.md) for bisulfite simulation recipes.
 See [Outputs](../outputs/index.md) for descriptions of the generated files.
+See [CLI parameters and defaults](../reference/cli.md) for every option,
+accepted value, default, and compatibility rule.

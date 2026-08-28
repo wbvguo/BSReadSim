@@ -1,9 +1,16 @@
-# Command-line reference
+# CLI parameters and defaults
 
-BSReadSim uses explicit subcommands for simulations and reusable artifact
-construction. The current interface is path-based: provide input paths and
-BSReadSim computes, verifies, and records file identities internally. SHA-256
-digests are not command-line inputs.
+This page is the complete reference for BSReadSim's public command-line
+interface. It lists every option, its accepted value, its effective default,
+and the commands on which it is available. BSReadSim uses explicit subcommands
+for simulations and reusable artifact construction. The interface is
+path-based: provide input paths and BSReadSim computes, verifies, and records
+file identities internally. SHA-256 digests are not command-line inputs.
+
+In the tables below, **required** means that the option must be supplied,
+**none** means that no input or model is selected, and **off** means that a
+flag is disabled unless it is present. Conditional defaults are called out
+next to the option and explained immediately below the table.
 
 ## Synopsis
 
@@ -79,24 +86,30 @@ Methylation and bisulfite-chemistry options are exposed only by `run wgbs`,
 | --- | --- | --- | --- |
 | `-r` | `--reference` | FASTA path | required |
 | `-o` | `--output` | directory path | required |
-| `-n` | `--fragments` | integer `1..4294967295` | required unless `--depth` is used |
-| `-d` | `--depth` | finite number `> 0` | required unless `--fragments` is used |
+| `-n` | `--reads` | SE: integer `1..4294967295`; PE: even integer `2..8589934590` | required unless `--depth` is used |
+| `-d` | `--depth` | finite number `> 0` | required unless `--reads` is used |
 
-Choose exactly one of `--fragments` and `--depth`.
+Choose exactly one of `--reads` and `--depth`.
 
-`--fragments` counts source DNA fragments, not individual FASTQ records. A
-paired-end run emits two reads per accepted fragment; `--single-end` emits one.
+`--reads` counts total read records across all output mates. In paired-end
+mode the value must be even: `--reads 1000` emits 500 R1/R2 pairs. In
+single-end mode, the same option emits 1000 R1 records.
 
-`--depth D` resolves an exact requested fragment count as:
+`--depth D` follows the same read-count contract. It first resolves the raw
+number of reads, rounds up to a complete fragment bundle, and then derives the
+internal fragment count:
 
 ```text
-ceil(effective_reference_bases * D / (read_length * emitted_mates))
+raw_reads = effective_reference_bases * D / read_length
+resolved_reads = emitted_mates * ceil(raw_reads / emitted_mates)
+resolved_fragments = resolved_reads / emitted_mates
 ```
 
 The effective region is technology-specific: eligible contigs for WGBS/WGS,
 the union of eligible restriction-fragment envelopes for RRBS, and the union
-of target intervals for TBS/WES/TS. The requested depth and resolved fragment
-count are both retained in the manifest.
+of target intervals for TBS/WES/TS. The requested depth is retained in the
+effective configuration; resolved read and fragment counts are retained in the
+manifest summary.
 
 ### Random seeds
 
@@ -135,11 +148,13 @@ events, `--indel-fraction` selects the fraction that are insertions or
 deletions; the remainder are SNVs. `--indel-extension-probability` controls
 extension of indels up to the supported four-base limit.
 
-The run default is `0.001`, except that it becomes `0` when `--gc-profile` or
-`--rrbs-candidates` is supplied. `--vcf` selects predefined variants and
-automatically records an internal mutation rate of `0`; it is mutually
-exclusive with `--mutation-rate`. For auditable experiments without a VCF,
-specify `--mutation-rate` explicitly when the inferred default is not desired.
+The run default is `0.001`, except that it becomes `0` when `--gc-profile`,
+`--rrbs-candidates`, or `--methdb` is supplied. `--vcf` selects predefined
+variants and automatically records an internal mutation rate of `0`; it is
+mutually exclusive with `--mutation-rate`. A MethDB already embeds the prepared
+variant set, so it excludes `--vcf` and accepts only an explicitly supplied
+`--mutation-rate 0`. For auditable experiments without a VCF, specify
+`--mutation-rate` explicitly when the inferred default is not desired.
 
 ### Methylation inputs
 
@@ -217,7 +232,7 @@ restriction fragments. TBS, WES, and TS use and default to `--insert-sd 0`.
 | Short | Long | Type | Default |
 | --- | --- | --- | --- |
 | — | `--conversion-rate` | probability | `0.998`; bisulfite modes only |
-| — | `--undirectional` | flag | off; directional library; bisulfite modes only |
+| — | `--undirectional` | flag | off; directional OT/OB library; bisulfite modes only |
 | `-q` | `--phred` | integer `0..93` | `40` |
 | — | `--quality-model` | quality Markov JSON path | none |
 | `-e` | `--error-rate` | probability | `0.005` |
@@ -225,6 +240,12 @@ restriction fragments. TBS, WES, and TS use and default to `--insert-sd 0`.
 
 `--conversion-rate` is the probability that an unmethylated convertible base
 is converted. It and `--undirectional` apply only to WGBS, RRBS, and TBS.
+Directional simulation samples independent original-top (OT/Watson) and
+original-bottom (OB/Crick) fragments with equal probability. `--undirectional`
+adds the complementary CTOT and CTOB orientations, sampling all four with
+equal probability. Target-strand constraints retain their Watson/Crick source
+while directionality controls whether the original or complementary molecule
+is sequenced.
 WGS, WES, and TS bypass both methylation realization and bisulfite conversion.
 `--quality-model` replaces uniform `--phred`; the two cannot be combined.
 `--error-model` replaces uniform `--error-rate`; those two also cannot be
@@ -246,7 +267,9 @@ recorded in the manifest.
 
 `--format` selects exactly one read representation. BAM replaces FASTQ rather
 than accompanying it. `--gzip-level` controls compressed FASTQ or BAM output;
-it has no byte-level effect on uncompressed FASTQ.
+it has no byte-level effect on uncompressed FASTQ. Compressed FASTQ is a
+standards-compliant concatenation of deterministic gzip members, which lets
+processing workers compress ordered batches in parallel.
 
 The reusable biological state has two consistent names throughout the user
 documentation: the **prepared variant set** and, in bisulfite modes, the
@@ -274,15 +297,15 @@ variant set because those modes have no methylation profile.
 
 | Short | Long | Type | Default |
 | --- | --- | --- | --- |
-| — | `--workers` | integer `1..1024` | `1` Python processing/output worker |
-| — | `--core-workers` | integer `1..64` | `1` fragment-generation worker |
-| — | `--chunk-size` | integer `1..10000000` | `10000` fragments per core sampling chunk |
-| — | `--max-in-flight-fragments` | integer `1..1000000` | `4096` |
+| `-t` | `--threads` | integer `1..256` | `1`; one CPU budget for generation, processing, and compression |
 | — | `--core` | executable path | bundled `htsim-core` |
 
-The worker and batching options change resource use, not fixed-seed results.
-Reduce `--max-in-flight-fragments` first when memory pressure comes from
-queued work. `--core` is primarily a development and testing override.
+`--threads` is a total CPU budget, not a per-stage multiplier. BSReadSim splits
+it between ordered fragment construction and read processing; BAM runs also
+reserve capacity for the HTSlib writer and BGZF compression. Protocol batches
+and in-flight buffers are derived automatically. The same inputs and seeds
+produce identical output bytes at every thread count. `--core` is primarily a
+development and testing override.
 
 ## Technology-specific `run` options
 
@@ -403,6 +426,12 @@ WES uses the BED capture sampler without methylation or bisulfite chemistry.
 Provide exon or other exome intervals as strand-aware BED6 targets. Target
 scores and placement controls have the same meaning as in TBS.
 
+| Short | Long | Type | Default |
+| --- | --- | --- | --- |
+| — | `--targets` | BED6 path | required |
+| — | `--sampling` | `uniform` or `score` | `uniform` |
+| — | `--fragment-center-stddev` | non-negative float | `50` |
+
 ```bash
 bsreadsim run wes \
   -r reference.fa \
@@ -422,6 +451,12 @@ bsreadsim run wes \
 TS is the general ordinary targeted-sequencing mode. It shares the WES/TBS
 BED capture sampler and differs from WES by its recorded technology identity
 and intended target set.
+
+| Short | Long | Type | Default |
+| --- | --- | --- | --- |
+| — | `--targets` | BED6 path | required |
+| — | `--sampling` | `uniform` or `score` | `uniform` |
+| — | `--fragment-center-stddev` | non-negative float | `50` |
 
 ```bash
 bsreadsim run ts \
@@ -443,7 +478,8 @@ bsreadsim run ts \
 - `--vcf` and `--mutation-rate` are mutually exclusive; `--vcf` automatically
   selects an internal mutation rate of `0`.
 - `--asm` and `--asm-bed` require `--vcf`.
-- `--methdb` excludes methylation overlays and pooling.
+- `--methdb` embeds the prepared variants and therefore excludes `--vcf`,
+  positive de novo mutation rates, methylation overlays, and pooling.
 - `--cgmap-pool` requires `--cgmap` or `--bed-methyl`.
 - `--quality-model` excludes `--phred`; `--error-model` excludes
   `--error-rate`.

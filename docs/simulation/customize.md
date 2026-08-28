@@ -110,7 +110,7 @@ Use `--sampling score` for target-specific capture weights and `--fragment-cente
 
 | Decision | Key controls |
 | --- | --- |
-| Number of source fragments | `--fragments` or `--depth` |
+| Number of reads | `--reads` or `--depth` |
 | Fragment length distribution | `--insert-min`, `--insert-mean`, `--insert-max`, `--insert-sd` |
 | Ambiguous-base filtering | `--max-ambiguous-fraction` |
 
@@ -118,10 +118,16 @@ For fixed WGBS or TBS fragments, set
 `--insert-mean N --insert-sd 0`.
 RRBS fragment lengths are determined by restriction sites, while `--insert-min` and `--insert-max` define the retained size window.
 
-When `--depth D` is used, the number of source fragments is:
+`--reads N` always means the total number of read records. In paired-end mode,
+`N` must be even and produces `N / 2` complete read pairs.
+
+When `--depth D` is used, BSReadSim first resolves reads and then complete
+fragments:
 
 ```text
-ceil(effective_reference_bases * D / (read_length * emitted_mates))
+raw_reads = effective_reference_bases * D / read_length
+resolved_reads = emitted_mates * ceil(raw_reads / emitted_mates)
+resolved_fragments = resolved_reads / emitted_mates
 ```
 
 The effective region is eligible contig sequence for WGBS, the union of
@@ -150,6 +156,10 @@ introduces sequencing substitutions.
 
 Methylation and conversion are realized on the complete physical fragment
 before mate extraction, so overlapping mates share the same underlying event.
+Directional bisulfite libraries contain both OT/Watson and OB/Crick physical
+fragments; `--undirectional` additionally enables CTOT and CTOB. The library
+orientation draw is fragment-level and deterministic across worker counts and
+batch sizes.
 An empirical quality model replaces `--phred`, and an empirical error model replaces `--error-rate`.
 See the [sequencing-model contracts](../reference/formats/sequencing-models.md) for the required files.
 
@@ -183,8 +193,8 @@ different reads from the same prepared genome and, when applicable, methylome.
 
 ??? note "Performance controls"
 
-    `--core-workers` controls fragment generation, `--workers` controls read processing, and `--chunk-size` plus `--max-in-flight-fragments` bound work batches and queued fragments.
-    These options change resource use, not fixed-input, fixed-seed simulation semantics.
+    Use one global `--threads N` budget. BSReadSim divides it among ordered C++ fragment construction, Python read processing, FASTQ gzip members, and BAM BGZF compression, and derives batch and queue sizes automatically.
+    Thread count changes resource use, not fixed-input, fixed-seed simulation semantics or output bytes.
 
 Use the [CLI reference](../reference/cli.md) for complete option types, defaults, and compatibility rules.
 See [Tutorials](tutorials.md) for complete simulation recipes and [Outputs](../outputs/index.md) for the published file contracts.

@@ -45,7 +45,7 @@ transactional file set and run manifest described on this page belong to
 bsreadsim run wgbs \
   --reference reference.fa \
   --output runs/example-fastq \
-  --fragments 2 \
+  --reads 4 \
   --read-length 5 \
   --insert-mean 8 \
   --insert-sd 0 \
@@ -115,9 +115,9 @@ Selected fields from a two-fragment paired run have this shape:
 ```json
 {
   "command": {
-    "full_command": "bsreadsim run wgbs --reference /work/project/reference.fa --output /work/project/runs/example-fastq --fragments 2 --seed 42 ...",
+    "full_command": "bsreadsim run wgbs --reference /work/project/reference.fa --output /work/project/runs/example-fastq --reads 4 --seed 42 ...",
     "interface": "cli",
-    "user_command": "bsreadsim run wgbs --reference reference.fa --output runs/example-fastq --fragments 2 --seed 42"
+    "user_command": "bsreadsim run wgbs --reference reference.fa --output runs/example-fastq --reads 4 --seed 42"
   },
   "details": {
     "configuration": {
@@ -222,7 +222,7 @@ empty destination when reproducing the simulated reads.
 bsreadsim run wgbs \
   --reference reference.fa \
   --output runs/example-bam \
-  --fragments 2 \
+  --reads 4 \
   --read-length 5 \
   --insert-mean 8 \
   --insert-sd 0 \
@@ -287,7 +287,7 @@ without changing the chosen read container:
 bsreadsim run wgbs \
   --reference reference.fa \
   --output runs/with-methdb \
-  --fragments 2 \
+  --reads 4 \
   --mutation-rate 0 \
   --seed-meth 7 \
   --seed 42 \
@@ -339,7 +339,7 @@ normalized and phased VCF truth artifact:
 bsreadsim run wgbs \
   --reference reference.fa \
   --output runs/with-variants \
-  --fragments 1000 \
+  --reads 1000 \
   --mutation-rate 0.001 \
   --seed-mut 7 \
   --seed 42 \

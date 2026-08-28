@@ -4,11 +4,7 @@
 
 # BSReadSim
 
-BSReadSim is a versatile simulator built for bisulfite sequencing. It combines
-genetic variation, DNA methylation, assay-specific sampling, bisulfite
-chemistry, and sequencing errors to produce realistic reads with traceable
-ground truth. The same simulation engine also provides complementary support
-for ordinary genomics assays.
+BSReadSim is a versatile and efficient read simulator for genomic sequencing, supporting both conventional and bisulfite-based assays. It combines genetic variation, DNA methylation, assay-specific sampling, bisulfite chemistry, and sequencing errors to produce realistic reads with traceable ground truth. The resulting data can be used to guide experimental design, develop bioinformatics tools, and benchmark their performance under controlled conditions.
 Learn more in the [BSReadSim preprint](https://doi.org/10.1101/2024.12.24.627620).
 
 <div class="docs-actions" markdown>
@@ -22,9 +18,7 @@ Learn more in the [BSReadSim preprint](https://doi.org/10.1101/2024.12.24.627620
 
 ## Supported technology assays
 
-BSReadSim focuses on WGBS, RRBS, and TBS with bisulfite chemistry. The same
-simulation engine also supports WGS, WES, and targeted sequencing when a study
-needs ordinary sequencing reads or a non-bisulfite control.
+BSReadSim focuses on bisulfite sequencing, with modes for WGBS, RRBS, and TBS. The same engine also supports WGS, WES, and targeted sequencing.
 
 <div class="technology-grid" markdown>
 
@@ -62,7 +56,7 @@ Targeted bisulfite sequencing enriches predefined genomic regions through probe-
 
 ### Other assays
 
-Additional support for ordinary whole-genome, whole-exome, and targeted sequencing.
+Additional support includes ordinary whole-genome, whole-exome, and targeted sequencing.
 
 [Learn more](simulation/other-assays.md)
 
@@ -80,7 +74,7 @@ A Bioconda package is coming soon.
 
 ## Customize the simulation
 
-Configure each biological and technical layer to match your study.
+Configure the biological and technical layer to match your study.
 
 <ol class="simulation-flow">
   <li><strong><a href="simulation/customize/#genetic-variation">Genetic variation</a></strong>
@@ -88,7 +82,7 @@ Configure each biological and technical layer to match your study.
   <li><strong><a href="simulation/customize/#methylation">DNA methylation</a></strong>
   For bisulfite runs, generate context-specific methylation or incorporate measured and allele-specific profiles.</li>
   <li><strong><a href="simulation/customize/#supported-technologies">Sequencing assay</a></strong>
-  Choose WGBS, RRBS, or TBS and configure its fragment-sampling model. Standard sequencing is covered under <a href="simulation/other-assays/">Other assays</a>.</li>
+  Choose an assay and configure its fragment-sampling model. Options include WGBS, RRBS, and TBS, as well as <a href="simulation/other-assays/">Other genomic assays</a>.</li>
   <li><strong><a href="simulation/customize/#library-and-sequencing">Library and sequencing</a></strong>
   Configure fragment length, optional bisulfite chemistry, base quality, and sequencing errors.</li>
 </ol>

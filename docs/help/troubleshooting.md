@@ -182,15 +182,15 @@ JSON fields and dimensions.
 
 ## A run is slow or uses too much memory
 
-Return to one worker in each stage, then reduce
-`--max-in-flight-fragments`. If core generation chunks are too large, reduce
-`--chunk-size`. Increase `--core-workers` or `--workers` only after a baseline
-run succeeds and measure whether CPU or storage is the bottleneck.
+Return to `--threads 1` for the smallest active working set, then increase the
+single thread budget while measuring CPU, memory, and storage throughput.
+BSReadSim allocates stage workers, protocol batches, and in-flight buffers
+automatically; there are no separate public worker or queue-size controls.
 
 Output staging is disk-backed and streaming; it does not hold a complete BAM
 or FASTQ in memory. BAM fragment realization, empirical models, queued
-fragments, and large batches can still increase the active working set. Lower
-gzip levels can reduce CPU work at the cost of larger files.
+fragments, and parallel batches can still increase the active working set.
+Lower gzip levels can reduce CPU work at the cost of larger files.
 
 ## BAM tools expect sorted input
 
