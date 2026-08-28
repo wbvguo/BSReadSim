@@ -733,7 +733,7 @@ model::Fragment build_fragment(
             site->context,
             site->methylation_source,
             model::MethylationAllele::shared,
-            site->methylation_probability,
+            methdb::probability_from_u16(site->probability_u16),
         });
     }
 

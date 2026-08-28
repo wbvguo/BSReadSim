@@ -131,6 +131,7 @@ add_library(
     htsim/src/core.cpp
     htsim/src/fragment.cpp
     htsim/src/methdb.cpp
+    htsim/src/methdb_snapshot.cpp
     htsim/src/protocol.cpp
     htsim/src/reference.cpp
     htsim/src/rrbs.cpp

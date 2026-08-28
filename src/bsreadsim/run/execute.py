@@ -75,7 +75,7 @@ from .prepare import (
     prepare_run,
     snapshot_prepared_file,
 )
-from .catalog import CatalogError, export_methdb_catalog, export_variant_catalog
+from .catalog import CatalogError, export_variant_catalog
 from ..process.batch import FragmentSummary
 from ..htsim.protocol import (
     Header,
@@ -397,17 +397,6 @@ def run_prepared(
     include_fragment_realization = bool(output["fragment_realization"])
     include_details = include_alignment
     columnar_details = include_alignment and supports_common_processing(process_config)
-    argv = build_core_argv(
-        prepared,
-        effective_run_id,
-        executable,
-        emit_details=include_details,
-        protocol_batch_fragments=_protocol_batch_fragment_limit(
-            emit_details=include_details,
-            max_in_flight=execution["max_in_flight_fragments"],
-            materializes_detail_objects=not columnar_details,
-        ),
-    )
     if execution["workers"] > 1:
         _require_picklable_process_state(process_config)
 
@@ -423,6 +412,24 @@ def run_prepared(
         prefix=".{}.truth-".format(output["prefix"]),
         dir=str(output_directory),
     ) as truth_directory:
+        inputs = _mapping(normalized, "inputs")
+        generated_methdb_path = (
+            Path(truth_directory) / "truth.methdb"
+            if output["save_methdb"] and "methdb" not in inputs
+            else None
+        )
+        argv = build_core_argv(
+            prepared,
+            effective_run_id,
+            executable,
+            emit_details=include_details,
+            protocol_batch_fragments=_protocol_batch_fragment_limit(
+                emit_details=include_details,
+                max_in_flight=execution["max_in_flight_fragments"],
+                materializes_detail_objects=not columnar_details,
+            ),
+            methdb_output_path=generated_methdb_path,
+        )
         truth_artifacts = _build_truth_artifacts(
             prepared,
             output,
@@ -546,13 +553,6 @@ def _build_truth_artifacts(
                 shutil.copyfile(identity.path, destination)
                 if _sha256_file(destination) != identity.sha256:
                     raise PipelineError("MethDB input changed while staging truth")
-            else:
-                export_methdb_catalog(
-                    normalized,
-                    destination,
-                    base_directory=Path.cwd(),
-                    core_executable=executable,
-                )
             artifacts.append(_TruthArtifact("truth.methdb", destination, None))
 
         if output["save_vcf"]:
@@ -1184,6 +1184,12 @@ def _require_released_capabilities(config: Mapping[str, object]) -> None:
             )
 
     methylation = _mapping(config, "methylation")
+    if "methdb" in inputs and (
+        "vcf" in inputs or mutation["rate"] != 0
+    ):
+        raise PipelineError(
+            "MethDB embeds variants and forbids external variant generation"
+        )
     if methylation["cgmap_pool"] and "methdb" not in inputs and not (
         "cgmap" in inputs or "bed_methyl" in inputs
     ):

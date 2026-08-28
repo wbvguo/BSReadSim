@@ -2071,6 +2071,121 @@ const ShapePair &shape_for_context(
     throw CatalogError("unknown methylation context");
 }
 
+ProbabilityU16 probability_to_u16(float probability)
+{
+    if (!std::isfinite(probability)
+        || probability < 0.0F
+        || probability > 1.0F) {
+        throw CatalogError("methylation probability is outside [0, 1]");
+    }
+    constexpr double scale = static_cast<double>(UINT16_MAX);
+    return static_cast<ProbabilityU16>(
+        static_cast<double>(probability) * scale + 0.5);
+}
+
+float probability_from_u16(ProbabilityU16 probability) noexcept
+{
+    constexpr float scale = static_cast<float>(UINT16_MAX);
+    return static_cast<float>(probability) / scale;
+}
+
+namespace {
+
+std::uint16_t runtime_context_code(model::MethylationContext context)
+{
+    switch (context) {
+    case model::MethylationContext::cg_c: return 0U;
+    case model::MethylationContext::chg_c: return 1U;
+    case model::MethylationContext::chh_c: return 2U;
+    case model::MethylationContext::cg_g: return 3U;
+    case model::MethylationContext::chg_g: return 4U;
+    case model::MethylationContext::chh_g: return 5U;
+    }
+    throw CatalogError("runtime site has an invalid methylation context");
+}
+
+model::MethylationContext runtime_context(std::uint16_t code)
+{
+    switch (code) {
+    case 0U: return model::MethylationContext::cg_c;
+    case 1U: return model::MethylationContext::chg_c;
+    case 2U: return model::MethylationContext::chh_c;
+    case 3U: return model::MethylationContext::cg_g;
+    case 4U: return model::MethylationContext::chg_g;
+    case 5U: return model::MethylationContext::chh_g;
+    default: throw CatalogError("runtime site context bits are invalid");
+    }
+}
+
+std::uint16_t runtime_metadata(
+    model::MethylationContext context,
+    model::MethylationSource source,
+    model::MethylationAllele allele,
+    bool reference_equivalent)
+{
+    const std::uint16_t source_value = static_cast<std::uint8_t>(source);
+    const std::uint16_t allele_value = static_cast<std::uint8_t>(allele);
+    if (source_value < 1U || source_value > 4U || allele_value > 2U) {
+        throw CatalogError("runtime site source or allele is invalid");
+    }
+    return static_cast<std::uint16_t>(
+        runtime_context_code(context)
+        | ((source_value - 1U) << 3U)
+        | (allele_value << 5U)
+        | (reference_equivalent ? UINT16_C(0x0080) : 0U));
+}
+
+} // namespace
+
+RuntimeSite pack_runtime_site(
+    std::uint32_t key,
+    ProbabilityU16 probability,
+    model::MethylationContext context,
+    model::MethylationSource source,
+    model::MethylationAllele allele,
+    bool reference_equivalent)
+{
+    return (static_cast<RuntimeSite>(key) << 32U)
+        | (static_cast<RuntimeSite>(probability) << 16U)
+        | runtime_metadata(context, source, allele, reference_equivalent);
+}
+
+std::uint32_t runtime_site_key(RuntimeSite site) noexcept
+{
+    return static_cast<std::uint32_t>(site >> 32U);
+}
+
+ProbabilityU16 runtime_site_probability(RuntimeSite site) noexcept
+{
+    return static_cast<ProbabilityU16>((site >> 16U) & UINT64_C(0xffff));
+}
+
+model::MethylationContext runtime_site_context(RuntimeSite site)
+{
+    return runtime_context(static_cast<std::uint16_t>(site & UINT64_C(0x0007)));
+}
+
+model::MethylationSource runtime_site_source(RuntimeSite site)
+{
+    return static_cast<model::MethylationSource>(
+        ((site >> 3U) & UINT64_C(0x0003)) + 1U);
+}
+
+model::MethylationAllele runtime_site_allele(RuntimeSite site)
+{
+    const auto value = static_cast<std::uint8_t>(
+        (site >> 5U) & UINT64_C(0x0003));
+    if (value > 2U) {
+        throw CatalogError("runtime site allele bits are invalid");
+    }
+    return static_cast<model::MethylationAllele>(value);
+}
+
+bool runtime_site_reference_equivalent(RuntimeSite site) noexcept
+{
+    return (site & UINT64_C(0x0080)) != 0U;
+}
+
 MethylationCatalog::MethylationCatalog(
     std::uint32_t reference_length,
     std::vector<CatalogSite> sites)
@@ -2080,10 +2195,7 @@ MethylationCatalog::MethylationCatalog(
     bool first = true;
     for (const CatalogSite &site : sites_) {
         if (site.reference_position >= reference_length
-            || (!first && site.reference_position <= previous)
-            || !std::isfinite(site.methylation_probability)
-            || site.methylation_probability < 0.0F
-            || site.methylation_probability > 1.0F) {
+            || (!first && site.reference_position <= previous)) {
             throw CatalogError("loaded methylation profile row is invalid");
         }
         switch (site.context) {
@@ -2157,7 +2269,7 @@ MethylationCatalog::MethylationCatalog(
                       shape.beta);
             sites_.push_back(CatalogSite{
                 static_cast<std::uint32_t>(position),
-                probability,
+                probability_to_u16(probability),
                 *context,
                 pooled
                     ? model::MethylationSource::pooled_cgmap
@@ -2181,8 +2293,8 @@ MethylationCatalog::MethylationCatalog(
                         "CGmap context disagrees with the prepared "
                         "methylation profile");
                 }
-                site->methylation_probability =
-                    record.methylation_probability;
+                site->probability_u16 =
+                    probability_to_u16(record.methylation_probability);
                 site->methylation_source = model::MethylationSource::cgmap;
             }
         }
@@ -2605,7 +2717,7 @@ DiploidSite make_site(
         ? context_pool->sample(
               raw.context, master_seed, contig_index, entity)
         : std::nullopt;
-    return {
+    return DiploidSite{
         raw.origin.id(),
         raw.context,
         pooled
@@ -2620,6 +2732,7 @@ DiploidSite make_site(
                   entity,
                   shape.alpha,
                   shape.beta),
+        raw.equals_reference,
     };
 }
 
@@ -2792,6 +2905,115 @@ bool context_matches_base(
     return (value < 8U && base == 1U) || (value >= 8U && base == 2U);
 }
 
+std::uint32_t runtime_insertion_key(std::uint64_t origin_id)
+{
+    if ((origin_id & insertion_origin_flag) == 0U) {
+        throw DiploidCatalogError("reference origin used as an insertion key");
+    }
+    const std::uint64_t payload = origin_id & ~insertion_origin_flag;
+    if (payload > std::numeric_limits<std::uint32_t>::max()) {
+        throw DiploidCatalogError(
+            "insertion event ordinal exceeds the runtime key boundary");
+    }
+    return static_cast<std::uint32_t>(payload);
+}
+
+std::uint64_t decoded_origin_id(RuntimeSite site, bool insertion) noexcept
+{
+    const std::uint64_t key = runtime_site_key(site);
+    return insertion ? insertion_origin_flag | key : key;
+}
+
+void pack_diploid_sites(
+    const std::vector<DiploidSite> &sites,
+    std::uint32_t reference_length,
+    std::vector<RuntimeSite> &reference,
+    std::vector<RuntimeSite> &insertion)
+{
+    std::uint64_t previous = 0U;
+    bool first = true;
+    for (const DiploidSite &site : sites) {
+        if ((!first && site.origin_id <= previous)
+            || !std::isfinite(site.methylation_probability)
+            || site.methylation_probability < 0.0F
+            || site.methylation_probability > 1.0F
+            || static_cast<std::uint8_t>(site.allele) > 2U) {
+            throw DiploidCatalogError(
+                "loaded diploid methylation profile row is invalid");
+        }
+        const bool inserted = (site.origin_id & insertion_origin_flag) != 0U;
+        const std::uint32_t key = inserted
+            ? runtime_insertion_key(site.origin_id)
+            : static_cast<std::uint32_t>(site.origin_id);
+        if (!inserted && site.origin_id >= reference_length) {
+            throw DiploidCatalogError(
+                "loaded diploid reference origin is outside the contig");
+        }
+        auto &output = inserted ? insertion : reference;
+        output.push_back(pack_runtime_site(
+            key,
+            probability_to_u16(site.methylation_probability),
+            site.context,
+            site.methylation_source,
+            site.allele,
+            site.reference_equivalent));
+        previous = site.origin_id;
+        first = false;
+    }
+}
+
+std::vector<DiploidSite> decode_diploid_sites(
+    const std::vector<RuntimeSite> &reference,
+    const std::vector<RuntimeSite> &insertion)
+{
+    std::vector<DiploidSite> result;
+    result.reserve(reference.size() + insertion.size());
+    const auto append = [&](RuntimeSite site, bool inserted) {
+        result.emplace_back(
+            decoded_origin_id(site, inserted),
+            runtime_site_context(site),
+            runtime_site_source(site),
+            runtime_site_allele(site),
+            probability_from_u16(runtime_site_probability(site)),
+            runtime_site_reference_equivalent(site));
+    };
+    for (const RuntimeSite site : reference) {append(site, false);}
+    for (const RuntimeSite site : insertion) {append(site, true);}
+    return result;
+}
+
+const RuntimeSite *select_runtime_site(
+    const std::vector<RuntimeSite> &shared,
+    const std::vector<RuntimeSite> &specific,
+    std::size_t &shared_index,
+    std::size_t &specific_index,
+    std::uint32_t key)
+{
+    while (shared_index < shared.size()
+           && runtime_site_key(shared[shared_index]) < key) {
+        ++shared_index;
+    }
+    while (specific_index < specific.size()
+           && runtime_site_key(specific[specific_index]) < key) {
+        ++specific_index;
+    }
+    const RuntimeSite *shared_site =
+        shared_index < shared.size()
+            && runtime_site_key(shared[shared_index]) == key
+        ? &shared[shared_index]
+        : nullptr;
+    const RuntimeSite *specific_site =
+        specific_index < specific.size()
+            && runtime_site_key(specific[specific_index]) == key
+        ? &specific[specific_index]
+        : nullptr;
+    if (shared_site && specific_site) {
+        throw DiploidCatalogError(
+            "shared and haplotype profile sites overlap at one key");
+    }
+    return shared_site ? shared_site : specific_site;
+}
+
 } // namespace
 
 std::uint64_t reference_origin_id(std::uint32_t reference_position) noexcept
@@ -2814,40 +3036,131 @@ std::uint64_t insertion_origin_id(
         | insertion_offset;
 }
 
+void validate_asm_targets(
+    const reference::Contig &contig,
+    const variant::ContigVariants &variants,
+    bool collect_non_cpg,
+    const std::vector<AsmRecord> &asm_records)
+{
+    try {
+        if (contig.length != contig.bases.size()
+            || contig.length > std::numeric_limits<std::uint32_t>::max()
+            || variants.contig_index() != contig.index
+            || variants.reference_length() != contig.length) {
+            throw DiploidCatalogError(
+                "ASM preflight variant set does not match its contig");
+        }
+        validate_asm_records(contig.bases, asm_records);
+        if (asm_records.empty()) {return;}
+        for (const AsmRecord &record : asm_records) {
+            (void)resolve_asm_snv(variants.variants(), record);
+        }
+
+        ClassifiedSiteStream haplotype_0(
+            contig, variants, 0U, collect_non_cpg);
+        ClassifiedSiteStream haplotype_1(
+            contig, variants, 1U, collect_non_cpg);
+        std::optional<RawSite> left = haplotype_0.next();
+        std::optional<RawSite> right = haplotype_1.next();
+        const auto advance_to_reference_target = [](
+            ClassifiedSiteStream &stream,
+            std::optional<RawSite> &site,
+            std::uint32_t target) {
+            while (site
+                   && (site->origin.insertion
+                       || site->origin.reference_anchor < target)) {
+                site = stream.next();
+            }
+        };
+        for (const AsmRecord &record : asm_records) {
+            advance_to_reference_target(
+                haplotype_0, left, record.target_reference_position);
+            advance_to_reference_target(
+                haplotype_1, right, record.target_reference_position);
+            const auto is_target = [&](const std::optional<RawSite> &site) {
+                return site
+                    && !site->origin.insertion
+                    && site->origin.reference_anchor
+                        == record.target_reference_position
+                    && site->context == record.context
+                    && site->equals_reference;
+            };
+            if (!is_target(left) || !is_target(right)) {
+                throw DiploidCatalogError(
+                    "ASM target is not one shared reference-equivalent "
+                    "diploid site");
+            }
+        }
+    } catch (const DiploidCatalogError &) {
+        throw;
+    } catch (const std::exception &error) {
+        throw DiploidCatalogError(error.what());
+    }
+}
+
 DiploidMethylationCatalog::DiploidMethylationCatalog(
     std::uint32_t contig_index,
     std::uint32_t reference_length,
     std::vector<DiploidSite> shared_sites,
     std::array<std::vector<DiploidSite>, 2> haplotype_sites)
     : contig_index_(contig_index),
-      reference_length_(reference_length),
-      shared_sites_(std::move(shared_sites)),
-      haplotype_sites_(std::move(haplotype_sites))
+      reference_length_(reference_length)
 {
-    const auto validate = [&](const std::vector<DiploidSite> &sites) {
-        std::uint64_t previous = 0U;
-        bool first = true;
-        for (const DiploidSite &site : sites) {
-            if ((!first && site.origin_id <= previous)
-                || !std::isfinite(site.methylation_probability)
-                || site.methylation_probability < 0.0F
-                || site.methylation_probability > 1.0F
-                || static_cast<std::uint8_t>(site.allele) > 2U) {
-                throw DiploidCatalogError(
-                    "loaded diploid methylation profile row is invalid");
-            }
-            if ((site.origin_id >> 63U) == 0U
-                && site.origin_id >= reference_length_) {
-                throw DiploidCatalogError(
-                    "loaded diploid reference origin is outside the contig");
-            }
-            previous = site.origin_id;
-            first = false;
+    pack_diploid_sites(
+        shared_sites,
+        reference_length_,
+        reference_shared_sites_,
+        insertion_shared_sites_);
+    for (std::size_t haplotype = 0U; haplotype < 2U; ++haplotype) {
+        pack_diploid_sites(
+            haplotype_sites[haplotype],
+            reference_length_,
+            reference_haplotype_sites_[haplotype],
+            insertion_haplotype_sites_[haplotype]);
+    }
+}
+
+DiploidMethylationCatalog::DiploidMethylationCatalog(
+    const DiploidMethylationCatalog &pre_asm_catalog,
+    const std::vector<variant::Variant> &variants,
+    const std::vector<AsmRecord> &asm_records)
+    : contig_index_(pre_asm_catalog.contig_index_),
+      reference_length_(pre_asm_catalog.reference_length_)
+{
+    if (asm_records.empty()) {
+        reference_shared_sites_ = pre_asm_catalog.reference_shared_sites_;
+        reference_haplotype_sites_ =
+            pre_asm_catalog.reference_haplotype_sites_;
+        insertion_shared_sites_ = pre_asm_catalog.insertion_shared_sites_;
+        insertion_haplotype_sites_ =
+            pre_asm_catalog.insertion_haplotype_sites_;
+        return;
+    }
+    try {
+        std::vector<DiploidSite> shared_sites =
+            pre_asm_catalog.shared_sites();
+        std::array<std::vector<DiploidSite>, 2> haplotype_sites = {{
+            pre_asm_catalog.haplotype_sites(0U),
+            pre_asm_catalog.haplotype_sites(1U),
+        }};
+        overlay_asm(shared_sites, haplotype_sites, variants, asm_records);
+        pack_diploid_sites(
+            shared_sites,
+            reference_length_,
+            reference_shared_sites_,
+            insertion_shared_sites_);
+        for (std::size_t haplotype = 0U; haplotype < 2U; ++haplotype) {
+            pack_diploid_sites(
+                haplotype_sites[haplotype],
+                reference_length_,
+                reference_haplotype_sites_[haplotype],
+                insertion_haplotype_sites_[haplotype]);
         }
-    };
-    validate(shared_sites_);
-    validate(haplotype_sites_[0]);
-    validate(haplotype_sites_[1]);
+    } catch (const DiploidCatalogError &) {
+        throw;
+    } catch (const std::exception &error) {
+        throw DiploidCatalogError(error.what());
+    }
 }
 
 DiploidMethylationCatalog::DiploidMethylationCatalog(
@@ -2860,6 +3173,8 @@ DiploidMethylationCatalog::DiploidMethylationCatalog(
     const std::vector<AsmRecord> *asm_records,
     bool pool_cgmap)
 {
+    std::vector<DiploidSite> shared_sites;
+    std::array<std::vector<DiploidSite>, 2> haplotype_sites;
     try {
         if (contig.length != contig.bases.size()
             || contig.length > std::numeric_limits<std::uint32_t>::max()
@@ -2896,7 +3211,7 @@ DiploidMethylationCatalog::DiploidMethylationCatalog(
                         throw DiploidCatalogError(
                             "identical diploid sites disagree with the reference");
                     }
-                    shared_sites_.push_back(make_site(
+                    shared_sites.push_back(make_site(
                         *left,
                         true,
                         0U,
@@ -2905,7 +3220,7 @@ DiploidMethylationCatalog::DiploidMethylationCatalog(
                         shapes,
                         context_pool.get()));
                 } else {
-                    haplotype_sites_[0].push_back(make_site(
+                    haplotype_sites[0].push_back(make_site(
                         *left,
                         false,
                         0U,
@@ -2913,7 +3228,7 @@ DiploidMethylationCatalog::DiploidMethylationCatalog(
                         contig.index,
                         shapes,
                         context_pool.get()));
-                    haplotype_sites_[1].push_back(make_site(
+                    haplotype_sites[1].push_back(make_site(
                         *right,
                         false,
                         1U,
@@ -2926,7 +3241,7 @@ DiploidMethylationCatalog::DiploidMethylationCatalog(
                 right = haplotype_1.next();
             } else if (left
                        && (!right || origin_less(left->origin, right->origin))) {
-                haplotype_sites_[0].push_back(make_site(
+                haplotype_sites[0].push_back(make_site(
                     *left,
                     false,
                     0U,
@@ -2936,7 +3251,7 @@ DiploidMethylationCatalog::DiploidMethylationCatalog(
                     context_pool.get()));
                 left = haplotype_0.next();
             } else {
-                haplotype_sites_[1].push_back(make_site(
+                haplotype_sites[1].push_back(make_site(
                     *right,
                     false,
                     1U,
@@ -2947,18 +3262,30 @@ DiploidMethylationCatalog::DiploidMethylationCatalog(
                 right = haplotype_1.next();
             }
         }
-        sort_and_validate(shared_sites_);
-        sort_and_validate(haplotype_sites_[0]);
-        sort_and_validate(haplotype_sites_[1]);
+        sort_and_validate(shared_sites);
+        sort_and_validate(haplotype_sites[0]);
+        sort_and_validate(haplotype_sites[1]);
         if (cgmap_records != nullptr && !pool_cgmap) {
-            overlay_cgmap(shared_sites_, *cgmap_records);
-            overlay_cgmap(haplotype_sites_[0], *cgmap_records);
-            overlay_cgmap(haplotype_sites_[1], *cgmap_records);
+            overlay_cgmap(shared_sites, *cgmap_records);
+            overlay_cgmap(haplotype_sites[0], *cgmap_records);
+            overlay_cgmap(haplotype_sites[1], *cgmap_records);
         }
         if (asm_records != nullptr) {
             validate_asm_records(contig.bases, *asm_records);
             overlay_asm(
-                shared_sites_, haplotype_sites_, variants.variants(), *asm_records);
+                shared_sites, haplotype_sites, variants.variants(), *asm_records);
+        }
+        pack_diploid_sites(
+            shared_sites,
+            reference_length_,
+            reference_shared_sites_,
+            insertion_shared_sites_);
+        for (std::size_t haplotype = 0U; haplotype < 2U; ++haplotype) {
+            pack_diploid_sites(
+                haplotype_sites[haplotype],
+                reference_length_,
+                reference_haplotype_sites_[haplotype],
+                insertion_haplotype_sites_[haplotype]);
         }
     } catch (const DiploidCatalogError &) {
         throw;
@@ -2968,18 +3295,61 @@ DiploidMethylationCatalog::DiploidMethylationCatalog(
 }
 
 const std::vector<DiploidSite> &
-DiploidMethylationCatalog::shared_sites() const noexcept
+DiploidMethylationCatalog::shared_sites() const
 {
-    return shared_sites_;
+    if (!decoded_shared_sites_) {
+        decoded_shared_sites_ = decode_diploid_sites(
+            reference_shared_sites_, insertion_shared_sites_);
+    }
+    return *decoded_shared_sites_;
 }
 
-const std::vector<DiploidSite> &DiploidMethylationCatalog::haplotype_sites(
+const std::vector<DiploidSite> &
+DiploidMethylationCatalog::haplotype_sites(
     std::uint8_t zero_based_haplotype) const
 {
     if (zero_based_haplotype > 1U) {
         throw DiploidCatalogError("haplotype must be zero or one");
     }
-    return haplotype_sites_[zero_based_haplotype];
+    auto &decoded = decoded_haplotype_sites_[zero_based_haplotype];
+    if (!decoded) {
+        decoded = decode_diploid_sites(
+            reference_haplotype_sites_[zero_based_haplotype],
+            insertion_haplotype_sites_[zero_based_haplotype]);
+    }
+    return *decoded;
+}
+
+const std::vector<RuntimeSite> &
+DiploidMethylationCatalog::reference_shared_sites() const noexcept
+{
+    return reference_shared_sites_;
+}
+
+const std::vector<RuntimeSite> &
+DiploidMethylationCatalog::reference_haplotype_sites(
+    std::uint8_t zero_based_haplotype) const
+{
+    if (zero_based_haplotype > 1U) {
+        throw DiploidCatalogError("haplotype must be zero or one");
+    }
+    return reference_haplotype_sites_[zero_based_haplotype];
+}
+
+const std::vector<RuntimeSite> &
+DiploidMethylationCatalog::insertion_shared_sites() const noexcept
+{
+    return insertion_shared_sites_;
+}
+
+const std::vector<RuntimeSite> &
+DiploidMethylationCatalog::insertion_haplotype_sites(
+    std::uint8_t zero_based_haplotype) const
+{
+    if (zero_based_haplotype > 1U) {
+        throw DiploidCatalogError("haplotype must be zero or one");
+    }
+    return insertion_haplotype_sites_[zero_based_haplotype];
 }
 
 std::vector<model::MethylationSite>
@@ -3003,23 +3373,52 @@ DiploidMethylationCatalog::sites_for_projection(
             "haplotype projection identity or shape is invalid");
     }
 
-    std::unordered_map<std::uint32_t, const model::Variant *> variants;
+    std::uint32_t previous_variant = 0U;
+    bool first_variant = true;
     for (const model::Variant &event : projection.variants) {
-        if (!variants.emplace(event.index, &event).second) {
-            throw DiploidCatalogError("haplotype projection has duplicate variants");
+        if (!first_variant && event.index <= previous_variant) {
+            throw DiploidCatalogError(
+                "haplotype projection variants are not strictly ordered");
         }
         if (event.phased_haplotype != 255U
             && event.phased_haplotype != zero_based_haplotype) {
             throw DiploidCatalogError(
                 "haplotype projection contains an event from another haplotype");
         }
+        previous_variant = event.index;
+        first_variant = false;
     }
-    std::unordered_map<std::uint32_t, std::uint8_t> insertion_offsets;
+
+    const auto &reference_shared = reference_shared_sites_;
+    const auto &reference_specific =
+        reference_haplotype_sites_[zero_based_haplotype];
+    const auto &insertion_shared = insertion_shared_sites_;
+    const auto &insertion_specific =
+        insertion_haplotype_sites_[zero_based_haplotype];
+    const RuntimeSite reference_query =
+        static_cast<RuntimeSite>(projection.reference_start) << 32U;
+    std::size_t reference_shared_index = static_cast<std::size_t>(
+        std::lower_bound(
+            reference_shared.begin(), reference_shared.end(), reference_query)
+        - reference_shared.begin());
+    std::size_t reference_specific_index = static_cast<std::size_t>(
+        std::lower_bound(
+            reference_specific.begin(), reference_specific.end(), reference_query)
+        - reference_specific.begin());
+    std::size_t insertion_shared_index = 0U;
+    std::size_t insertion_specific_index = 0U;
+    std::size_t projection_variant_index = 0U;
+    bool insertion_cursor_initialized = false;
+    std::vector<std::uint8_t> insertion_counts(projection.variants.size(), 0U);
     std::vector<model::MethylationSite> result;
+    result.reserve(std::min<std::size_t>(
+        projection.template_bases.size(),
+        reference_shared.size() + reference_specific.size()
+            + insertion_shared.size() + insertion_specific.size()));
     for (std::size_t offset = 0; offset < projection.template_bases.size(); ++offset) {
         const std::int64_t reference_position =
             projection.reference_positions[offset];
-        std::uint64_t origin_id = 0;
+        const RuntimeSite *site = nullptr;
         if (reference_position >= 0) {
             if (static_cast<std::uint64_t>(reference_position)
                     > std::numeric_limits<std::uint32_t>::max()
@@ -3030,40 +3429,65 @@ DiploidMethylationCatalog::sites_for_projection(
                 throw DiploidCatalogError(
                     "mapped projection base is outside its reference interval");
             }
-            origin_id = reference_origin_id(
+            site = select_runtime_site(
+                reference_shared,
+                reference_specific,
+                reference_shared_index,
+                reference_specific_index,
                 static_cast<std::uint32_t>(reference_position));
         } else if (reference_position == -1) {
             const std::uint32_t variant_index = projection.base_variant_indices[offset];
-            const auto found = variants.find(variant_index);
-            if (found == variants.end()
-                || found->second->kind != model::VariantKind::insertion) {
+            while (projection_variant_index < projection.variants.size()
+                   && projection.variants[projection_variant_index].index
+                       < variant_index) {
+                ++projection_variant_index;
+            }
+            if (projection_variant_index == projection.variants.size()
+                || projection.variants[projection_variant_index].index
+                    != variant_index
+                || projection.variants[projection_variant_index].kind
+                    != model::VariantKind::insertion) {
                 throw DiploidCatalogError(
                     "inserted projection base has no insertion event");
             }
-            std::uint8_t &insertion_offset = insertion_offsets[variant_index];
-            if (insertion_offset >= found->second->alt_bases.size()
+            const model::Variant &event =
+                projection.variants[projection_variant_index];
+            const std::size_t event_offset = projection_variant_index;
+            std::uint8_t &insertion_offset = insertion_counts[event_offset];
+            if (insertion_offset >= event.alt_bases.size()
                 || projection.template_bases[offset]
-                    != found->second->alt_bases[insertion_offset]) {
+                    != event.alt_bases[insertion_offset]) {
                 throw DiploidCatalogError(
                     "inserted projection bases disagree with their event");
             }
-            origin_id = insertion_origin_id(variant_index, insertion_offset);
+            const std::uint32_t key = runtime_insertion_key(
+                insertion_origin_id(variant_index, insertion_offset));
+            if (!insertion_cursor_initialized) {
+                const RuntimeSite query = static_cast<RuntimeSite>(key) << 32U;
+                insertion_shared_index = static_cast<std::size_t>(
+                    std::lower_bound(
+                        insertion_shared.begin(), insertion_shared.end(), query)
+                    - insertion_shared.begin());
+                insertion_specific_index = static_cast<std::size_t>(
+                    std::lower_bound(
+                        insertion_specific.begin(), insertion_specific.end(), query)
+                    - insertion_specific.begin());
+                insertion_cursor_initialized = true;
+            }
+            site = select_runtime_site(
+                insertion_shared,
+                insertion_specific,
+                insertion_shared_index,
+                insertion_specific_index,
+                key);
             ++insertion_offset;
         } else {
             throw DiploidCatalogError(
                 "projection reference position must be non-negative or -1");
         }
-
-        const DiploidSite *shared = find_site(shared_sites_, origin_id);
-        const DiploidSite *specific = find_site(
-            haplotype_sites_[zero_based_haplotype], origin_id);
-        if (shared && specific) {
-            throw DiploidCatalogError(
-                "shared and haplotype profile sites overlap at one origin");
-        }
-        const DiploidSite *site = shared ? shared : specific;
         if (!site) {continue;}
-        if (!context_matches_base(site->context, projection.template_bases[offset])) {
+        const model::MethylationContext context = runtime_site_context(*site);
+        if (!context_matches_base(context, projection.template_bases[offset])) {
             throw DiploidCatalogError(
                 "methylation context disagrees with projected center base");
         }
@@ -3071,899 +3495,21 @@ DiploidMethylationCatalog::sites_for_projection(
             static_cast<std::uint32_t>(result.size()),
             static_cast<std::uint32_t>(offset),
             reference_position,
-            site->context,
-            site->methylation_source,
-            site->allele,
-            site->methylation_probability,
+            context,
+            runtime_site_source(*site),
+            runtime_site_allele(*site),
+            probability_from_u16(runtime_site_probability(*site)),
         });
     }
-    for (const auto &entry : variants) {
-        const model::Variant &event = *entry.second;
+    for (std::size_t index = 0U; index < projection.variants.size(); ++index) {
+        const model::Variant &event = projection.variants[index];
         if (event.kind != model::VariantKind::insertion) {continue;}
-        const auto count = insertion_offsets.find(entry.first);
-        if (count == insertion_offsets.end()
-            || count->second != event.alt_bases.size()) {
+        if (insertion_counts[index] != event.alt_bases.size()) {
             throw DiploidCatalogError(
                 "projection did not contain every inserted event base");
         }
     }
     return result;
-}
-
-} // namespace htsim::methdb
-
-// ---- fixed snapshot --------------------------------------------------------
-
-namespace htsim::methdb {
-class SnapshotWriterImpl {
-public:
-    explicit SnapshotWriterImpl(std::ostream &output) : output_(output)
-    {
-        if (deflateInit(&stream_, Z_DEFAULT_COMPRESSION) != Z_OK) {
-            throw SnapshotError("cannot initialize MethDB compression");
-        }
-        active_ = true;
-    }
-
-    ~SnapshotWriterImpl()
-    {
-        if (active_) {(void)deflateEnd(&stream_);}
-    }
-
-    void write(const void *data, std::size_t size)
-    {
-        const auto *cursor = static_cast<const std::uint8_t *>(data);
-        while (size != 0U) {
-            const std::size_t chunk = std::min<std::size_t>(
-                size, std::numeric_limits<uInt>::max());
-            stream_.next_in = const_cast<Bytef *>(cursor);
-            stream_.avail_in = static_cast<uInt>(chunk);
-            while (stream_.avail_in != 0U) {pump(Z_NO_FLUSH);}
-            cursor += chunk;
-            size -= chunk;
-        }
-    }
-
-    void finish()
-    {
-        if (!active_) {throw SnapshotError("MethDB compression was finished twice");}
-        int status = Z_OK;
-        while (status != Z_STREAM_END) {status = pump(Z_FINISH);}
-        if (deflateEnd(&stream_) != Z_OK) {
-            active_ = false;
-            throw SnapshotError("cannot finalize MethDB compression");
-        }
-        active_ = false;
-        if (!output_) {throw SnapshotError("failed while writing MethDB snapshot");}
-    }
-
-private:
-    int pump(int flush)
-    {
-        stream_.next_out = output_buffer_.data();
-        stream_.avail_out = static_cast<uInt>(output_buffer_.size());
-        const int status = deflate(&stream_, flush);
-        if (status != Z_OK && status != Z_STREAM_END) {
-            throw SnapshotError("MethDB compression failed");
-        }
-        const std::size_t produced = output_buffer_.size() - stream_.avail_out;
-        output_.write(
-            reinterpret_cast<const char *>(output_buffer_.data()),
-            static_cast<std::streamsize>(produced));
-        if (!output_) {throw SnapshotError("failed while writing MethDB snapshot");}
-        return status;
-    }
-
-    std::ostream &output_;
-    z_stream stream_ = {};
-    std::array<std::uint8_t, 65536> output_buffer_ = {};
-    bool active_ = false;
-};
-
-namespace {
-
-void snapshot_write_raw(
-    std::ostream &output, const void *data, std::size_t size)
-{
-    output.write(static_cast<const char *>(data), static_cast<std::streamsize>(size));
-    if (!output) {throw SnapshotError("failed while writing MethDB snapshot");}
-}
-
-void snapshot_write_bytes(
-    SnapshotWriterImpl &output, const void *data, std::size_t size)
-{
-    output.write(data, size);
-}
-
-void snapshot_write_u8(SnapshotWriterImpl &output, std::uint8_t value)
-{
-    snapshot_write_bytes(output, &value, 1U);
-}
-
-void snapshot_write_u32(SnapshotWriterImpl &output, std::uint32_t value)
-{
-    std::uint8_t bytes[4];
-    for (unsigned index = 0U; index < 4U; ++index) {
-        bytes[index] = static_cast<std::uint8_t>(value >> (index * 8U));
-    }
-    snapshot_write_bytes(output, bytes, sizeof(bytes));
-}
-
-void snapshot_write_u16(SnapshotWriterImpl &output, std::uint16_t value)
-{
-    const std::uint8_t bytes[2] = {
-        static_cast<std::uint8_t>(value),
-        static_cast<std::uint8_t>(value >> 8U),
-    };
-    snapshot_write_bytes(output, bytes, sizeof(bytes));
-}
-
-std::uint16_t probability_to_unorm16(float value)
-{
-    if (!std::isfinite(value) || value < 0.0F || value > 1.0F) {
-        throw SnapshotError("MethDB probability is outside [0, 1]");
-    }
-    constexpr double scale = static_cast<double>(UINT16_MAX);
-    const auto encoded = static_cast<std::uint32_t>(
-        static_cast<double>(value) * scale + 0.5);
-    return static_cast<std::uint16_t>(encoded);
-}
-
-float unorm16_to_probability(std::uint16_t value)
-{
-    constexpr float scale = static_cast<float>(UINT16_MAX);
-    return static_cast<float>(value) / scale;
-}
-
-void snapshot_write_varuint(SnapshotWriterImpl &output, std::uint64_t value)
-{
-    do {
-        std::uint8_t byte = static_cast<std::uint8_t>(value & UINT64_C(0x7f));
-        value >>= 7U;
-        if (value != 0U) {byte |= UINT8_C(0x80);}
-        snapshot_write_u8(output, byte);
-    } while (value != 0U);
-}
-
-std::uint8_t snapshot_context_code(model::MethylationContext context)
-{
-    switch (context) {
-    case model::MethylationContext::cg_c: return 0U;
-    case model::MethylationContext::chg_c: return 1U;
-    case model::MethylationContext::chh_c: return 2U;
-    case model::MethylationContext::cg_g: return 3U;
-    case model::MethylationContext::chg_g: return 4U;
-    case model::MethylationContext::chh_g: return 5U;
-    }
-    throw SnapshotError("MethDB row has an invalid methylation context");
-}
-
-std::uint8_t snapshot_pack_site(
-    model::MethylationContext context,
-    model::MethylationSource source,
-    model::MethylationAllele allele)
-{
-    const std::uint8_t source_value = static_cast<std::uint8_t>(source);
-    const std::uint8_t allele_value = static_cast<std::uint8_t>(allele);
-    if (source_value < 1U || source_value > 4U || allele_value > 2U) {
-        throw SnapshotError("MethDB row has invalid source or allele metadata");
-    }
-    return static_cast<std::uint8_t>(
-        snapshot_context_code(context)
-        | static_cast<std::uint8_t>((source_value - 1U) << 3U)
-        | static_cast<std::uint8_t>(allele_value << 5U));
-}
-
-void snapshot_write_metadata(
-    SnapshotWriterImpl &output,
-    const reference::ContigMetadata &metadata,
-    std::uint8_t mode,
-    std::uint32_t first_count,
-    std::uint32_t second_count,
-    std::uint32_t third_count)
-{
-    if (metadata.name.empty()
-        || metadata.name.size() > std::numeric_limits<std::uint32_t>::max()
-        || metadata.length > std::numeric_limits<std::uint32_t>::max()) {
-        throw SnapshotError("MethDB contig metadata is outside the format boundary");
-    }
-    snapshot_write_u32(output, static_cast<std::uint32_t>(metadata.name.size()));
-    snapshot_write_bytes(output, metadata.name.data(), metadata.name.size());
-    snapshot_write_u32(output, static_cast<std::uint32_t>(metadata.length));
-    snapshot_write_bytes(
-        output, metadata.reference_sha256.data(), metadata.reference_sha256.size());
-    snapshot_write_u8(output, mode);
-    snapshot_write_u8(output, 0U);
-    snapshot_write_u8(output, 0U);
-    snapshot_write_u8(output, 0U);
-    snapshot_write_u32(output, first_count);
-    snapshot_write_u32(output, second_count);
-    snapshot_write_u32(output, third_count);
-}
-
-void snapshot_write_catalog_sites(
-    SnapshotWriterImpl &output,
-    const std::vector<CatalogSite> &sites)
-{
-    std::uint64_t previous = 0U;
-    bool first = true;
-    for (const CatalogSite &site : sites) {
-        if (!first && site.reference_position <= previous) {
-            throw SnapshotError("MethDB reference sites are not strictly ordered");
-        }
-        const std::uint64_t delta = first
-            ? site.reference_position
-            : static_cast<std::uint64_t>(site.reference_position) - previous;
-        snapshot_write_varuint(output, delta);
-        snapshot_write_u8(output, snapshot_pack_site(
-            site.context,
-            site.methylation_source,
-            model::MethylationAllele::shared));
-        snapshot_write_u16(
-            output, probability_to_unorm16(site.methylation_probability));
-        previous = site.reference_position;
-        first = false;
-    }
-}
-
-void snapshot_write_diploid_sites(
-    SnapshotWriterImpl &output,
-    const std::vector<DiploidSite> &sites)
-{
-    std::uint64_t previous = 0U;
-    bool first = true;
-    for (const DiploidSite &site : sites) {
-        if (!first && site.origin_id <= previous) {
-            throw SnapshotError("MethDB diploid sites are not strictly ordered");
-        }
-        snapshot_write_varuint(
-            output, first ? site.origin_id : site.origin_id - previous);
-        snapshot_write_u8(output, snapshot_pack_site(
-            site.context, site.methylation_source, site.allele));
-        snapshot_write_u16(
-            output, probability_to_unorm16(site.methylation_probability));
-        previous = site.origin_id;
-        first = false;
-    }
-}
-
-class SnapshotReader {
-public:
-    explicit SnapshotReader(const std::string &path)
-        : input_(path, std::ios::binary)
-    {
-        if (!input_) {throw SnapshotError("cannot open MethDB snapshot: " + path);}
-        char magic[sizeof(methdb_magic) - 1U];
-        read_raw(magic, sizeof(magic));
-        if (std::memcmp(magic, methdb_magic, sizeof(magic)) != 0) {
-            throw SnapshotError("MethDB snapshot magic is invalid");
-        }
-        std::uint8_t version = 0U;
-        read_raw(&version, sizeof(version));
-        if (version != methdb_version) {
-            throw SnapshotError("MethDB snapshot version is unsupported");
-        }
-        if (inflateInit(&stream_) != Z_OK) {
-            throw SnapshotError("cannot initialize MethDB decompression");
-        }
-        inflate_active_ = true;
-    }
-
-    ~SnapshotReader()
-    {
-        if (inflate_active_) {(void)inflateEnd(&stream_);}
-    }
-
-    void read(void *destination, std::size_t size)
-    {
-        auto *cursor = static_cast<std::uint8_t *>(destination);
-        while (size != 0U) {
-            if (inflate_finished_) {
-                throw SnapshotError("MethDB snapshot is truncated");
-            }
-            const std::size_t chunk = std::min<std::size_t>(
-                size, std::numeric_limits<uInt>::max());
-            stream_.next_out = cursor;
-            stream_.avail_out = static_cast<uInt>(chunk);
-            while (stream_.avail_out != 0U && !inflate_finished_) {
-                inflate_once();
-            }
-            const std::size_t produced = chunk - stream_.avail_out;
-            if (produced == 0U) {
-                throw SnapshotError("MethDB snapshot is truncated");
-            }
-            cursor += produced;
-            size -= produced;
-        }
-    }
-
-    std::uint8_t u8()
-    {
-        std::uint8_t value = 0U;
-        read(&value, 1U);
-        return value;
-    }
-
-    std::uint32_t u32()
-    {
-        std::uint8_t bytes[4];
-        read(bytes, sizeof(bytes));
-        std::uint32_t value = 0U;
-        for (unsigned index = 0U; index < 4U; ++index) {
-            value |= static_cast<std::uint32_t>(bytes[index]) << (index * 8U);
-        }
-        return value;
-    }
-
-    std::uint16_t u16()
-    {
-        std::uint8_t bytes[2];
-        read(bytes, sizeof(bytes));
-        return static_cast<std::uint16_t>(bytes[0])
-            | static_cast<std::uint16_t>(
-                static_cast<std::uint16_t>(bytes[1]) << 8U);
-    }
-
-    std::uint64_t varuint()
-    {
-        std::uint64_t value = 0U;
-        for (unsigned index = 0U; index < 10U; ++index) {
-            const std::uint8_t byte = u8();
-            if (index == 9U && (byte & UINT8_C(0xfe)) != 0U) {
-                throw SnapshotError("MethDB variable integer exceeds uint64");
-            }
-            value |= static_cast<std::uint64_t>(byte & UINT8_C(0x7f))
-                << (index * 7U);
-            if ((byte & UINT8_C(0x80)) == 0U) {
-                if (index != 0U && byte == 0U) {
-                    throw SnapshotError("MethDB variable integer is not canonical");
-                }
-                return value;
-            }
-        }
-        throw SnapshotError("MethDB variable integer is unterminated");
-    }
-
-    crypto::Sha256Digest finish()
-    {
-        std::uint8_t extra = 0U;
-        while (!inflate_finished_) {
-            stream_.next_out = &extra;
-            stream_.avail_out = 1U;
-            inflate_once();
-            if (stream_.avail_out == 0U) {
-                throw SnapshotError("MethDB snapshot has trailing data");
-            }
-        }
-        if (stream_.avail_in != 0U) {
-            throw SnapshotError("MethDB snapshot has trailing bytes");
-        }
-        if (!input_exhausted_) {
-            char raw_extra = 0;
-            if (input_.get(raw_extra)) {
-                throw SnapshotError("MethDB snapshot has trailing bytes");
-            }
-            if (!input_.eof()) {
-                throw SnapshotError("MethDB snapshot read failed");
-            }
-        }
-        if (inflateEnd(&stream_) != Z_OK) {
-            inflate_active_ = false;
-            throw SnapshotError("cannot finalize MethDB decompression");
-        }
-        inflate_active_ = false;
-        return hash_.digest();
-    }
-
-private:
-    void read_raw(void *destination, std::size_t size)
-    {
-        if (size == 0U) {return;}
-        input_.read(
-            static_cast<char *>(destination), static_cast<std::streamsize>(size));
-        if (input_.gcount() != static_cast<std::streamsize>(size)) {
-            throw SnapshotError("MethDB snapshot is truncated");
-        }
-        hash_.update(static_cast<const std::uint8_t *>(destination), size);
-    }
-
-    void fill_input()
-    {
-        if (input_exhausted_) {
-            throw SnapshotError("MethDB compressed payload is truncated");
-        }
-        input_.read(
-            reinterpret_cast<char *>(input_buffer_.data()),
-            static_cast<std::streamsize>(input_buffer_.size()));
-        const std::streamsize observed = input_.gcount();
-        if (observed <= 0) {
-            if (!input_.eof()) {
-                throw SnapshotError("MethDB snapshot read failed");
-            }
-            input_exhausted_ = true;
-            throw SnapshotError("MethDB compressed payload is truncated");
-        }
-        const std::size_t size = static_cast<std::size_t>(observed);
-        hash_.update(input_buffer_.data(), size);
-        stream_.next_in = input_buffer_.data();
-        stream_.avail_in = static_cast<uInt>(size);
-        if (size < input_buffer_.size()) {input_exhausted_ = true;}
-    }
-
-    void inflate_once()
-    {
-        if (stream_.avail_in == 0U) {fill_input();}
-        const uInt before_in = stream_.avail_in;
-        const uInt before_out = stream_.avail_out;
-        const int status = inflate(&stream_, Z_NO_FLUSH);
-        if (status == Z_STREAM_END) {
-            inflate_finished_ = true;
-        } else if (status != Z_OK) {
-            throw SnapshotError("MethDB compressed payload is invalid");
-        }
-        if (before_in == stream_.avail_in && before_out == stream_.avail_out
-            && !inflate_finished_) {
-            throw SnapshotError("MethDB decompression made no progress");
-        }
-    }
-
-    std::ifstream input_;
-    crypto::Sha256 hash_;
-    z_stream stream_ = {};
-    std::array<std::uint8_t, 65536> input_buffer_ = {};
-    bool inflate_active_ = false;
-    bool inflate_finished_ = false;
-    bool input_exhausted_ = false;
-};
-
-std::uint32_t checked_snapshot_count(std::size_t size)
-{
-    if (size > std::numeric_limits<std::uint32_t>::max()) {
-        throw SnapshotError("MethDB row count exceeds uint32");
-    }
-    return static_cast<std::uint32_t>(size);
-}
-
-void snapshot_unpack_site(
-    std::uint8_t packed,
-    model::MethylationContext &context,
-    model::MethylationSource &source,
-    model::MethylationAllele &allele)
-{
-    if ((packed & UINT8_C(0x80)) != 0U) {
-        throw SnapshotError("MethDB packed row reserved bit is nonzero");
-    }
-    switch (packed & UINT8_C(0x07)) {
-    case 0U: context = model::MethylationContext::cg_c; break;
-    case 1U: context = model::MethylationContext::chg_c; break;
-    case 2U: context = model::MethylationContext::chh_c; break;
-    case 3U: context = model::MethylationContext::cg_g; break;
-    case 4U: context = model::MethylationContext::chg_g; break;
-    case 5U: context = model::MethylationContext::chh_g; break;
-    default: throw SnapshotError("MethDB packed context is invalid");
-    }
-    source = static_cast<model::MethylationSource>(
-        ((packed >> 3U) & UINT8_C(0x03)) + 1U);
-    const std::uint8_t allele_value =
-        (packed >> 5U) & UINT8_C(0x03);
-    if (allele_value > 2U) {
-        throw SnapshotError("MethDB packed allele is invalid");
-    }
-    allele = static_cast<model::MethylationAllele>(allele_value);
-}
-
-std::uint64_t snapshot_read_delta(
-    SnapshotReader &reader, std::uint64_t previous, bool first)
-{
-    const std::uint64_t delta = reader.varuint();
-    if (!first && delta == 0U) {
-        throw SnapshotError("MethDB delta is not strictly positive");
-    }
-    if (delta > std::numeric_limits<std::uint64_t>::max() - previous) {
-        throw SnapshotError("MethDB delta overflows uint64");
-    }
-    return first ? delta : previous + delta;
-}
-
-CatalogSite snapshot_read_catalog_site(
-    SnapshotReader &reader, std::uint64_t previous, bool first)
-{
-    const std::uint64_t position = snapshot_read_delta(reader, previous, first);
-    if (position > std::numeric_limits<std::uint32_t>::max()) {
-        throw SnapshotError("MethDB reference position exceeds uint32");
-    }
-    CatalogSite site;
-    site.reference_position = static_cast<std::uint32_t>(position);
-    model::MethylationAllele allele = model::MethylationAllele::shared;
-    snapshot_unpack_site(
-        reader.u8(), site.context, site.methylation_source, allele);
-    if (allele != model::MethylationAllele::shared) {
-        throw SnapshotError("MethDB reference row has a diploid allele");
-    }
-    site.methylation_probability = unorm16_to_probability(reader.u16());
-    return site;
-}
-
-DiploidSite snapshot_read_diploid_site(
-    SnapshotReader &reader, std::uint64_t previous, bool first)
-{
-    DiploidSite site;
-    site.origin_id = snapshot_read_delta(reader, previous, first);
-    snapshot_unpack_site(
-        reader.u8(), site.context, site.methylation_source, site.allele);
-    site.methylation_probability = unorm16_to_probability(reader.u16());
-    return site;
-}
-
-std::string_view snapshot_context_name(model::MethylationContext context)
-{
-    switch (context) {
-    case model::MethylationContext::cg_c: return "CG-C";
-    case model::MethylationContext::chg_c: return "CHG-C";
-    case model::MethylationContext::chh_c: return "CHH-C";
-    case model::MethylationContext::cg_g: return "CG-G";
-    case model::MethylationContext::chg_g: return "CHG-G";
-    case model::MethylationContext::chh_g: return "CHH-G";
-    }
-    throw SnapshotError("MethDB BED row has an invalid context");
-}
-
-std::string_view snapshot_source_name(model::MethylationSource source)
-{
-    switch (source) {
-    case model::MethylationSource::cgmap: return "cgmap";
-    case model::MethylationSource::asm_source: return "asm";
-    case model::MethylationSource::beta: return "beta";
-    case model::MethylationSource::pooled_cgmap: return "pooled-cgmap";
-    }
-    throw SnapshotError("MethDB BED row has an invalid source");
-}
-
-std::string_view snapshot_allele_name(model::MethylationAllele allele)
-{
-    switch (allele) {
-    case model::MethylationAllele::shared: return "shared";
-    case model::MethylationAllele::reference_haplotype: return "reference";
-    case model::MethylationAllele::alternate_haplotype: return "alternate";
-    }
-    throw SnapshotError("MethDB BED row has an invalid allele");
-}
-
-void snapshot_write_hex(
-    std::ostream &sink, const crypto::Sha256Digest &digest)
-{
-    static constexpr char digits[] = "0123456789abcdef";
-    for (const std::uint8_t byte : digest) {
-        sink.put(digits[byte >> 4U]);
-        sink.put(digits[byte & UINT8_C(0x0f)]);
-    }
-}
-
-void snapshot_write_bed_record(
-    std::ostream &sink,
-    std::string_view contig_name,
-    std::string_view set_name,
-    std::uint64_t origin_id,
-    model::MethylationContext context,
-    model::MethylationSource source,
-    model::MethylationAllele allele,
-    float probability)
-{
-    constexpr std::uint64_t insertion_flag = UINT64_C(1) << 63U;
-    const bool insertion = (origin_id & insertion_flag) != 0U;
-    const std::uint16_t encoded_probability = probability_to_unorm16(probability);
-    if (insertion) {
-        const std::uint64_t payload = origin_id & ~insertion_flag;
-        sink << "#insertion\t" << contig_name << '\t' << set_name << '\t'
-             << origin_id << '\t' << (payload >> 2U) << '\t'
-             << (payload & 3U);
-    } else {
-        const std::uint32_t score = (
-            static_cast<std::uint32_t>(encoded_probability) * 1000U
-            + 32767U) / 65535U;
-        const char strand = static_cast<std::uint8_t>(context) < 8U
-            ? '+'
-            : '-';
-        sink << contig_name << '\t' << origin_id << '\t' << (origin_id + 1U)
-             << "\tmethdb:" << set_name << ':' << origin_id << '\t'
-             << score << '\t' << strand << '\t' << set_name << '\t'
-             << origin_id << "\treference\t.\t.";
-    }
-    sink << '\t' << snapshot_context_name(context)
-         << '\t' << snapshot_source_name(source)
-         << '\t' << snapshot_allele_name(allele)
-         << '\t' << encoded_probability
-         << '\t' << std::setprecision(std::numeric_limits<float>::max_digits10)
-         << probability << '\n';
-}
-
-} // namespace
-
-SnapshotWriter::SnapshotWriter(
-    std::ostream &output,
-    const crypto::Sha256Digest &binding,
-    std::uint32_t contig_count)
-    : output_(output),
-      impl_(std::make_unique<SnapshotWriterImpl>(output)),
-      contig_count_(contig_count)
-{
-    snapshot_write_raw(
-        output_, methdb_magic, sizeof(methdb_magic) - 1U);
-    snapshot_write_raw(output_, &methdb_version, sizeof(methdb_version));
-    snapshot_write_bytes(*impl_, binding.data(), binding.size());
-    snapshot_write_u32(*impl_, contig_count_);
-}
-
-SnapshotWriter::~SnapshotWriter() = default;
-
-void SnapshotWriter::write_reference(
-    const reference::ContigMetadata &metadata,
-    const MethylationCatalog &catalog)
-{
-    if (finished_ || written_ >= contig_count_) {
-        throw SnapshotError("MethDB snapshot received too many contigs");
-    }
-    const auto &sites = catalog.sites();
-    snapshot_write_metadata(
-        *impl_, metadata, 0U, checked_snapshot_count(sites.size()), 0U, 0U);
-    snapshot_write_catalog_sites(*impl_, sites);
-    ++written_;
-}
-
-void SnapshotWriter::write_diploid(
-    const reference::ContigMetadata &metadata,
-    const DiploidMethylationCatalog &catalog)
-{
-    if (finished_ || written_ >= contig_count_) {
-        throw SnapshotError("MethDB snapshot received too many contigs");
-    }
-    const auto &shared = catalog.shared_sites();
-    const auto &haplotype_0 = catalog.haplotype_sites(0U);
-    const auto &haplotype_1 = catalog.haplotype_sites(1U);
-    snapshot_write_metadata(
-        *impl_,
-        metadata,
-        1U,
-        checked_snapshot_count(shared.size()),
-        checked_snapshot_count(haplotype_0.size()),
-        checked_snapshot_count(haplotype_1.size()));
-    snapshot_write_diploid_sites(*impl_, shared);
-    snapshot_write_diploid_sites(*impl_, haplotype_0);
-    snapshot_write_diploid_sites(*impl_, haplotype_1);
-    ++written_;
-}
-
-void SnapshotWriter::finish()
-{
-    if (finished_) {throw SnapshotError("MethDB snapshot was finished twice");}
-    if (written_ != contig_count_) {
-        throw SnapshotError("MethDB snapshot contig count is incomplete");
-    }
-    impl_->finish();
-    if (!output_) {throw SnapshotError("MethDB snapshot output failed");}
-    finished_ = true;
-}
-
-void export_snapshot_bed(const std::string &path, std::ostream &sink)
-{
-    SnapshotReader reader(path);
-    crypto::Sha256Digest binding = {};
-    reader.read(binding.data(), binding.size());
-    const std::uint32_t contig_count = reader.u32();
-
-    sink << "#format\t" << methdb_bed_format << '\n'
-         << "#binding_sha256\t";
-    snapshot_write_hex(sink, binding);
-    sink << '\n'
-         << "#columns\tchrom\tchromStart\tchromEnd\tname\tscore\tstrand\t"
-            "set\torigin_id\torigin_kind\tvariant_event\tinsertion_offset\t"
-            "context\tsource\tallele\tprobability_u16\tprobability\n"
-         << "#insertion_columns\tcontig\tset\torigin_id\tvariant_event\t"
-            "insertion_offset\tcontext\tsource\tallele\tprobability_u16\t"
-            "probability\n";
-
-    for (std::uint32_t index = 0U; index < contig_count; ++index) {
-        const std::uint32_t name_size = reader.u32();
-        if (name_size == 0U || name_size > UINT32_C(1048576)) {
-            throw SnapshotError("MethDB contig name length is invalid");
-        }
-        std::string name(name_size, '\0');
-        reader.read(name.data(), name.size());
-        if (name.find_first_of("\t\r\n") != std::string::npos) {
-            throw SnapshotError("MethDB contig name cannot be represented in BED");
-        }
-        const std::uint32_t reference_length = reader.u32();
-        crypto::Sha256Digest reference_sha256 = {};
-        reader.read(reference_sha256.data(), reference_sha256.size());
-        const std::uint8_t mode = reader.u8();
-        if (reader.u8() != 0U || reader.u8() != 0U || reader.u8() != 0U) {
-            throw SnapshotError("MethDB contig reserved bytes are nonzero");
-        }
-        const std::uint32_t first_count = reader.u32();
-        const std::uint32_t second_count = reader.u32();
-        const std::uint32_t third_count = reader.u32();
-        const std::uint64_t generous_limit =
-            static_cast<std::uint64_t>(reference_length) * 5U + 4U;
-        if (first_count > generous_limit
-            || second_count > generous_limit
-            || third_count > generous_limit) {
-            throw SnapshotError("MethDB row count is incompatible with contig length");
-        }
-        if (mode > 1U) {
-            throw SnapshotError("MethDB contig mode is invalid");
-        }
-        if (mode == 0U && (second_count != 0U || third_count != 0U)) {
-            throw SnapshotError("reference MethDB has diploid row counts");
-        }
-
-        sink << "#contig\t" << index << '\t' << name << '\t'
-             << reference_length << '\t';
-        snapshot_write_hex(sink, reference_sha256);
-        sink << '\t' << (mode == 0U ? "reference" : "diploid") << '\n';
-
-        if (mode == 0U) {
-            std::uint64_t previous = 0U;
-            for (std::uint32_t row = 0U; row < first_count; ++row) {
-                const CatalogSite site = snapshot_read_catalog_site(
-                    reader, previous, row == 0U);
-                previous = site.reference_position;
-                if (site.reference_position >= reference_length) {
-                    throw SnapshotError(
-                        "MethDB reference origin is outside the contig");
-                }
-                snapshot_write_bed_record(
-                    sink,
-                    name,
-                    "reference",
-                    site.reference_position,
-                    site.context,
-                    site.methylation_source,
-                    model::MethylationAllele::shared,
-                    site.methylation_probability);
-            }
-            continue;
-        }
-
-        const auto write_diploid_set = [&](
-            std::uint32_t count, std::string_view set_name) {
-            std::uint64_t previous = 0U;
-            for (std::uint32_t row = 0U; row < count; ++row) {
-                const DiploidSite site = snapshot_read_diploid_site(
-                    reader, previous, row == 0U);
-                previous = site.origin_id;
-                if ((site.origin_id >> 63U) == 0U
-                    && site.origin_id >= reference_length) {
-                    throw SnapshotError(
-                        "MethDB diploid reference origin is outside the contig");
-                }
-                snapshot_write_bed_record(
-                    sink,
-                    name,
-                    set_name,
-                    site.origin_id,
-                    site.context,
-                    site.methylation_source,
-                    site.allele,
-                    site.methylation_probability);
-            }
-        };
-        write_diploid_set(first_count, "shared");
-        write_diploid_set(second_count, "haplotype-1");
-        write_diploid_set(third_count, "haplotype-2");
-    }
-
-    const crypto::Sha256Digest file_sha256 = reader.finish();
-    sink << "#file_sha256\t";
-    snapshot_write_hex(sink, file_sha256);
-    sink << '\n';
-    if (!sink) {throw SnapshotError("failed while writing MethDB BED");}
-}
-
-Snapshot::Snapshot(
-    const std::string &path,
-    const crypto::Sha256Digest &expected_binding,
-    const std::vector<reference::ContigMetadata> &reference_catalog)
-{
-    SnapshotReader reader(path);
-    crypto::Sha256Digest binding = {};
-    reader.read(binding.data(), binding.size());
-    if (binding != expected_binding) {
-        throw SnapshotError("MethDB profile binding is incompatible");
-    }
-    const std::uint32_t contig_count = reader.u32();
-    if (contig_count != reference_catalog.size()) {
-        throw SnapshotError("MethDB snapshot contig count disagrees with reference");
-    }
-    contigs_.reserve(contig_count);
-    for (std::uint32_t index = 0U; index < contig_count; ++index) {
-        const std::uint32_t name_size = reader.u32();
-        if (name_size == 0U || name_size > UINT32_C(1048576)) {
-            throw SnapshotError("MethDB contig name length is invalid");
-        }
-        SnapshotContig entry;
-        entry.name.resize(name_size);
-        reader.read(entry.name.data(), entry.name.size());
-        entry.reference_length = reader.u32();
-        reader.read(entry.reference_sha256.data(), entry.reference_sha256.size());
-        const auto &expected = reference_catalog[index];
-        if (entry.name != expected.name
-            || entry.reference_length != expected.length
-            || entry.reference_sha256 != expected.reference_sha256) {
-            throw SnapshotError("MethDB contig identity disagrees with reference");
-        }
-        const std::uint8_t mode = reader.u8();
-        if (reader.u8() != 0U || reader.u8() != 0U || reader.u8() != 0U) {
-            throw SnapshotError("MethDB contig reserved bytes are nonzero");
-        }
-        const std::uint32_t first_count = reader.u32();
-        const std::uint32_t second_count = reader.u32();
-        const std::uint32_t third_count = reader.u32();
-        const std::uint64_t generous_limit =
-            static_cast<std::uint64_t>(entry.reference_length) * 5U + 4U;
-        if (first_count > generous_limit
-            || second_count > generous_limit
-            || third_count > generous_limit) {
-            throw SnapshotError("MethDB row count is incompatible with contig length");
-        }
-        if (mode == 0U) {
-            if (second_count != 0U || third_count != 0U) {
-                throw SnapshotError("reference MethDB has diploid row counts");
-            }
-            entry.reference_sites.reserve(first_count);
-            std::uint64_t previous = 0U;
-            for (std::uint32_t row = 0U; row < first_count; ++row) {
-                CatalogSite site = snapshot_read_catalog_site(
-                    reader, previous, row == 0U);
-                previous = site.reference_position;
-                entry.reference_sites.push_back(std::move(site));
-            }
-            (void)MethylationCatalog(
-                entry.reference_length, entry.reference_sites);
-        } else if (mode == 1U) {
-            entry.diploid = true;
-            entry.shared_sites.reserve(first_count);
-            entry.haplotype_sites[0].reserve(second_count);
-            entry.haplotype_sites[1].reserve(third_count);
-            std::uint64_t previous = 0U;
-            for (std::uint32_t row = 0U; row < first_count; ++row) {
-                DiploidSite site = snapshot_read_diploid_site(
-                    reader, previous, row == 0U);
-                previous = site.origin_id;
-                entry.shared_sites.push_back(site);
-            }
-            previous = 0U;
-            for (std::uint32_t row = 0U; row < second_count; ++row) {
-                DiploidSite site = snapshot_read_diploid_site(
-                    reader, previous, row == 0U);
-                previous = site.origin_id;
-                entry.haplotype_sites[0].push_back(site);
-            }
-            previous = 0U;
-            for (std::uint32_t row = 0U; row < third_count; ++row) {
-                DiploidSite site = snapshot_read_diploid_site(
-                    reader, previous, row == 0U);
-                previous = site.origin_id;
-                entry.haplotype_sites[1].push_back(site);
-            }
-            (void)DiploidMethylationCatalog(
-                index,
-                entry.reference_length,
-                entry.shared_sites,
-                entry.haplotype_sites);
-        } else {
-            throw SnapshotError("MethDB contig mode is invalid");
-        }
-        contigs_.push_back(std::move(entry));
-    }
-    file_sha256_ = reader.finish();
-}
-
-const SnapshotContig &Snapshot::contig(std::uint32_t contig_index) const
-{
-    if (contig_index >= contigs_.size()) {
-        throw SnapshotError("MethDB contig index is out of range");
-    }
-    return contigs_[contig_index];
 }
 
 } // namespace htsim::methdb

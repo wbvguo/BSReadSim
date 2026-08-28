@@ -32,6 +32,7 @@ def build_core_argv(
     *,
     emit_details: bool = False,
     protocol_batch_fragments: int = 64,
+    methdb_output_path: PathLike | None = None,
 ) -> tuple[str, ...]:
     """Return one complete, deterministic ``htsim-core`` argv tuple.
 
@@ -110,6 +111,17 @@ def build_core_argv(
                 "--" + option_name,
                 roles["input." + input_name],
             )
+    if methdb_output_path is not None:
+        if "methdb" in inputs:
+            raise CoreArgvError(
+                "methdb_output_path cannot be combined with a MethDB input"
+            )
+        arguments.extend(
+            (
+                "--methdb-output",
+                _path_argument("methdb_output_path", methdb_output_path),
+            )
+        )
 
     technology = _text("technology", config["technology"])
     arguments.extend(("--technology", technology))

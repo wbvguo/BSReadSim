@@ -462,6 +462,21 @@ void test_valid_wgbs_vcf_generation_and_chunk_independence()
                 && first_trailer.skipped_fragment_count == 0U,
             "WGBS VCF generation returned wrong trailer counts");
 
+    TempFile methdb_output;
+    CoreConfig saving = config;
+    saving.methdb_output_path = methdb_output.path();
+    std::ostringstream saved(std::ios::binary);
+    const auto saved_trailer =
+        htsim::core::generate_core_stream(saving, saved);
+    require(saved.str() == first.str()
+                && saved_trailer.stream_sha256
+                    == first_trailer.stream_sha256,
+            "saving a variant MethDB changed the protocol stream");
+    std::ifstream sidecar(
+        methdb_output.path(), std::ios::binary | std::ios::ate);
+    require(sidecar && sidecar.tellg() > std::streampos(0),
+            "saving a variant MethDB did not write its sidecar");
+
     config.chunk_size = 5U;
     std::ostringstream rechunked(std::ios::binary);
     const auto rechunked_trailer =

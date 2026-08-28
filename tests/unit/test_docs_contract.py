@@ -214,7 +214,10 @@ class DocumentationContractTests(unittest.TestCase):
                 continue
             if path == DOCS_ROOT / "getting-started" / "quickstart.md":
                 continue
-            if "--mutation-rate" not in command and "--vcf" not in command:
+            if not any(
+                policy in command
+                for policy in ("--mutation-rate", "--vcf", "--methdb")
+            ):
                 missing.append("{}: {}".format(path, command))
 
         self.assertEqual(missing, [])

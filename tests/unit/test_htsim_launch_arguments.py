@@ -216,6 +216,30 @@ class CoreArgvTests(unittest.TestCase):
                         protocol_batch_fragments=batch_fragments,
                     )
 
+    def test_methdb_sidecar_is_an_internal_runtime_option(self):
+        prepared = self.prepared()
+        argv = build_core_argv(
+            prepared,
+            RUN_ID,
+            "htsim-core",
+            methdb_output_path=Path("/tmp/truth.methdb"),
+        )
+        self.assertEqual(
+            option_value(argv, "--methdb-output"),
+            "/tmp/truth.methdb",
+        )
+        self.assertNotIn("methdb_output", prepared.config.normalized)
+
+        for invalid in ("", b"truth.methdb"):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(CoreArgvError, "methdb_output_path"):
+                    build_core_argv(
+                        prepared,
+                        RUN_ID,
+                        "htsim-core",
+                        methdb_output_path=invalid,
+                    )
+
     def test_standard_technology_identity_reaches_the_core(self):
         (self.directory / "targets.bed").write_text(
             "chr1\t0\t4\ttarget\t1\t+\n", encoding="ascii"

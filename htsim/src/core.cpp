@@ -15,6 +15,7 @@
 #include <cfenv>
 #include <cstddef>
 #include <cstdint>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -36,7 +37,7 @@ namespace {
 
 using Values = std::unordered_map<std::string, std::vector<std::string>>;
 
-constexpr std::array<std::string_view, 47> known_options = {{
+constexpr std::array<std::string_view, 48> known_options = {{
     "--emit-details",
     "--protocol-batch-fragments",
     "--run-id",
@@ -50,6 +51,7 @@ constexpr std::array<std::string_view, 47> known_options = {{
     "--cgmap",
     "--bed-methyl",
     "--methdb",
+    "--methdb-output",
     "--asm",
     "--asm-bed",
     "--technology",
@@ -355,6 +357,7 @@ void validate_core_config(const CoreConfig &config)
     require_nonempty(config.cgmap_path, "CGmap path");
     require_nonempty(config.bed_methyl_path, "bedMethyl path");
     require_nonempty(config.methdb_path, "MethDB path");
+    require_nonempty(config.methdb_output_path, "MethDB output path");
     require_nonempty(config.asm_path, "ASM path");
     require_nonempty(config.asm_bed_path, "ASM BED path");
     require_nonempty(config.coverage_profile_path, "coverage-profile path");
@@ -365,6 +368,7 @@ void validate_core_config(const CoreConfig &config)
     const bool has_cgmap = config.cgmap_path.has_value();
     const bool has_bed_methyl = config.bed_methyl_path.has_value();
     const bool has_methdb = config.methdb_path.has_value();
+    const bool writes_methdb = config.methdb_output_path.has_value();
     const bool has_asm = config.asm_path.has_value();
     const bool has_asm_bed = config.asm_bed_path.has_value();
     if (has_cgmap && has_bed_methyl) {
@@ -375,6 +379,14 @@ void validate_core_config(const CoreConfig &config)
         && (has_cgmap || has_bed_methyl || has_asm || has_asm_bed)) {
         throw CoreConfigError(
             "MethDB and methylation overlays are mutually exclusive");
+    }
+    if (has_methdb && has_vcf) {
+        throw CoreConfigError(
+            "MethDB embeds its variant authority and forbids a VCF input");
+    }
+    if (has_methdb && writes_methdb) {
+        throw CoreConfigError(
+            "MethDB input and generated MethDB output are mutually exclusive");
     }
     if (has_asm && has_asm_bed) {
         throw CoreConfigError(
@@ -463,6 +475,10 @@ void validate_core_config(const CoreConfig &config)
         throw CoreConfigError(
             "VCF and de novo mutation generation are mutually exclusive");
     }
+    if (has_methdb && config.mutation_rate > 0.0) {
+        throw CoreConfigError(
+            "MethDB embeds its variant authority and forbids de novo mutations");
+    }
     if (bisulfite_technology(config.technology)
         && (has_vcf || config.mutation_rate > 0.0)
         && !config.update_variant_boundaries) {
@@ -525,8 +541,8 @@ void validate_core_config(const CoreConfig &config)
         throw CoreConfigError("technology is outside the core contract");
     }
     if (!bisulfite_technology(config.technology)
-        && (has_cgmap || has_bed_methyl || has_methdb || has_asm
-            || has_asm_bed || config.cgmap_pool)) {
+        && (has_cgmap || has_bed_methyl || has_methdb || writes_methdb
+            || has_asm || has_asm_bed || config.cgmap_pool)) {
         throw CoreConfigError(
             "standard sequencing forbids methylation inputs and pooling");
     }
@@ -609,6 +625,7 @@ CoreConfig parse_core_config(const std::vector<std::string> &arguments)
     config.cgmap_path = optional_text(values, "--cgmap");
     config.bed_methyl_path = optional_text(values, "--bed-methyl");
     config.methdb_path = optional_text(values, "--methdb");
+    config.methdb_output_path = optional_text(values, "--methdb-output");
     config.asm_path = optional_text(values, "--asm");
     config.asm_bed_path = optional_text(values, "--asm-bed");
     config.technology = parse_technology(required(values, "--technology"));
@@ -789,46 +806,30 @@ std::uint64_t checked_add(
 }
 
 crypto::Sha256Digest methdb_binding(
-    const CoreConfig &config,
-    const crypto::Sha256Digest &reference_sha256,
-    const std::optional<crypto::Sha256Digest> &vcf_sha256)
+    const std::vector<reference::ContigMetadata> &catalog)
 {
     crypto::Sha256 hash;
-    const auto bytes = [&](const void *data, std::size_t size) {
-        hash.update(static_cast<const std::uint8_t *>(data), size);
-    };
     const auto u64 = [&](std::uint64_t value) {
-        std::uint8_t encoded[8];
-        for (unsigned index = 0U; index < 8U; ++index) {
-            encoded[index] = static_cast<std::uint8_t>(value >> (index * 8U));
+        std::array<std::uint8_t, 8> encoded = {};
+        for (unsigned shift = 0U; shift < 64U; shift += 8U) {
+            encoded[shift / 8U] = static_cast<std::uint8_t>(value >> shift);
         }
-        bytes(encoded, sizeof(encoded));
+        hash.update(encoded.data(), encoded.size());
     };
-    const auto f64 = [&](double value) {
-        std::uint64_t encoded = 0U;
-        static_assert(sizeof(encoded) == sizeof(value));
-        std::memcpy(&encoded, &value, sizeof(encoded));
-        u64(encoded);
-    };
-    static constexpr char contract[] = "methdb-binding";
-    bytes(contract, sizeof(contract) - 1U);
-    bytes(reference_sha256.data(), reference_sha256.size());
-    if (vcf_sha256) {
-        u64(config.methylation_seed);
-        u64(config.phasing_seed);
-        const std::uint8_t marker = 1U;
-        bytes(&marker, 1U);
-        bytes(vcf_sha256->data(), vcf_sha256->size());
-    } else {
-        u64(config.methylation_seed);
-        const std::uint8_t marker = 0U;
-        bytes(&marker, 1U);
-        if (config.mutation_rate > 0.0) {u64(config.mutation_seed);}
-        f64(config.mutation_rate);
-        f64(config.indel_fraction);
-        f64(config.indel_extension_probability);
-        const std::uint8_t homozygous = config.homozygous_only ? 1U : 0U;
-        bytes(&homozygous, 1U);
+    static constexpr char contract[] = "methdb-v2-reference-binding";
+    hash.update(
+        reinterpret_cast<const std::uint8_t *>(contract),
+        sizeof(contract) - 1U);
+    u64(catalog.size());
+    for (const reference::ContigMetadata &contig : catalog) {
+        u64(contig.name.size());
+        hash.update(
+            reinterpret_cast<const std::uint8_t *>(contig.name.data()),
+            contig.name.size());
+        u64(contig.length);
+        hash.update(
+            contig.reference_sha256.data(),
+            contig.reference_sha256.size());
     }
     return hash.digest();
 }
@@ -1192,8 +1193,6 @@ void generate_methdb_catalog(
                 catalog,
                 config.phasing_seed);
         }
-        std::optional<crypto::Sha256Digest> vcf_sha256;
-        if (variant_file) {vcf_sha256 = variant_file->file_sha256();}
         const bool generate_mutations = config.mutation_rate > 0.0;
         const variant::MutationParameters mutation_parameters{
             config.mutation_rate,
@@ -1229,7 +1228,7 @@ void generate_methdb_catalog(
         const methdb::ContextShapes shapes = methylation_shapes(config);
         methdb::SnapshotWriter writer(
             sink,
-            methdb_binding(config, snapshot.file_sha256(), vcf_sha256),
+            methdb_binding(catalog),
             static_cast<std::uint32_t>(catalog.size()));
         snapshot.visit_contigs([&](const reference::Contig &contig) {
             std::vector<methdb::CgmapRecord> cgmap_records;
@@ -1243,7 +1242,6 @@ void generate_methdb_catalog(
                 asm_profile->validate_contig(contig);
                 asm_records = asm_profile->records(contig);
             }
-            const auto *asm_or_null = asm_profile ? &asm_records : nullptr;
             std::vector<variant::Variant> generated_variants;
             const std::vector<variant::Variant> *variant_records = nullptr;
             if (variant_file) {
@@ -1256,16 +1254,29 @@ void generate_methdb_catalog(
             if (variant_records) {
                 const variant::ContigVariants contig_variants(
                     contig.bases, *variant_records, contig.index);
-                const methdb::DiploidMethylationCatalog methylation(
+                const methdb::MethylationCatalog baseline(
+                    contig.bases,
+                    contig.index,
+                    config.methylation_seed,
+                    config.collect_non_cpg,
+                    shapes,
+                    cgmap_or_null,
+                    config.cgmap_pool);
+                const methdb::DiploidMethylationCatalog pre_asm_methylation(
                     contig,
                     contig_variants,
                     config.methylation_seed,
                     config.collect_non_cpg,
                     shapes,
                     cgmap_or_null,
-                    asm_or_null,
+                    nullptr,
                     config.cgmap_pool);
-                writer.write_diploid(catalog.at(contig.index), methylation);
+                writer.write_diploid(
+                    catalog.at(contig.index),
+                    baseline,
+                    pre_asm_methylation,
+                    *variant_records,
+                    asm_records);
             } else {
                 const methdb::MethylationCatalog methylation(
                     contig.bases,
@@ -1351,8 +1362,6 @@ protocol::Trailer generate_core_stream(
                 catalog,
                 config.phasing_seed);
         }
-        std::optional<crypto::Sha256Digest> vcf_sha256;
-        if (variant_file) {vcf_sha256 = variant_file->file_sha256();}
         const bool generate_mutations = config.mutation_rate > 0.0;
         const variant::MutationParameters mutation_parameters{
             config.mutation_rate,
@@ -1423,16 +1432,35 @@ protocol::Trailer generate_core_stream(
             coverage_profile = std::make_unique<wgbs::WgbsGcProfile>(
                 *config.coverage_profile_path);
         }
-        const bool haplotype_gc_profile = coverage_profile
-            && (variant_file || generate_mutations);
         std::unique_ptr<methdb::Snapshot> fixed_methdb;
         if (config.methdb_path) {
             fixed_methdb = std::make_unique<methdb::Snapshot>(
                 *config.methdb_path,
-                methdb_binding(
-                    config, snapshot.file_sha256(), vcf_sha256),
+                methdb_binding(catalog),
                 catalog);
         }
+        std::ofstream generated_methdb_output;
+        std::unique_ptr<methdb::SnapshotWriter> generated_methdb;
+        if (config.methdb_output_path) {
+            if (catalog.size() > std::numeric_limits<std::uint32_t>::max()) {
+                throw CoreGeneratorError("MethDB contig count exceeds uint32");
+            }
+            generated_methdb_output.open(
+                *config.methdb_output_path,
+                std::ios::binary | std::ios::trunc);
+            if (!generated_methdb_output) {
+                throw CoreGeneratorError(
+                    "cannot open the generated MethDB sidecar");
+            }
+            generated_methdb = std::make_unique<methdb::SnapshotWriter>(
+                generated_methdb_output,
+                methdb_binding(catalog),
+                static_cast<std::uint32_t>(catalog.size()));
+        }
+        const bool haplotype_gc_profile = coverage_profile
+            && (variant_file || generate_mutations
+                || (fixed_methdb
+                    && fixed_methdb->has_diploid_contigs()));
         std::vector<std::uint32_t> candidate_weights(catalog.size(), 0);
         std::vector<double> rrbs_profile_weights(catalog.size(), 0.0);
         std::vector<std::vector<std::uint32_t>> target_bin_counts(
@@ -1449,10 +1477,15 @@ protocol::Trailer generate_core_stream(
                 asm_profile->validate_contig(contig);
             }
             std::vector<variant::Variant> generated_events;
+            std::vector<variant::Variant> saved_events;
             const std::vector<variant::Variant> *variants = nullptr;
-            if (variant_file) {
+            if (fixed_methdb
+                && fixed_methdb->contig_is_diploid(contig.index)) {
+                saved_events = fixed_methdb->variants(contig.index);
+                variants = &saved_events;
+            } else if (!fixed_methdb && variant_file) {
                 variants = &variant_file->variants(contig.index);
-            } else if (generate_mutations) {
+            } else if (!fixed_methdb && generate_mutations) {
                 generated_events = variant::generate_de_novo_events(
                     contig, config.mutation_seed, mutation_parameters);
                 variants = &generated_events;
@@ -1489,24 +1522,13 @@ protocol::Trailer generate_core_stream(
                 if (!asm_records.empty()) {
                     if (!planned_variants) {
                         throw CoreGeneratorError(
-                            "ASM planning lost its required VCF variant set");
+                            "ASM preflight lost its required VCF variant set");
                     }
-                    std::vector<methdb::CgmapRecord> cgmap_records;
-                    if (cgmap_profile) {
-                        cgmap_records = cgmap_profile->records(contig);
-                    }
-                    const auto *cgmap_records_or_null = cgmap_profile
-                        ? &cgmap_records
-                        : nullptr;
-                    (void)methdb::DiploidMethylationCatalog(
+                    methdb::validate_asm_targets(
                         contig,
                         *planned_variants,
-                        config.methylation_seed,
                         config.collect_non_cpg,
-                        context_shapes,
-                        cgmap_records_or_null,
-                        &asm_records,
-                        config.cgmap_pool);
+                        asm_records);
                 }
             }
             if (whole_genome_technology(config.technology)) {
@@ -1736,7 +1758,7 @@ protocol::Trailer generate_core_stream(
             : fragment_builder::FragmentDetail::full;
         snapshot.visit_contigs([&](const reference::Contig &contig) {
             const std::uint32_t requested = fragment_counts.at(contig.index);
-            if (requested == 0) {return;}
+            if (requested == 0U && !generated_methdb) {return;}
             std::vector<methdb::CgmapRecord> cgmap_records;
             if (cgmap_profile) {
                 cgmap_records = cgmap_profile->records(contig);
@@ -1751,11 +1773,17 @@ protocol::Trailer generate_core_stream(
             const auto *asm_records_or_null = asm_profile
                 ? &asm_records
                 : nullptr;
+            std::optional<methdb::SnapshotContig> saved_methdb_contig;
+            if (fixed_methdb) {
+                saved_methdb_contig = fixed_methdb->contig(contig.index);
+            }
             std::vector<variant::Variant> generated_events;
             const std::vector<variant::Variant> *variants = nullptr;
-            if (variant_file) {
+            if (saved_methdb_contig && saved_methdb_contig->diploid) {
+                variants = &saved_methdb_contig->variants;
+            } else if (!saved_methdb_contig && variant_file) {
                 variants = &variant_file->variants(contig.index);
-            } else if (generate_mutations) {
+            } else if (!saved_methdb_contig && generate_mutations) {
                 generated_events = variant::generate_de_novo_events(
                     contig, config.mutation_seed, mutation_parameters);
                 variants = &generated_events;
@@ -1777,9 +1805,8 @@ protocol::Trailer generate_core_stream(
                             static_cast<std::uint32_t>(contig.length),
                             std::vector<methdb::DiploidSite>{},
                             std::array<std::vector<methdb::DiploidSite>, 2>{});
-                } else if (fixed_methdb) {
-                    const auto &saved = fixed_methdb->contig(contig.index);
-                    if (!saved.diploid) {
+                } else if (saved_methdb_contig) {
+                    if (!saved_methdb_contig->diploid) {
                         throw CoreGeneratorError(
                             "MethDB contig is not diploid for the prepared "
                             "variant set");
@@ -1788,8 +1815,43 @@ protocol::Trailer generate_core_stream(
                         std::make_unique<methdb::DiploidMethylationCatalog>(
                             contig.index,
                             static_cast<std::uint32_t>(contig.length),
-                            saved.shared_sites,
-                            saved.haplotype_sites);
+                            std::move(saved_methdb_contig->shared_sites),
+                            std::move(saved_methdb_contig->haplotype_sites));
+                } else if (generated_methdb) {
+                    const methdb::MethylationCatalog baseline(
+                        contig.bases,
+                        contig.index,
+                        config.methylation_seed,
+                        config.collect_non_cpg,
+                        context_shapes,
+                        cgmap_records_or_null,
+                        config.cgmap_pool);
+                    auto pre_asm_catalog = std::make_unique<
+                        methdb::DiploidMethylationCatalog>(
+                            contig,
+                            *contig_variants,
+                            config.methylation_seed,
+                            config.collect_non_cpg,
+                            context_shapes,
+                            cgmap_records_or_null,
+                            nullptr,
+                            config.cgmap_pool);
+                    generated_methdb->write_diploid(
+                        catalog.at(contig.index),
+                        baseline,
+                        *pre_asm_catalog,
+                        *variants,
+                        asm_records);
+                    if (asm_records.empty()) {
+                        diploid_methylation_catalog =
+                            std::move(pre_asm_catalog);
+                    } else {
+                        diploid_methylation_catalog = std::make_unique<
+                            methdb::DiploidMethylationCatalog>(
+                                *pre_asm_catalog,
+                                *variants,
+                                asm_records);
+                    }
                 } else {
                     diploid_methylation_catalog =
                         std::make_unique<methdb::DiploidMethylationCatalog>(
@@ -1808,9 +1870,8 @@ protocol::Trailer generate_core_stream(
                         std::make_unique<methdb::MethylationCatalog>(
                             static_cast<std::uint32_t>(contig.length),
                             std::vector<methdb::CatalogSite>{});
-                } else if (fixed_methdb) {
-                    const auto &saved = fixed_methdb->contig(contig.index);
-                    if (saved.diploid) {
+                } else if (saved_methdb_contig) {
+                    if (saved_methdb_contig->diploid) {
                         throw CoreGeneratorError(
                             "MethDB contig is diploid without a prepared "
                             "variant set");
@@ -1818,7 +1879,7 @@ protocol::Trailer generate_core_stream(
                     reference_methylation_catalog =
                         std::make_unique<methdb::MethylationCatalog>(
                             static_cast<std::uint32_t>(contig.length),
-                            saved.reference_sites);
+                            std::move(saved_methdb_contig->reference_sites));
                 } else {
                     reference_methylation_catalog =
                         std::make_unique<methdb::MethylationCatalog>(
@@ -1829,8 +1890,14 @@ protocol::Trailer generate_core_stream(
                             context_shapes,
                             cgmap_records_or_null,
                             config.cgmap_pool);
+                    if (generated_methdb) {
+                        generated_methdb->write_reference(
+                            catalog.at(contig.index),
+                            *reference_methylation_catalog);
+                    }
                 }
             }
+            if (requested == 0U) {return;}
             const std::uint64_t haplotype_key = rng::derive_key(
                 config.master_seed, rng::Stage::haplotype, contig.index);
             const std::uint64_t library_orientation_key = rng::derive_key(
@@ -2387,6 +2454,14 @@ protocol::Trailer generate_core_stream(
                 }
             }
         });
+        if (generated_methdb) {
+            generated_methdb->finish();
+            generated_methdb_output.flush();
+            if (!generated_methdb_output) {
+                throw CoreGeneratorError(
+                    "failed while flushing the generated MethDB sidecar");
+            }
+        }
         if (fragment_ordinal
             != static_cast<std::uint64_t>(requested_fragment_count)) {
             throw CoreGeneratorError("generated fragment count disagrees with plan");

@@ -407,15 +407,42 @@ const ShapePair &shape_for_context(
     model::MethylationContext context,
     const ContextShapes &shapes);
 
+// MethDB probabilities are unsigned-normalized 16-bit values. This is the
+// sole catalog/runtime authority; floating point is used only at text/model
+// input and protocol output boundaries.
+using ProbabilityU16 = std::uint16_t;
+
+ProbabilityU16 probability_to_u16(float probability);
+float probability_from_u16(ProbabilityU16 probability) noexcept;
+
+// One cache-oriented runtime word. Numeric order is key order because the key
+// occupies the high 32 bits:
+//   [63:32 key][31:16 probability][15:0 metadata]
+using RuntimeSite = std::uint64_t;
+
+RuntimeSite pack_runtime_site(
+    std::uint32_t key,
+    ProbabilityU16 probability,
+    model::MethylationContext context,
+    model::MethylationSource source,
+    model::MethylationAllele allele,
+    bool reference_equivalent = false);
+std::uint32_t runtime_site_key(RuntimeSite site) noexcept;
+ProbabilityU16 runtime_site_probability(RuntimeSite site) noexcept;
+model::MethylationContext runtime_site_context(RuntimeSite site);
+model::MethylationSource runtime_site_source(RuntimeSite site);
+model::MethylationAllele runtime_site_allele(RuntimeSite site);
+bool runtime_site_reference_equivalent(RuntimeSite site) noexcept;
+
 struct CatalogSite {
     std::uint32_t reference_position = 0;
-    float methylation_probability = 0.0F;
+    ProbabilityU16 probability_u16 = 0U;
     model::MethylationContext context = model::MethylationContext::cg_c;
     model::MethylationSource methylation_source = model::MethylationSource::beta;
 };
 
-static_assert(sizeof(CatalogSite) == 12U,
-              "methylation catalog site must remain a compact 12-byte record");
+static_assert(sizeof(CatalogSite) == 8U,
+              "methylation catalog site must remain an 8-byte record");
 
 // Per-contig methylation-level catalog. Sites are stored once in ascending
 // reference order, so overlapping fragments reuse the same deterministic
@@ -501,12 +528,39 @@ std::uint64_t insertion_origin_id(
     std::uint32_t event_ordinal,
     std::uint8_t insertion_offset);
 
+// Fail-closed ASM preflight before protocol output. This validates exact VCF
+// linkage and streams both haplotypes only far enough to prove that each ASM
+// target is one shared reference-equivalent context. It does not sample
+// probabilities or materialize a methylation catalog.
+void validate_asm_targets(
+    const reference::Contig &contig,
+    const variant::ContigVariants &variants,
+    bool collect_non_cpg,
+    const std::vector<AsmRecord> &asm_records);
+
 struct DiploidSite {
     std::uint64_t origin_id = 0;
     model::MethylationContext context = model::MethylationContext::cg_c;
     model::MethylationSource methylation_source = model::MethylationSource::beta;
     model::MethylationAllele allele = model::MethylationAllele::shared;
+    bool reference_equivalent = false;
     float methylation_probability = 0.0F;
+
+    DiploidSite() = default;
+    DiploidSite(
+        std::uint64_t origin,
+        model::MethylationContext site_context,
+        model::MethylationSource source,
+        model::MethylationAllele site_allele,
+        float probability,
+        bool is_reference_equivalent = false)
+        : origin_id(origin),
+          context(site_context),
+          methylation_source(source),
+          allele(site_allele),
+          reference_equivalent(is_reference_equivalent),
+          methylation_probability(probability)
+    {}
 };
 
 static_assert(sizeof(DiploidSite) == 16U,
@@ -524,6 +578,13 @@ public:
         std::uint32_t reference_length,
         std::vector<DiploidSite> shared_sites,
         std::array<std::vector<DiploidSite>, 2> haplotype_sites);
+    // Reuse one already compiled pre-ASM catalog and apply only the small ASM
+    // probability layer. This is the save-and-simulate bridge: canonical
+    // records can be written without rebuilding haplotype contexts.
+    DiploidMethylationCatalog(
+        const DiploidMethylationCatalog &pre_asm_catalog,
+        const std::vector<variant::Variant> &variants,
+        const std::vector<AsmRecord> &asm_records);
     DiploidMethylationCatalog(
         const reference::Contig &contig,
         const variant::ContigVariants &variants,
@@ -534,8 +595,19 @@ public:
         const std::vector<AsmRecord> *asm_records = nullptr,
         bool pool_cgmap = false);
 
-    const std::vector<DiploidSite> &shared_sites() const noexcept;
+    // Decoded views are cold inspection/serialization boundaries. They are
+    // materialized lazily and cached only if a caller explicitly asks for
+    // them. Simulation queries use the packed arrays below and never pay for
+    // these 16-byte records.
+    const std::vector<DiploidSite> &shared_sites() const;
     const std::vector<DiploidSite> &haplotype_sites(
+        std::uint8_t zero_based_haplotype) const;
+
+    const std::vector<RuntimeSite> &reference_shared_sites() const noexcept;
+    const std::vector<RuntimeSite> &reference_haplotype_sites(
+        std::uint8_t zero_based_haplotype) const;
+    const std::vector<RuntimeSite> &insertion_shared_sites() const noexcept;
+    const std::vector<RuntimeSite> &insertion_haplotype_sites(
         std::uint8_t zero_based_haplotype) const;
 
     // Map catalog sites into one already validated haplotype projection. The
@@ -546,8 +618,13 @@ public:
 private:
     std::uint32_t contig_index_ = 0;
     std::uint32_t reference_length_ = 0;
-    std::vector<DiploidSite> shared_sites_;
-    std::array<std::vector<DiploidSite>, 2> haplotype_sites_;
+    std::vector<RuntimeSite> reference_shared_sites_;
+    std::array<std::vector<RuntimeSite>, 2> reference_haplotype_sites_;
+    std::vector<RuntimeSite> insertion_shared_sites_;
+    std::array<std::vector<RuntimeSite>, 2> insertion_haplotype_sites_;
+    mutable std::optional<std::vector<DiploidSite>> decoded_shared_sites_;
+    mutable std::array<std::optional<std::vector<DiploidSite>>, 2>
+        decoded_haplotype_sites_;
 };
 
 } // namespace htsim::methdb
@@ -557,8 +634,8 @@ private:
 namespace htsim::methdb {
 
 inline constexpr char methdb_magic[] = "methdb";
-inline constexpr std::uint8_t methdb_version = 1U;
-inline constexpr std::string_view methdb_bed_format = "methdb-bed";
+inline constexpr std::uint8_t methdb_version = 2U;
+inline constexpr std::string_view methdb_bed_format = "methdb-bed-v2";
 
 class SnapshotError : public std::runtime_error {
 public:
@@ -570,6 +647,7 @@ struct SnapshotContig {
     std::uint32_t reference_length = 0;
     crypto::Sha256Digest reference_sha256 = {};
     bool diploid = false;
+    std::vector<variant::Variant> variants;
     std::vector<CatalogSite> reference_sites;
     std::vector<DiploidSite> shared_sites;
     std::array<std::vector<DiploidSite>, 2> haplotype_sites;
@@ -590,7 +668,10 @@ public:
         const MethylationCatalog &catalog);
     void write_diploid(
         const reference::ContigMetadata &metadata,
-        const DiploidMethylationCatalog &catalog);
+        const MethylationCatalog &baseline,
+        const DiploidMethylationCatalog &pre_asm_catalog,
+        const std::vector<variant::Variant> &variants,
+        const std::vector<AsmRecord> &asm_records = {});
     void finish();
 
 private:
@@ -608,20 +689,33 @@ public:
         const crypto::Sha256Digest &expected_binding,
         const std::vector<reference::ContigMetadata> &reference_catalog);
 
-    const SnapshotContig &contig(std::uint32_t contig_index) const;
+    // Decode, validate, and compile only the requested contig. The returned
+    // value owns its data and no other contig is materialized.
+    SnapshotContig contig(std::uint32_t contig_index) const;
+    // Planning can load only the independently framed event sub-section,
+    // without inflating baseline or methylation overlays.
+    std::vector<variant::Variant> variants(
+        std::uint32_t contig_index) const;
+    bool contig_is_diploid(std::uint32_t contig_index) const;
+    bool has_diploid_contigs() const noexcept;
     const crypto::Sha256Digest &file_sha256() const noexcept {
         return file_sha256_;
     }
+    const crypto::Sha256Digest &content_sha256() const noexcept {
+        return content_sha256_;
+    }
 
 private:
+    struct Impl;
+    std::shared_ptr<const Impl> impl_;
     crypto::Sha256Digest file_sha256_ = {};
-    std::vector<SnapshotContig> contigs_;
+    crypto::Sha256Digest content_sha256_ = {};
 };
 
 // Decode every stored row without requiring the original run configuration.
 // Reference-backed origins receive half-open coordinates. Insertion origins
-// retain their event ordinal and insertion offset because MethDB alone does
-// not contain a reference coordinate for those bases.
+// retain their event ordinal and insertion offset because an inserted base has
+// no one-base reference interval; #variant rows expose the event anchor.
 void export_snapshot_bed(const std::string &path, std::ostream &sink);
 
 } // namespace htsim::methdb

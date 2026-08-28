@@ -419,6 +419,26 @@ class NormalizedConfigTests(unittest.TestCase):
                 ):
                     normalize_run_config(document, self.base_directory)
 
+    def test_methdb_is_the_only_variant_authority(self) -> None:
+        methdb = base_config()
+        methdb["inputs"]["methdb"] = "inputs/profile.methdb"
+        methdb["mutation"]["rate"] = 0
+        normalized = normalize_run_config(
+            methdb, self.base_directory
+        ).normalized
+        self.assertIn("methdb", normalized["inputs"])
+
+        external_vcf = copy.deepcopy(methdb)
+        external_vcf["inputs"]["vcf"] = "inputs/variants.vcf"
+        de_novo = copy.deepcopy(methdb)
+        de_novo["mutation"]["rate"] = 0.01
+        for document in (external_vcf, de_novo):
+            with self.subTest(document=document):
+                with self.assertRaisesRegex(
+                    ConfigValidationError, "embedded variants|VCF or overlays"
+                ):
+                    normalize_run_config(document, self.base_directory)
+
     def test_invalid_model_sha_and_conflicting_declarations_are_rejected(self) -> None:
         invalid_sha = base_config()
         invalid_sha["coverage"] = {

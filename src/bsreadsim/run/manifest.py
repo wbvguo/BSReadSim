@@ -40,7 +40,7 @@ from .invocation import FullCommandError, build_full_run_argv
 MANIFEST_VERSION = 2
 COORDINATE_CONVENTION = "0-based-half-open"
 METHDB_MAGIC = b"methdb"
-METHDB_VERSION = 1
+METHDB_VERSION = 2
 
 
 class ManifestError(ValueError):

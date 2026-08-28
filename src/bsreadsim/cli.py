@@ -153,7 +153,10 @@ def _add_methylation_input_arguments(
         methylation_input.add_argument(
             "--methdb",
             type=Path,
-            help="prepared methylation profile in MethDB format",
+            help=(
+                "prepared methylation profile and embedded variants in "
+                "MethDB v2 format"
+            ),
         )
     asm_input = biology.add_mutually_exclusive_group()
     asm_input.add_argument(
@@ -341,8 +344,8 @@ def _add_direct_run_arguments(
             "--save-methdb",
             action="store_true",
             help=(
-                "save the prepared methylation profile as a MethDB truth "
-                "artifact"
+                "save the run's prepared methylation/variant world as a "
+                "MethDB truth artifact"
             ),
         )
     output.add_argument(
@@ -852,9 +855,22 @@ def build_run_document(
         raise CommandLineError(
             "--methdb cannot be combined with ASM or --cgmap-pool"
         )
+    if methdb is not None and arguments.vcf is not None:
+        raise CommandLineError(
+            "--methdb embeds variants and cannot be combined with --vcf"
+        )
+    if (
+        methdb is not None
+        and arguments.mutation_rate is not None
+        and arguments.mutation_rate != 0
+    ):
+        raise CommandLineError(
+            "--methdb embeds variants and forbids de novo mutations"
+        )
     default_mutation_rate = (
         0.0
-        if getattr(arguments, "rrbs_candidates", None) is not None
+        if methdb is not None
+        or getattr(arguments, "rrbs_candidates", None) is not None
         or getattr(arguments, "gc_profile", None) is not None
         else 0.001
     )

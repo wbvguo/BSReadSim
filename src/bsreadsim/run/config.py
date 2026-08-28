@@ -287,10 +287,14 @@ def _validate_cross_field_rules(config: Mapping[str, Any]) -> None:
                 "inert value true"
             )
     if "methdb" in inputs:
-        conflicts = ("cgmap", "bed_methyl", "asm", "asm_bed")
+        conflicts = ("vcf", "cgmap", "bed_methyl", "asm", "asm_bed")
         if any(name in inputs for name in conflicts):
             raise ConfigValidationError(
-                "$.inputs.methdb: cannot be combined with methylation overlays"
+                "$.inputs.methdb: cannot be combined with VCF or overlays"
+            )
+        if config["mutation"]["rate"] != 0:
+            raise ConfigValidationError(
+                "$.inputs.methdb: embedded variants require mutation.rate=0"
             )
         if config["methylation"]["cgmap_pool"]:
             raise ConfigValidationError(

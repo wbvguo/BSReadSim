@@ -55,6 +55,9 @@ struct CoreConfig {
     std::optional<std::string> cgmap_path;
     std::optional<std::string> bed_methyl_path;
     std::optional<std::string> methdb_path;
+    // Internal sidecar destination used by the Python transaction when a run
+    // requests --save-methdb. It is not scientific configuration.
+    std::optional<std::string> methdb_output_path;
     std::optional<std::string> asm_path;
     std::optional<std::string> asm_bed_path;
 

@@ -1,4 +1,4 @@
-"""Exercise fixed MethDB export, reload, binding, and model fallback."""
+"""Exercise MethDB v2 sidecar generation, reload, and model fallback."""
 
 from __future__ import annotations
 
@@ -73,6 +73,12 @@ def main() -> int:
         (root / "reference.fa").write_bytes(
             b">chr1\n" + b"ACGT" * 300 + b"\n"
         )
+        (root / "variants.vcf").write_text(
+            "##fileformat=VCFv4.3\n"
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tsample\n"
+            "chr1\t25\tlinked\tA\tT\t.\tPASS\t.\tGT\t1|0\n",
+            encoding="ascii",
+        )
         common = (
             "-r", "reference.fa",
             "-n", "8",
@@ -100,7 +106,7 @@ def main() -> int:
         if not snapshot.is_file() or snapshot.stat().st_size == 0:
             raise SystemExit("MethDB export did not publish a snapshot")
         snapshot_bytes = snapshot.read_bytes()
-        if not snapshot_bytes.startswith(b"methdb\x01"):
+        if not snapshot_bytes.startswith(b"methdb\x02"):
             raise SystemExit("MethDB snapshot omitted its format version")
         snapshot_sha256 = hashlib.sha256(snapshot_bytes).hexdigest()
         if {item["role"] for item in first["outputs"]} != {"bam", "truth.methdb"}:
@@ -124,7 +130,7 @@ def main() -> int:
             )
         bed_bytes = gzip.decompress(compressed_bed.read_bytes())
         bed_text = bed_bytes.decode("utf-8")
-        if not bed_text.startswith("#format\tmethdb-bed\n"):
+        if not bed_text.startswith("#format\tmethdb-bed-v2\n"):
             raise SystemExit("MethDB BED export lost its format marker")
         if "#columns\tchrom\tchromStart\tchromEnd\tname\tscore\tstrand\t" not in bed_text:
             raise SystemExit("MethDB BED export lost its column contract")
@@ -186,15 +192,15 @@ def main() -> int:
         if (
             len(second_methdb) != 1
             or second_methdb[0]["sha256"] != snapshot_sha256
-            or second_methdb[0].get("format_version") != 1
+            or second_methdb[0].get("format_version") != 2
         ):
             raise SystemExit("loaded run did not authenticate the fixed MethDB")
 
-        rejected = _run(
+        rebound = _run(
             root,
             core,
             "-r", "reference.fa",
-            "-o", "rejected",
+            "-o", "rebound",
             "-n", "1",
             "--seed", "999",
             "--seed-meth", "24",
@@ -205,11 +211,72 @@ def main() -> int:
             "--format", "bam",
             "--methdb", str(snapshot),
         )
-        if rejected.returncode == 0 or "profile binding is incompatible" not in rejected.stderr:
-            raise SystemExit("MethDB accepted mismatched profile-defining seeds")
-        rejected_root = root / "rejected"
-        if rejected_root.exists() and any(rejected_root.iterdir()):
-            raise SystemExit("rejected MethDB run published output files")
+        rebound_manifest = _manifest(rebound)
+        if rebound_manifest["details"]["randomness"]["methylation_seed"] != "24":
+            raise SystemExit("MethDB v2 incorrectly froze an inert build seed")
+
+        variant_common = (
+            "-r", "reference.fa",
+            "-n", "8",
+            "--seed-meth", "23",
+            "--read-length", "50",
+            "--insert-mean", "150",
+            "--insert-sd", "0",
+            "--max-ambiguous-fraction", "0",
+            "--fragment-realization",
+            "--format", "bam",
+        )
+        variant_exported = _run(
+            root,
+            core,
+            *variant_common,
+            "-o", "variant-exported",
+            "--seed", "17",
+            "--vcf", "variants.vcf",
+            "--save-methdb",
+        )
+        _manifest(variant_exported)
+        variant_snapshot = (
+            root / "variant-exported" / "truth" / "sim.methdb"
+        )
+        variant_bed = root / "variant.methdb.bed"
+        variant_decoded = _export(
+            root,
+            core,
+            variant_snapshot,
+            variant_bed,
+            "--no-compression",
+        )
+        if variant_decoded.returncode != 0 or (
+            "#variant\tchr1\t0\t24\t25\tSNV\tA\tT\t1\tlinked\tvcf\n"
+            not in variant_bed.read_text(encoding="utf-8")
+        ):
+            raise SystemExit("MethDB v2 did not preserve embedded VCF authority")
+
+        variant_loaded = _run(
+            root,
+            core,
+            *variant_common,
+            "-o", "variant-loaded",
+            "--seed", "18",
+            "--methdb", str(variant_snapshot),
+        )
+        _manifest(variant_loaded)
+
+        mixed_authority = _run(
+            root,
+            core,
+            *variant_common,
+            "-o", "mixed-authority",
+            "--seed", "18",
+            "--methdb", str(variant_snapshot),
+            "--vcf", "variants.vcf",
+        )
+        if (
+            mixed_authority.returncode == 0
+            or "embeds variants" not in mixed_authority.stderr
+        ):
+            raise SystemExit("MethDB v2 accepted two variant authorities")
     return 0
 
 

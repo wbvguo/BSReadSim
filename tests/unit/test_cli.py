@@ -287,6 +287,31 @@ class CommandLineTests(unittest.TestCase):
                     self.assertEqual(document["fragments"]["insert_min"], 400)
                     self.assertEqual(document["fragments"]["insert_max"], 400)
 
+    def test_run_methdb_owns_variants_and_defaults_mutation_to_zero(self) -> None:
+        arguments = build_parser().parse_args(
+            [
+                "run", "wgbs", "-r", "reference.fa", "-o", "output",
+                "-n", "10", "--methdb", "profile.methdb",
+            ]
+        )
+        document = build_run_document(arguments, REPOSITORY_ROOT)
+        self.assertEqual(document["mutation"]["rate"], 0.0)
+
+        for conflicting in (
+            ("--vcf", "variants.vcf"),
+            ("--mutation-rate", "0.01"),
+        ):
+            with self.subTest(conflicting=conflicting):
+                parsed = build_parser().parse_args(
+                    [
+                        "run", "wgbs", "-r", "reference.fa", "-o", "output",
+                        "-n", "10", "--methdb", "profile.methdb",
+                        *conflicting,
+                    ]
+                )
+                with self.assertRaisesRegex(CommandLineError, "embeds variants"):
+                    build_run_document(parsed, REPOSITORY_ROOT)
+
     def test_run_defaults_and_truth_flags_project_cleanly(self) -> None:
         arguments = build_parser().parse_args(
             [
