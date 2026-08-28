@@ -637,55 +637,52 @@ append_u16_summary_values(SamBuffer *buffer, const unsigned char *summary)
 
 
 static int
-append_strand_conversion_tag(SamBuffer *buffer, const unsigned char *summary)
+append_bisulfite_tags(SamBuffer *buffer, const MateAlignment *alignment)
 {
-    const uint16_t flags = load_u16_le_bytes(summary);
+    const uint16_t flags = load_u16_le_bytes(alignment->read_summary);
     const unsigned int strand = (unsigned int)((flags >> 2) & UINT16_C(0x3));
     const unsigned int conversion =
         (unsigned int)((flags >> 4) & UINT16_C(0x7));
-    const char *strand_name;
-    const char *conversion_name;
+    unsigned int first_conversion;
+    const char *genome_conversion;
+    const char *read_conversion;
+    const char *library_strand;
 
-    switch (strand) {
-    case 0U:
-        strand_name = "N";
-        break;
-    case 1U:
-        strand_name = "W";
-        break;
-    case 2U:
-        strand_name = "C";
-        break;
-    default:
-        PyErr_SetString(PyExc_ValueError, "SAM summary has invalid strand bits");
-        return -1;
+    if (strand == 0U && conversion == 2U) {
+        return 0;
     }
-    switch (conversion) {
-    case 0U:
-        conversion_name = "C2T";
-        break;
-    case 1U:
-        conversion_name = "G2A";
-        break;
-    case 2U:
-        conversion_name = "NONE";
-        break;
-    default:
+    if ((strand != 1U && strand != 2U) || conversion > 1U) {
         PyErr_SetString(
-            PyExc_ValueError, "SAM summary has invalid conversion-mode bits"
+            PyExc_ValueError,
+            "SAM summary has invalid bisulfite strand/conversion bits"
         );
         return -1;
     }
-    if ((strand == 0U) != (conversion == 2U)) {
+    if (alignment->mate_index == 0) {
+        first_conversion = conversion;
+    } else if (alignment->mate_index == 1) {
+        first_conversion = conversion ^ 1U;
+    } else {
         PyErr_SetString(
-            PyExc_ValueError, "SAM summary strand and conversion mode disagree"
+            PyExc_ValueError, "SAM mate index cannot define library strand"
         );
         return -1;
     }
-    return sam_buffer_append_literal(buffer, "\tzs:Z:") < 0
-        || sam_buffer_append_literal(buffer, strand_name) < 0
-        || sam_buffer_append_char(buffer, '_') < 0
-        || sam_buffer_append_literal(buffer, conversion_name) < 0
+
+    read_conversion = conversion == 0U ? "CT" : "GA";
+    if (strand == 1U) {
+        genome_conversion = "CT";
+        library_strand = first_conversion == 0U ? "OT" : "CTOT";
+    } else {
+        genome_conversion = "GA";
+        library_strand = first_conversion == 0U ? "OB" : "CTOB";
+    }
+    return sam_buffer_append_literal(buffer, "\tXG:Z:") < 0
+        || sam_buffer_append_literal(buffer, genome_conversion) < 0
+        || sam_buffer_append_literal(buffer, "\tXR:Z:") < 0
+        || sam_buffer_append_literal(buffer, read_conversion) < 0
+        || sam_buffer_append_literal(buffer, "\tYS:Z:") < 0
+        || sam_buffer_append_literal(buffer, library_strand) < 0
         ? -1
         : 0;
 }
@@ -699,7 +696,7 @@ append_columnar_annotation_tags(SamBuffer *buffer, const MateAlignment *alignmen
         PyErr_SetString(PyExc_ValueError, "SAM record has no ZT/ZR tags");
         return -1;
     }
-    if (append_strand_conversion_tag(buffer, alignment->read_summary) < 0) {
+    if (append_bisulfite_tags(buffer, alignment) < 0) {
         return -1;
     }
     if (sam_buffer_append_literal(buffer, "\tzt:Z:") < 0) {

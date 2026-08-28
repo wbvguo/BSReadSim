@@ -20,6 +20,9 @@ format comments:
 ```text
 @CO    BSREADSIM_BAM_CONTRACT=bsreadsim-bam
 @CO    BSREADSIM_ZT=state64;ALPHABET=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_
+@CO    BSREADSIM_XG=bismark-genome-conversion;ENABLED=0|1;VALUES=CT|GA
+@CO    BSREADSIM_XR=bismark-read-conversion;ENABLED=0|1;VALUES=CT|GA
+@CO    BSREADSIM_YS=bismark-strand-id;ENABLED=0|1;VALUES=OT|OB|CTOT|CTOB
 @CO    BSREADSIM_ZR=u16x12;REQUIRED=1
 @CO    BSREADSIM_ZF=u16x12;ENABLED=0|1
 @CO    BSREADSIM_ZX=packed-b64url;ENABLED=0|1;BIT_ORDER=LSB0
@@ -40,6 +43,31 @@ indel-aware, query-complete CIGAR and reference-forward SEQ/QUAL.
 - `AS:i` equals query length, the maximum simulation-origin score.
 - `RG:Z` links the record to the run.
 - Paired records use standard flags, RNEXT/PNEXT/TLEN, `MQ:i`, and `MC:Z`.
+
+FASTQ records and QNAMEs deliberately do not carry strand-origin truth. The
+readable truth annotation exists only in annotated BAM.
+
+## Bisulfite `XG`, `XR`, and `YS` tags
+
+WGBS, RRBS, and TBS records use the Bismark conversion conventions:
+
+- `XG:Z:CT|GA` is the genome conversion and is identical on both mates.
+- `XR:Z:CT|GA` is the current read conversion and normally differs between
+  paired mates.
+- `YS:Z:OT|OB|CTOT|CTOB` is the complete library-strand identity and is
+  identical on both mates. Bismark calls this its strand-ID tag.
+
+The paired-end mapping is:
+
+| `YS` library strand | `XG` | R1 `XR` | R2 `XR` | Enabled by |
+| --- | --- | --- | --- | --- |
+| `OT` | `CT` | `CT` | `GA` | directional and undirectional |
+| `OB` | `GA` | `CT` | `GA` | directional and undirectional |
+| `CTOT` | `CT` | `GA` | `CT` | undirectional only |
+| `CTOB` | `GA` | `GA` | `CT` | undirectional only |
+
+The three tags are always present on bisulfite BAM records. WGS, WES, and TS
+records omit them rather than inventing a non-bisulfite conversion value.
 
 ## Required `zt:Z` per-read state
 
@@ -77,9 +105,11 @@ to both mate records.
 | 10 | `n_sequencing_errors` |
 | 11 | `n_false_methylation_errors` |
 
-Summary flag bits are: haplotype 0-1, capture strand 2-3, conversion mode
-4-6, ASM 7, SNV 8, insertion 9, deletion 10, any methylation conversion 11,
-saturation 13; all other bits are zero.
+Summary flag bits are: haplotype 0-1, resolved informative strand 2-3
+(0 none, 1 Watson, 2 Crick), conversion mode 4-6, ASM 7, SNV 8, insertion 9,
+deletion 10, any methylation conversion 11, saturation 13; all other bits are
+zero. An explicit simulator capture strand is retained; otherwise the
+informative strand is resolved from the fragment chemistry.
 Conversion modes are 0 for C-to-T, 1 for G-to-A, and 2 for no bisulfite
 chemistry. WGS, WES, and TS records use mode 2 and zero methylation/conversion
 counts.

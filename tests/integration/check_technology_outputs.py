@@ -115,7 +115,12 @@ def _validate_standard(
         raise SystemExit("{} manifest enabled methylation".format(name))
     if effective["sequencing"]["conversion_rate"] != 0:
         raise SystemExit("{} retained bisulfite chemistry".format(name))
+    tag_policy = manifest["details"]["alignment"]["tags"]
+    if any(tag_policy[tag]["required"] for tag in ("XG", "XR", "YS")):
+        raise SystemExit("{} required bisulfite-only BAM tags".format(name))
     for record in records:
+        if any(tag in record["aux"] for tag in ("XG", "XR", "YS")):
+            raise SystemExit("{} emitted bisulfite-only BAM tags".format(name))
         summary = record["aux"]["zf"][1]
         if ((summary[0] >> 4) & 0x7) != 2 or any(summary[1:9]):
             raise SystemExit("{} emitted bisulfite annotations".format(name))

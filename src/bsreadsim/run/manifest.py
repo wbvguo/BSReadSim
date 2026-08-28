@@ -16,9 +16,11 @@ from .. import __version__
 from ..output.bam import (
     ANNOTATION_FRAGMENT_REALIZATION_SCHEMA,
     ANNOTATION_FRAGMENT_SUMMARY_SCHEMA,
+    ANNOTATION_GENOME_CONVERSION_SCHEMA,
+    ANNOTATION_LIBRARY_STRAND_SCHEMA,
+    ANNOTATION_READ_CONVERSION_SCHEMA,
     ANNOTATION_READ_SUMMARY_SCHEMA,
     ANNOTATION_STATE_SCHEMA,
-    ANNOTATION_STRAND_SCHEMA,
     BAM_CONTRACT,
     BAM_MAPQ,
 )
@@ -193,6 +195,11 @@ def build_complete_manifest(
     if normalized["output"]["format"] == "bam":
         fragment_summary = bool(normalized["output"]["fragment_summary"])
         fragment_realization = bool(normalized["output"]["fragment_realization"])
+        bisulfite_tags = header.technology in (
+            Technology.WGBS,
+            Technology.RRBS,
+            Technology.TBS,
+        )
         details["alignment"] = {
             "coordinate_convention": COORDINATE_CONVENTION,
             "format": "BAM",
@@ -203,10 +210,23 @@ def build_complete_manifest(
             "fastq_sidecars": False,
             "fastq_recovery": "samtools fastq",
             "tags": {
-                "zs": {
-                    "required": True,
-                    "schema": ANNOTATION_STRAND_SCHEMA,
-                    "scope": "informative-fragment-strand-and-read-conversion",
+                "XG": {
+                    "required": bisulfite_tags,
+                    "schema": ANNOTATION_GENOME_CONVERSION_SCHEMA,
+                    "scope": "bisulfite-genome-conversion",
+                    "values": ["CT", "GA"],
+                },
+                "XR": {
+                    "required": bisulfite_tags,
+                    "schema": ANNOTATION_READ_CONVERSION_SCHEMA,
+                    "scope": "bisulfite-read-conversion",
+                    "values": ["CT", "GA"],
+                },
+                "YS": {
+                    "required": bisulfite_tags,
+                    "schema": ANNOTATION_LIBRARY_STRAND_SCHEMA,
+                    "scope": "bisulfite-library-strand",
+                    "values": ["OT", "OB", "CTOT", "CTOB"],
                 },
                 "zx": {
                     "required": fragment_realization,

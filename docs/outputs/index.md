@@ -250,7 +250,7 @@ A representative record rendered as SAM looks like this (fields are
 tab-separated):
 
 ```text
-chrMini:11-16:7	0	chrMini	11	60	2M1I1M2D1M	*	0	0	ACGTN	ABCDE	RG:Z:00000000-0000-4000-8000-000000000002	AS:i:5	zt:Z:AAAAA	zr:B:S,1,0,0,0,0,0,0,0,0,0,0,0
+chrMini:11-16:7	0	chrMini	11	60	2M1I1M2D1M	*	0	0	ACGTN	ABCDE	RG:Z:00000000-0000-4000-8000-000000000002	AS:i:5	XG:Z:CT	XR:Z:CT	YS:Z:OT	zt:Z:AAAAA	zr:B:S,5,0,0,0,0,0,0,0,0,0,0,0
 ```
 
 The standard SAM columns retain the simulated origin, CIGAR, sequence, and
@@ -258,6 +258,9 @@ quality. BSReadSim adds:
 
 | Tag | Present when | Meaning |
 | --- | --- | --- |
+| `XG:Z` | Bisulfite BAM records | Bismark-compatible genome conversion: `CT` or `GA` |
+| `XR:Z` | Bisulfite BAM records | Bismark-compatible conversion of the current read: `CT` or `GA` |
+| `YS:Z` | Bisulfite BAM records | Complete library strand: `OT`, `OB`, `CTOT`, or `CTOB` |
 | `zt:Z` | Every BAM record | One base-state character per BAM `SEQ` base |
 | `zr:B:S` | Every BAM record | Twelve-value summary for that read |
 | `zf:B:S` | `--format bam --fragment-summary` | Twelve-value summary for the complete physical fragment, copied to both mates |
@@ -273,6 +276,7 @@ samtools index runs/example-bam/sim.sorted.bam
 
 Reads and qualities remain recoverable with `samtools fastq`. See
 [annotated BAM](../reference/formats/bam.md) for every tag bit and field.
+FASTQ and QNAME do not duplicate the `XG`, `XR`, or `YS` truth annotations.
 
 ## Example C: saved methylation profile
 

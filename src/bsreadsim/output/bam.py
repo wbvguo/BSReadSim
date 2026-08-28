@@ -30,7 +30,7 @@ from ..process.batch import (
     format_fragment_identifier,
 )
 
-from ..htsim.protocol import Header
+from ..htsim.protocol import Header, Technology
 from .errors import OutputError
 
 from .._cext import format_sam_batch as _cext_format_sam_batch
@@ -43,7 +43,9 @@ ANNOTATION_STATE_ALPHABET = (
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 )
 ANNOTATION_STATE_SCHEMA = "state64"
-ANNOTATION_STRAND_SCHEMA = "informative-strand-conversion-v1"
+ANNOTATION_GENOME_CONVERSION_SCHEMA = "bismark-genome-conversion"
+ANNOTATION_READ_CONVERSION_SCHEMA = "bismark-read-conversion"
+ANNOTATION_LIBRARY_STRAND_SCHEMA = "bismark-strand-id"
 ANNOTATION_READ_SUMMARY_SCHEMA = "u16x12"
 ANNOTATION_FRAGMENT_SUMMARY_SCHEMA = "u16x12"
 ANNOTATION_FRAGMENT_REALIZATION_SCHEMA = "packed-b64url"
@@ -107,6 +109,11 @@ def build_sam_header(
         raise BamError("BAM fragment_realization must be a boolean")
     if fragment_realization and not fragment_summary:
         raise BamError("BAM fragment_realization requires fragment_summary")
+    bisulfite_tags = header.technology in (
+        Technology.WGBS,
+        Technology.RRBS,
+        Technology.TBS,
+    )
     lines = ["@HD\tVN:1.6\tSO:unsorted"]
     lines.extend(
         "@SQ\tSN:{}\tLN:{}".format(contig.name, contig.length)
@@ -132,9 +139,17 @@ def build_sam_header(
             "@CO\tBSREADSIM_ZT={};ALPHABET={}".format(
                 ANNOTATION_STATE_SCHEMA, ANNOTATION_STATE_ALPHABET
             ),
-            "@CO\tBSREADSIM_ZS={};REQUIRED=1;VALUES="
-            "W_C2T|W_G2A|C_C2T|C_G2A|N_NONE".format(
-                ANNOTATION_STRAND_SCHEMA
+            "@CO\tBSREADSIM_XG={};ENABLED={};VALUES=CT|GA".format(
+                ANNOTATION_GENOME_CONVERSION_SCHEMA,
+                1 if bisulfite_tags else 0,
+            ),
+            "@CO\tBSREADSIM_XR={};ENABLED={};VALUES=CT|GA".format(
+                ANNOTATION_READ_CONVERSION_SCHEMA,
+                1 if bisulfite_tags else 0,
+            ),
+            "@CO\tBSREADSIM_YS={};ENABLED={};VALUES=OT|OB|CTOT|CTOB".format(
+                ANNOTATION_LIBRARY_STRAND_SCHEMA,
+                1 if bisulfite_tags else 0,
             ),
             "@CO\tBSREADSIM_ZR={};REQUIRED=1".format(
                 ANNOTATION_READ_SUMMARY_SCHEMA
@@ -395,26 +410,47 @@ def _informative_strand(
     )
 
 
-def _strand_conversion_tag(
+def _bisulfite_tags(
     fragment: ProcessedFragment,
     mate: ProcessedMate,
-) -> str:
+) -> tuple[str, ...]:
     strand = _informative_strand(fragment)
-    strand_name = {
-        CaptureStrand.UNKNOWN: "N",
-        CaptureStrand.FORWARD: "W",
-        CaptureStrand.REVERSE: "C",
-    }[strand]
-    conversion_name = {
-        ConversionMode.C2T: "C2T",
-        ConversionMode.G2A: "G2A",
-        ConversionMode.NONE: "NONE",
-    }[mate.conversion_mode]
-    if (strand is CaptureStrand.UNKNOWN) != (
-        mate.conversion_mode is ConversionMode.NONE
-    ):
+    if strand is CaptureStrand.UNKNOWN:
+        if mate.conversion_mode is not ConversionMode.NONE:
+            raise BamError("BAM informative strand and mate conversion disagree")
+        return ()
+    if mate.conversion_mode is ConversionMode.NONE:
         raise BamError("BAM informative strand and mate conversion disagree")
-    return "zs:Z:{}_{}".format(strand_name, conversion_name)
+    try:
+        first = next(value for value in fragment.mates if value.mate_index == 0)
+    except StopIteration as error:
+        raise BamError("BAM fragment has no read 1 orientation") from error
+    if first.conversion_mode is ConversionMode.NONE:
+        raise BamError("BAM read 1 has no bisulfite conversion")
+
+    genome_conversion = {
+        CaptureStrand.FORWARD: "CT",
+        CaptureStrand.REVERSE: "GA",
+    }[strand]
+    read_conversion = {
+        ConversionMode.C2T: "CT",
+        ConversionMode.G2A: "GA",
+    }[mate.conversion_mode]
+    first_conversion = {
+        ConversionMode.C2T: "CT",
+        ConversionMode.G2A: "GA",
+    }[first.conversion_mode]
+    library_strand = {
+        ("CT", "CT"): "OT",
+        ("GA", "CT"): "OB",
+        ("CT", "GA"): "CTOT",
+        ("GA", "GA"): "CTOB",
+    }[(genome_conversion, first_conversion)]
+    return (
+        "XG:Z:{}".format(genome_conversion),
+        "XR:Z:{}".format(read_conversion),
+        "YS:Z:{}".format(library_strand),
+    )
 
 
 def _site_state_suffixes(
@@ -447,7 +483,7 @@ def _site_state_suffixes(
         if mate.reverse_complement:
             state_text = state_text[::-1]
         fields = [
-            _strand_conversion_tag(fragment, mate),
+            *_bisulfite_tags(fragment, mate),
             "zt:Z:{}".format(state_text),
             _summary_tag("zr", _finalize_summary(raw_summary)),
         ]
@@ -1045,8 +1081,10 @@ __all__ = [
     "ALIGNMENT_SCORE_SCHEME",
     "ANNOTATION_FRAGMENT_REALIZATION_SCHEMA",
     "ANNOTATION_FRAGMENT_SUMMARY_SCHEMA",
+    "ANNOTATION_GENOME_CONVERSION_SCHEMA",
+    "ANNOTATION_LIBRARY_STRAND_SCHEMA",
+    "ANNOTATION_READ_CONVERSION_SCHEMA",
     "ANNOTATION_READ_SUMMARY_SCHEMA",
-    "ANNOTATION_STRAND_SCHEMA",
     "ANNOTATION_STATE_SCHEMA",
     "BAM_CONTRACT",
     "BAM_MAPQ",

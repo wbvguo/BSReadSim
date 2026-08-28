@@ -36,7 +36,9 @@ samtools sort -o runs/example-bam/sim.sorted.bam runs/example-bam/sim.bam
 samtools index runs/example-bam/sim.sorted.bam
 ```
 
-Every record contains `zt:Z` base-level state and `zr:B:S` read summaries.
+Every bisulfite record contains Bismark-compatible `XG:Z` genome conversion,
+`XR:Z` read conversion, and `YS:Z` library-strand truth. Every record also
+contains `zt:Z` base-level state and `zr:B:S` read summaries.
 `--fragment-summary` adds `zf:B:S`; `--fragment-realization` adds `zx:Z` and
 implies fragment summaries. See [Annotated BAM](../reference/formats/bam.md) for the bit
 and field definitions.
@@ -54,3 +56,5 @@ samtools fastq \
 
 Use the original manifest, rather than regenerated FASTQ metadata, for the
 authoritative configuration and artifact checksums.
+The recovered FASTQ and its QNAME intentionally do not contain `XG`, `XR`, or
+`YS`; retain the annotated BAM when per-read source-strand truth is required.

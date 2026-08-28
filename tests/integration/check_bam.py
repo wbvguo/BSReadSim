@@ -364,12 +364,31 @@ def main() -> int:
             raise SystemExit("BAM manifest omitted the requested zf policy")
         if details["alignment"]["tags"]["zx"]["required"] is not True:
             raise SystemExit("BAM manifest omitted the requested zx policy")
-        if details["alignment"]["tags"]["zs"] != {
-            "required": True,
-            "schema": "informative-strand-conversion-v1",
-            "scope": "informative-fragment-strand-and-read-conversion",
-        }:
-            raise SystemExit("BAM manifest omitted the required zs policy")
+        expected_bisulfite_tags = {
+            "XG": {
+                "required": True,
+                "schema": "bismark-genome-conversion",
+                "scope": "bisulfite-genome-conversion",
+                "values": ["CT", "GA"],
+            },
+            "XR": {
+                "required": True,
+                "schema": "bismark-read-conversion",
+                "scope": "bisulfite-read-conversion",
+                "values": ["CT", "GA"],
+            },
+            "YS": {
+                "required": True,
+                "schema": "bismark-strand-id",
+                "scope": "bisulfite-library-strand",
+                "values": ["OT", "OB", "CTOT", "CTOB"],
+            },
+        }
+        if {
+            name: details["alignment"]["tags"].get(name)
+            for name in expected_bisulfite_tags
+        } != expected_bisulfite_tags:
+            raise SystemExit("BAM manifest omitted the Bismark tag policy")
 
         header, references, records, _ = _parse_bam(bam_path)
         if not header.startswith("@HD\tVN:1.6\tSO:unsorted\n"):
@@ -378,12 +397,14 @@ def main() -> int:
             raise SystemExit("BAM header omitted provenance records")
         if "BSREADSIM_ZX=packed-b64url;ENABLED=1;BIT_ORDER=LSB0" not in header:
             raise SystemExit("BAM header omitted the zx schema")
-        if (
-            "BSREADSIM_ZS=informative-strand-conversion-v1;REQUIRED=1;"
-            "VALUES=W_C2T|W_G2A|C_C2T|C_G2A|N_NONE"
-            not in header
+        for declaration in (
+            "BSREADSIM_XG=bismark-genome-conversion;ENABLED=1;VALUES=CT|GA",
+            "BSREADSIM_XR=bismark-read-conversion;ENABLED=1;VALUES=CT|GA",
+            "BSREADSIM_YS=bismark-strand-id;ENABLED=1;"
+            "VALUES=OT|OB|CTOT|CTOB",
         ):
-            raise SystemExit("BAM header omitted the zs schema")
+            if declaration not in header:
+                raise SystemExit("BAM header omitted a Bismark tag schema")
         if references != (("chr1", 9),):
             raise SystemExit("BAM reference dictionary is wrong")
         if len(records) != 24:
@@ -428,26 +449,26 @@ def main() -> int:
                 raise SystemExit("BAM MC tags are inconsistent")
             if first["aux"].get("zx") != second["aux"].get("zx"):
                 raise SystemExit("BAM paired records do not share fragment zx")
-            strand_conversion_pair = (
-                first["aux"].get("zs"),
-                second["aux"].get("zs"),
+            conversion_tags = (
+                tuple(first["aux"].get(name) for name in ("XG", "XR", "YS")),
+                tuple(second["aux"].get(name) for name in ("XG", "XR", "YS")),
             )
-            if strand_conversion_pair == (
-                ("Z", "W_C2T"),
-                ("Z", "W_G2A"),
+            if conversion_tags == (
+                (("Z", "CT"), ("Z", "CT"), ("Z", "OT")),
+                (("Z", "CT"), ("Z", "GA"), ("Z", "OT")),
             ):
                 observed_informative_strands.add("W")
                 expected_flags = (99, 147)
-            elif strand_conversion_pair == (
-                ("Z", "C_C2T"),
-                ("Z", "C_G2A"),
+            elif conversion_tags == (
+                (("Z", "GA"), ("Z", "CT"), ("Z", "OB")),
+                (("Z", "GA"), ("Z", "GA"), ("Z", "OB")),
             ):
                 observed_informative_strands.add("C")
                 expected_flags = (83, 163)
             else:
                 raise SystemExit(
-                    "BAM paired records have incorrect zs tags: {!r}".format(
-                        strand_conversion_pair
+                    "BAM paired records have incorrect XG/XR/YS tags: {!r}".format(
+                        conversion_tags
                     )
                 )
             if (first["flag"], second["flag"]) != expected_flags:
@@ -476,15 +497,17 @@ def main() -> int:
                 raise SystemExit("BAM AS is not the maximum origin score")
             if aux.get("MQ")[1] != 60:
                 raise SystemExit("BAM MQ tag disagrees with MAPQ")
-            zs = aux.get("zs")
-            if zs is None or zs[0] != "Z" or zs[1] not in {
-                "W_C2T",
-                "W_G2A",
-                "C_C2T",
-                "C_G2A",
-                "N_NONE",
+            xg = aux.get("XG")
+            xr = aux.get("XR")
+            ys = aux.get("YS")
+            if xg is None or xg[0] != "Z" or xg[1] not in {"CT", "GA"}:
+                raise SystemExit("BAM XG is not a recognized genome conversion")
+            if xr is None or xr[0] != "Z" or xr[1] not in {"CT", "GA"}:
+                raise SystemExit("BAM XR is not a recognized read conversion")
+            if ys is None or ys[0] != "Z" or ys[1] not in {
+                "OT", "OB", "CTOT", "CTOB",
             }:
-                raise SystemExit("BAM zs is not a recognized strand/conversion")
+                raise SystemExit("BAM YS is not a recognized library strand")
             zt = aux.get("zt")
             if zt is None or zt[0] != "Z" or len(zt[1]) != len(record["sequence"]):
                 raise SystemExit("BAM zt does not cover BAM SEQ")
@@ -493,18 +516,92 @@ def main() -> int:
                 if value is None or value[0] != "B:S" or len(value[1]) != 12:
                     raise SystemExit("BAM {} violates u16x12".format(name))
             flags = aux["zr"][1][0]
-            strand_name = {0: "N", 1: "W", 2: "C"}.get((flags >> 2) & 0x3)
-            conversion_name = {0: "C2T", 1: "G2A", 2: "NONE"}.get(
-                (flags >> 4) & 0x7
-            )
-            if zs[1] != "{}_{}".format(strand_name, conversion_name):
-                raise SystemExit("BAM zs disagrees with packed zr flags")
+            expected_xg = {1: "CT", 2: "GA"}.get((flags >> 2) & 0x3)
+            expected_xr = {0: "CT", 1: "GA"}.get((flags >> 4) & 0x7)
+            if xg[1] != expected_xg or xr[1] != expected_xr:
+                raise SystemExit("BAM XG/XR disagree with packed zr flags")
             zx = aux.get("zx")
             if zx is None or zx[0] != "Z":
                 raise SystemExit("BAM record omitted fragment realization zx")
             site_count, convertible_count = _decode_zx(zx[1])
             if site_count == 0 or convertible_count == 0:
                 raise SystemExit("BAM zx unexpectedly contains empty details domains")
+
+        undirectional = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "bsreadsim",
+                "run",
+                "wgbs",
+                "--reference",
+                "tiny.fa",
+                "--output",
+                "undirectional",
+                "--fragments",
+                "64",
+                "--seed",
+                "29",
+                "--mutation-rate",
+                "0",
+                "--read-length",
+                "3",
+                "--insert-mean",
+                "5",
+                "--insert-sd",
+                "0",
+                "--max-ambiguous-fraction",
+                "0",
+                "--conversion-rate",
+                "1",
+                "--phred",
+                "37",
+                "--error-rate",
+                "0",
+                "--undirectional",
+                "--format",
+                "bam",
+                "--prefix",
+                "sample",
+                "--core",
+                str(core),
+            ],
+            cwd=str(root),
+            env=_environment(),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if undirectional.returncode != 0 or undirectional.stderr:
+            raise SystemExit(
+                "undirectional BAM CLI failed: status={} stderr={!r}".format(
+                    undirectional.returncode,
+                    undirectional.stderr,
+                )
+            )
+        _, _, undirectional_records, _ = _parse_bam(
+            root / "undirectional" / "sample.bam"
+        )
+        observed_orientations = set()
+        for offset in range(0, len(undirectional_records), 2):
+            first, second = undirectional_records[offset : offset + 2]
+            pair = tuple(
+                tuple(record["aux"][name][1] for name in ("XG", "XR", "YS"))
+                for record in (first, second)
+            )
+            observed_orientations.add(pair)
+        expected_orientations = {
+            (("CT", "CT", "OT"), ("CT", "GA", "OT")),
+            (("GA", "CT", "OB"), ("GA", "GA", "OB")),
+            (("CT", "GA", "CTOT"), ("CT", "CT", "CTOT")),
+            (("GA", "GA", "CTOB"), ("GA", "CT", "CTOB")),
+        }
+        if observed_orientations != expected_orientations:
+            raise SystemExit(
+                "undirectional BAM has incorrect XG/XR/YS orientations: {!r}".format(
+                    observed_orientations
+                )
+            )
     return 0
 
 
