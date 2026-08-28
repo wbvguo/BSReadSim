@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
+#include <future>
 #include <string>
 #include <vector>
 
@@ -412,8 +413,8 @@ void validate_core_config(const CoreConfig &config)
     if (config.core_workers > 64U) {
         throw CoreConfigError("core_workers must be in [1, 64]");
     }
-    if (config.protocol_batch_fragments > 64U) {
-        throw CoreConfigError("protocol_batch_fragments must be in [1, 64]");
+    if (config.protocol_batch_fragments > 4096U) {
+        throw CoreConfigError("protocol_batch_fragments must be in [1, 4096]");
     }
     if (!(config.insert_min <= config.insert_mean
           && config.insert_mean <= config.insert_max)) {
@@ -777,6 +778,54 @@ LibraryOrientation sample_library_orientation(
             : model::CaptureStrand::forward,
         informative_reverse != complementary,
     };
+}
+
+template <typename Value, typename Builder>
+void emit_fragments_ordered(
+    const std::vector<Value> &values,
+    std::uint64_t first_fragment_ordinal,
+    std::uint32_t worker_count,
+    Builder builder,
+    protocol::BatchEmitter &emitter)
+{
+    if (values.empty()) {return;}
+    const std::size_t workers = std::min<std::size_t>(
+        worker_count, values.size());
+    if (workers <= 1U || values.size() < 128U) {
+        for (std::size_t index = 0U; index < values.size(); ++index) {
+            emitter.write(builder(
+                values[index], first_fragment_ordinal + index));
+        }
+        return;
+    }
+
+    std::vector<std::future<std::vector<model::Fragment>>> pending;
+    pending.reserve(workers);
+    const std::size_t base_size = values.size() / workers;
+    const std::size_t remainder = values.size() % workers;
+    std::size_t begin = 0U;
+    for (std::size_t worker = 0U; worker < workers; ++worker) {
+        const std::size_t block_size =
+            base_size + (worker < remainder ? 1U : 0U);
+        const std::size_t end = begin + block_size;
+        pending.push_back(std::async(
+            std::launch::async,
+            [&values, &builder, first_fragment_ordinal, begin, end] {
+                std::vector<model::Fragment> built;
+                built.reserve(end - begin);
+                for (std::size_t index = begin; index < end; ++index) {
+                    built.push_back(builder(
+                        values[index], first_fragment_ordinal + index));
+                }
+                return built;
+            }));
+        begin = end;
+    }
+    for (auto &future : pending) {
+        for (model::Fragment &fragment : future.get()) {
+            emitter.write(std::move(fragment));
+        }
+    }
 }
 
 void require_generation_environment(const CoreConfig &config)
@@ -1747,7 +1796,7 @@ protocol::Trailer generate_core_stream(
         protocol::BatchEmitter emitter(
             writer,
             header,
-            config.core_workers,
+            1U,
             config.protocol_batch_fragments);
 
         std::uint64_t fragment_ordinal = 0;
@@ -1899,17 +1948,18 @@ protocol::Trailer generate_core_stream(
                 std::uint32_t start,
                 std::uint8_t haplotype,
                 model::CaptureStrand capture_strand,
-                const fragment_builder::ReadLayout &layout) {
+                const fragment_builder::ReadLayout &layout,
+                std::uint64_t ordinal) {
                 const LibraryOrientation orientation = sample_library_orientation(
                     config,
                     library_orientation_key,
-                    fragment_ordinal,
+                    ordinal,
                     capture_strand);
                 if (!contig_variants) {
                     return fragment_builder::build_fragment(
                         contig,
                         *reference_methylation_catalog,
-                        fragment_ordinal,
+                        ordinal,
                         start,
                         haplotype,
                         orientation.informative_strand,
@@ -1931,7 +1981,7 @@ protocol::Trailer generate_core_stream(
                 return fragment_builder::build_fragment(
                     std::move(projection),
                     *diploid_methylation_catalog,
-                    fragment_ordinal,
+                    ordinal,
                     orientation.informative_strand,
                     layout,
                     fragment_detail,
@@ -1944,7 +1994,8 @@ protocol::Trailer generate_core_stream(
                 bool include_end_anchor_insertion,
                 std::uint8_t haplotype,
                 model::CaptureStrand capture_strand,
-                const fragment_builder::ReadLayout &layout) {
+                const fragment_builder::ReadLayout &layout,
+                std::uint64_t ordinal) {
                 if (!contig_variants || !diploid_methylation_catalog) {
                     throw CoreGeneratorError(
                         "haplotype fragment lost its prepared variant set");
@@ -1962,12 +2013,12 @@ protocol::Trailer generate_core_stream(
                 const LibraryOrientation orientation = sample_library_orientation(
                     config,
                     library_orientation_key,
-                    fragment_ordinal,
+                    ordinal,
                     capture_strand);
                 return fragment_builder::build_fragment(
                     std::move(projection),
                     *diploid_methylation_catalog,
-                    fragment_ordinal,
+                    ordinal,
                     orientation.informative_strand,
                     layout,
                     fragment_detail,
@@ -2115,22 +2166,28 @@ protocol::Trailer generate_core_stream(
                                 "variable haplotype skipped fragment count exceeds uint64");
                         }
                         skipped_fragment_count += batch.skipped_count;
-                        for (const wgbs::VariableHaplotypeCandidate &candidate
-                             : batch.candidates) {
-                            const fragment_builder::ReadLayout read_layout{
-                                candidate.reference_span,
-                                config.read_length_1,
-                                config.paired_end};
-                            emitter.write(build_fragment(
-                                candidate.reference_start,
-                                choose_haplotype(
-                                    candidate.eligible_haplotypes,
-                                    haplotype_key,
-                                    fragment_ordinal),
-                                model::CaptureStrand::unknown,
-                                read_layout));
-                            ++fragment_ordinal;
-                        }
+                        emit_fragments_ordered(
+                            batch.candidates,
+                            fragment_ordinal,
+                            config.core_workers,
+                            [&](const wgbs::VariableHaplotypeCandidate &candidate,
+                                std::uint64_t ordinal) {
+                                const fragment_builder::ReadLayout read_layout{
+                                    candidate.reference_span,
+                                    config.read_length_1,
+                                    config.paired_end};
+                                return build_fragment(
+                                    candidate.reference_start,
+                                    choose_haplotype(
+                                        candidate.eligible_haplotypes,
+                                        haplotype_key,
+                                        ordinal),
+                                    model::CaptureStrand::unknown,
+                                    read_layout,
+                                    ordinal);
+                            },
+                            emitter);
+                        fragment_ordinal += batch.candidates.size();
                         candidate_ordinal = batch.next_candidate_ordinal;
                     } else if (profiled_variable_starts || variable_starts) {
                         const auto batch = profiled_variable_starts
@@ -2146,22 +2203,28 @@ protocol::Trailer generate_core_stream(
                                 "variable WGBS skipped fragment count exceeds uint64");
                         }
                         skipped_fragment_count += batch.skipped_count;
-                        for (const wgbs::VariableWgbsCandidate &candidate
-                             : batch.candidates) {
-                            const fragment_builder::ReadLayout read_layout{
-                                candidate.insert_length,
-                                config.read_length_1,
-                                config.paired_end};
-                            emitter.write(build_fragment(
-                                candidate.reference_start,
-                                choose_haplotype(
-                                    model::HaplotypeMask::both,
-                                    haplotype_key,
-                                    fragment_ordinal),
-                                model::CaptureStrand::unknown,
-                                read_layout));
-                            ++fragment_ordinal;
-                        }
+                        emit_fragments_ordered(
+                            batch.candidates,
+                            fragment_ordinal,
+                            config.core_workers,
+                            [&](const wgbs::VariableWgbsCandidate &candidate,
+                                std::uint64_t ordinal) {
+                                const fragment_builder::ReadLayout read_layout{
+                                    candidate.insert_length,
+                                    config.read_length_1,
+                                    config.paired_end};
+                                return build_fragment(
+                                    candidate.reference_start,
+                                    choose_haplotype(
+                                        model::HaplotypeMask::both,
+                                        haplotype_key,
+                                        ordinal),
+                                    model::CaptureStrand::unknown,
+                                    read_layout,
+                                    ordinal);
+                            },
+                            emitter);
+                        fragment_ordinal += batch.candidates.size();
                         candidate_ordinal = batch.next_candidate_ordinal;
                     } else if (profiled_haplotype_starts) {
                         const auto batch = profiled_haplotype_starts->sample(
@@ -2177,15 +2240,21 @@ protocol::Trailer generate_core_stream(
                                 "haplotype coverage skipped fragment count exceeds uint64");
                         }
                         skipped_fragment_count += batch.skipped_count;
-                        for (const wgbs::HaplotypeCandidate &candidate
-                             : batch.candidates) {
-                            emitter.write(build_fragment(
-                                candidate.reference_start,
-                                candidate.haplotype,
-                                model::CaptureStrand::unknown,
-                                fixed_read_layout));
-                            ++fragment_ordinal;
-                        }
+                        emit_fragments_ordered(
+                            batch.candidates,
+                            fragment_ordinal,
+                            config.core_workers,
+                            [&](const wgbs::HaplotypeCandidate &candidate,
+                                std::uint64_t ordinal) {
+                                return build_fragment(
+                                    candidate.reference_start,
+                                    candidate.haplotype,
+                                    model::CaptureStrand::unknown,
+                                    fixed_read_layout,
+                                    ordinal);
+                            },
+                            emitter);
+                        fragment_ordinal += batch.candidates.size();
                         candidate_ordinal += chunk;
                     } else {
                         std::vector<std::uint32_t> starts;
@@ -2217,19 +2286,25 @@ protocol::Trailer generate_core_stream(
                                 candidate_ordinal,
                                 chunk);
                         }
-                        for (const std::uint32_t start : starts) {
-                            emitter.write(build_fragment(
-                                start,
-                                choose_haplotype(
-                                    variant_starts
-                                        ? variant_starts->haplotype_mask(start)
-                                        : model::HaplotypeMask::both,
-                                    haplotype_key,
-                                    fragment_ordinal),
-                                model::CaptureStrand::unknown,
-                                fixed_read_layout));
-                            ++fragment_ordinal;
-                        }
+                        emit_fragments_ordered(
+                            starts,
+                            fragment_ordinal,
+                            config.core_workers,
+                            [&](std::uint32_t start, std::uint64_t ordinal) {
+                                return build_fragment(
+                                    start,
+                                    choose_haplotype(
+                                        variant_starts
+                                            ? variant_starts->haplotype_mask(start)
+                                            : model::HaplotypeMask::both,
+                                        haplotype_key,
+                                        ordinal),
+                                    model::CaptureStrand::unknown,
+                                    fixed_read_layout,
+                                    ordinal);
+                            },
+                            emitter);
+                        fragment_ordinal += starts.size();
                         candidate_ordinal += chunk;
                     }
                     emitted_for_contig += chunk;
@@ -2294,58 +2369,63 @@ protocol::Trailer generate_core_stream(
                         requested - emitted_for_contig;
                     const std::uint32_t chunk =
                         std::min(remaining, config.chunk_size);
-                    std::vector<std::uint32_t> indices;
-                    if (profile_sampler) {
-                        indices = profile_sampler->sample_indices(
-                            contig.index,
-                            config.master_seed,
-                            candidate_ordinal,
-                            chunk);
-                    } else if (diploid_catalog) {
-                        indices = diploid_catalog->sample_indices(
-                            contig.index,
-                            config.master_seed,
-                            candidate_ordinal,
-                            chunk);
-                    } else {
-                        indices = reference_catalog->sample_indices(
-                            contig.index,
-                            config.master_seed,
-                            candidate_ordinal,
-                            chunk);
-                    }
-                    for (const std::uint32_t index : indices) {
-                        const rrbs::Candidate &candidate = diploid_catalog
-                            ? diploid_catalog->candidate(index)
-                            : reference_catalog->candidate(index);
-                        const fragment_builder::ReadLayout read_layout{
-                            candidate.template_length,
-                            config.read_length_1,
-                            config.paired_end,
-                            diploid_catalog
-                                ? fragment_builder::ReadLayout::InsertCoordinate::haplotype
-                                : fragment_builder::ReadLayout::InsertCoordinate::reference,
-                        };
-                        const std::uint8_t selected_haplotype = choose_haplotype(
-                            candidate.haplotype_mask,
-                            haplotype_key,
-                            fragment_ordinal);
-                        emitter.write(diploid_catalog
-                            ? build_haplotype_fragment(
-                                  candidate.reference_start,
-                                  candidate.reference_end,
-                                  candidate.include_start_anchor_insertion,
-                                  candidate.include_end_anchor_insertion,
-                                  selected_haplotype,
-                                  model::CaptureStrand::unknown,
-                                  read_layout)
-                            : build_fragment(
-                                  candidate.reference_start,
-                                  selected_haplotype,
-                                  model::CaptureStrand::unknown,
-                                  read_layout));
-                        ++fragment_ordinal;
-                    }
+                    const std::vector<std::uint32_t> indices = profile_sampler
+                        ? profile_sampler->sample_indices(
+                              contig.index,
+                              config.master_seed,
+                              candidate_ordinal,
+                              chunk)
+                        : diploid_catalog
+                            ? diploid_catalog->sample_indices(
+                                  contig.index,
+                                  config.master_seed,
+                                  candidate_ordinal,
+                                  chunk)
+                            : reference_catalog->sample_indices(
+                                  contig.index,
+                                  config.master_seed,
+                                  candidate_ordinal,
+                                  chunk);
+                    emit_fragments_ordered(
+                        indices,
+                        fragment_ordinal,
+                        config.core_workers,
+                        [&](std::uint32_t index, std::uint64_t ordinal) {
+                            const rrbs::Candidate &candidate = diploid_catalog
+                                ? diploid_catalog->candidate(index)
+                                : reference_catalog->candidate(index);
+                            const fragment_builder::ReadLayout read_layout{
+                                candidate.template_length,
+                                config.read_length_1,
+                                config.paired_end,
+                                diploid_catalog
+                                    ? fragment_builder::ReadLayout::InsertCoordinate::haplotype
+                                    : fragment_builder::ReadLayout::InsertCoordinate::reference,
+                            };
+                            const std::uint8_t selected_haplotype =
+                                choose_haplotype(
+                                    candidate.haplotype_mask,
+                                    haplotype_key,
+                                    ordinal);
+                            return diploid_catalog
+                                ? build_haplotype_fragment(
+                                      candidate.reference_start,
+                                      candidate.reference_end,
+                                      candidate.include_start_anchor_insertion,
+                                      candidate.include_end_anchor_insertion,
+                                      selected_haplotype,
+                                      model::CaptureStrand::unknown,
+                                      read_layout,
+                                      ordinal)
+                                : build_fragment(
+                                      candidate.reference_start,
+                                      selected_haplotype,
+                                      model::CaptureStrand::unknown,
+                                      read_layout,
+                                      ordinal);
+                        },
+                        emitter);
+                    fragment_ordinal += indices.size();
                     emitted_for_contig += chunk;
                     candidate_ordinal += chunk;
                 }
@@ -2411,35 +2491,44 @@ protocol::Trailer generate_core_stream(
                             "TBS skipped fragment count exceeds uint64");
                     }
                     skipped_fragment_count += batch.skipped_count;
-                    for (const tbs::Candidate &candidate : batch.candidates) {
-                        const fragment_builder::ReadLayout read_layout{
-                            candidate.template_length,
-                            config.read_length_1,
-                            config.paired_end,
-                            diploid_catalog
-                                ? fragment_builder::ReadLayout::InsertCoordinate::haplotype
-                                : fragment_builder::ReadLayout::InsertCoordinate::reference,
-                        };
-                        const std::uint8_t selected_haplotype = choose_haplotype(
-                            candidate.haplotype_mask,
-                            haplotype_key,
-                            fragment_ordinal);
-                        emitter.write(diploid_catalog
-                            ? build_haplotype_fragment(
-                                  candidate.reference_start,
-                                  candidate.reference_end,
-                                  candidate.include_start_anchor_insertion,
-                                  candidate.include_end_anchor_insertion,
-                                  selected_haplotype,
-                                  candidate.capture_strand,
-                                  read_layout)
-                            : build_fragment(
-                                  candidate.reference_start,
-                                  selected_haplotype,
-                                  candidate.capture_strand,
-                                  read_layout));
-                        ++fragment_ordinal;
-                    }
+                    emit_fragments_ordered(
+                        batch.candidates,
+                        fragment_ordinal,
+                        config.core_workers,
+                        [&](const tbs::Candidate &candidate,
+                            std::uint64_t ordinal) {
+                            const fragment_builder::ReadLayout read_layout{
+                                candidate.template_length,
+                                config.read_length_1,
+                                config.paired_end,
+                                diploid_catalog
+                                    ? fragment_builder::ReadLayout::InsertCoordinate::haplotype
+                                    : fragment_builder::ReadLayout::InsertCoordinate::reference,
+                            };
+                            const std::uint8_t selected_haplotype =
+                                choose_haplotype(
+                                    candidate.haplotype_mask,
+                                    haplotype_key,
+                                    ordinal);
+                            return diploid_catalog
+                                ? build_haplotype_fragment(
+                                      candidate.reference_start,
+                                      candidate.reference_end,
+                                      candidate.include_start_anchor_insertion,
+                                      candidate.include_end_anchor_insertion,
+                                      selected_haplotype,
+                                      candidate.capture_strand,
+                                      read_layout,
+                                      ordinal)
+                                : build_fragment(
+                                      candidate.reference_start,
+                                      selected_haplotype,
+                                      candidate.capture_strand,
+                                      read_layout,
+                                      ordinal);
+                        },
+                        emitter);
+                    fragment_ordinal += batch.candidates.size();
                     emitted_for_contig += chunk;
                     candidate_ordinal += chunk;
                 }

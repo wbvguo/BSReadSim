@@ -16,7 +16,7 @@ void print_help(std::ostream &output)
         << "       htsim-core methdb-build [core contract options]\n"
         << "       htsim-core variant-catalog [core contract options]\n"
         << "       htsim-core methdb-export INPUT.methdb\n"
-        << "       htsim-core --sam-to-bam LEVEL\n"
+        << "       htsim-core --sam-to-bam LEVEL THREADS\n"
         << "Run bsreadsim --help for the supported public interface.\n"
         << "Output controls: --emit-details none|full.\n";
 }
@@ -39,8 +39,8 @@ int main(int argc, char *argv[])
     }
 
     try {
-        if (argc == 3 && argv != nullptr && argv[1] != nullptr
-            && argv[2] != nullptr
+        if (argc == 4 && argv != nullptr && argv[1] != nullptr
+            && argv[2] != nullptr && argv[3] != nullptr
             && std::string_view(argv[1]) == "--sam-to-bam") {
             const std::string_view level_text(argv[2]);
             if (level_text.size() != 1U || level_text.front() < '0'
@@ -48,8 +48,29 @@ int main(int argc, char *argv[])
                 throw htsim::bam::BamStreamError(
                     "--sam-to-bam LEVEL must be an integer in [0, 9]");
             }
+            const std::string_view threads_text(argv[3]);
+            unsigned int compression_threads = 0U;
+            if (threads_text.empty()) {
+                throw htsim::bam::BamStreamError(
+                    "--sam-to-bam THREADS must be an integer in [0, 64]");
+            }
+            for (const char value : threads_text) {
+                if (value < '0' || value > '9') {
+                    throw htsim::bam::BamStreamError(
+                        "--sam-to-bam THREADS must be an integer in [0, 64]");
+                }
+                compression_threads = compression_threads * 10U
+                    + static_cast<unsigned int>(value - '0');
+                if (compression_threads > 64U) {
+                    throw htsim::bam::BamStreamError(
+                        "--sam-to-bam THREADS must be an integer in [0, 64]");
+                }
+            }
             htsim::bam::sam_to_bam(
-                "-", "-", static_cast<int>(level_text.front() - '0'));
+                "-",
+                "-",
+                static_cast<int>(level_text.front() - '0'),
+                static_cast<int>(compression_threads));
             return 0;
         }
         if (argc == 3 && argv != nullptr && argv[1] != nullptr

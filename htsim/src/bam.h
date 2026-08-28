@@ -17,7 +17,8 @@ public:
 void sam_to_bam(
     const std::string &input_path,
     const std::string &output_path,
-    int compression_level);
+    int compression_level,
+    int compression_threads);
 
 } // namespace htsim::bam
 

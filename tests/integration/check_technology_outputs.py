@@ -44,7 +44,7 @@ def _run(core: Path, root: Path, name: str, technology_arguments):
         "-o",
         str(output),
         "-n",
-        "12",
+        "512",
         "--seed",
         "20260813",
         "--read-length",
@@ -57,11 +57,7 @@ def _run(core: Path, root: Path, name: str, technology_arguments):
         "35",
         "--error-rate",
         "0",
-        "--workers",
-        "2",
-        "--chunk-size",
-        "5",
-        "--max-in-flight-fragments",
+        "--threads",
         "4",
         "--prefix",
         "sample",
@@ -95,7 +91,7 @@ def _run(core: Path, root: Path, name: str, technology_arguments):
     if {item["role"] for item in manifest["outputs"]} != {"bam"}:
         raise SystemExit("{} emitted the wrong artifact roles".format(name))
     _, _, records, _ = _parse_bam(output / "sample.bam")
-    if len(records) != 24:
+    if len(records) != 512:
         raise SystemExit("{} emitted the wrong BAM record count".format(name))
     return manifest, records
 

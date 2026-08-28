@@ -27,13 +27,13 @@ def base_config(technology="WGBS"):
         "technology": technology,
         "mutation": {},
         "seeds": {"mutation": "11", "phasing": "12", "methylation": "13"},
+        "reads": {"count": 2},
         "fragments": {
             "paired_end": False,
             "read_length_1": 4,
             "insert_min": 4,
             "insert_mean": 6,
             "insert_max": 10,
-            "count": 2,
         },
         "methylation": {
             "beta": {
@@ -114,7 +114,7 @@ class CoreArgvTests(unittest.TestCase):
             "--seed-meth",
             "13",
             "--protocol-batch-fragments",
-            "64",
+            "1024",
             "--reference",
             str((self.directory / "reference.fa").resolve()),
             "--technology",
@@ -138,7 +138,7 @@ class CoreArgvTests(unittest.TestCase):
             "--max-ambiguous-fraction",
             "0.05",
             "--chunk-size",
-            "10000",
+            "8192",
             "--core-workers",
             "1",
             "--coverage",
@@ -172,6 +172,19 @@ class CoreArgvTests(unittest.TestCase):
         self.assertNotIn("--tbs-bed", observed)
         self.assertNotIn("--coverage-profile", observed)
 
+    def test_total_read_count_is_converted_to_internal_fragments(self):
+        paired_document = base_config()
+        paired_document["reads"] = {"count": 10}
+        paired_document["fragments"]["paired_end"] = True
+        paired_document["fragments"]["read_length_2"] = 4
+
+        argv = build_core_argv(
+            self.prepared(paired_document), RUN_ID, "htsim-core"
+        )
+
+        self.assertEqual(option_value(argv, "--fragments"), "5")
+        self.assertNotIn("--reads", argv)
+
     def test_details_policy_and_batch_size_are_runtime_options(self):
         prepared = self.prepared()
 
@@ -184,7 +197,7 @@ class CoreArgvTests(unittest.TestCase):
 
         self.assertNotIn("--protocol-major", argv)
         self.assertEqual(option_value(argv, "--emit-details"), "false")
-        self.assertEqual(option_value(argv, "--protocol-batch-fragments"), "64")
+        self.assertEqual(option_value(argv, "--protocol-batch-fragments"), "1024")
         self.assertNotIn("protocol", prepared.config.normalized)
 
         bounded = build_core_argv(
@@ -204,7 +217,7 @@ class CoreArgvTests(unittest.TestCase):
                         "htsim-core",
                         emit_details=emit_details,
                     )
-        for batch_fragments in (0, 65, True, "7"):
+        for batch_fragments in (0, 4097, True, "7"):
             with self.subTest(protocol_batch_fragments=batch_fragments):
                 with self.assertRaisesRegex(
                     CoreArgvError, "protocol_batch_fragments"
@@ -258,16 +271,17 @@ class CoreArgvTests(unittest.TestCase):
                     technology in ("WES", "TS"),
                 )
 
-    def test_core_worker_count_crosses_only_the_core_boundary(self):
+    def test_internal_core_worker_count_crosses_only_the_core_boundary(self):
         document = base_config()
-        document["execution"]["core_workers"] = 4
-        document["execution"]["workers"] = 12
+        document["execution"]["threads"] = 12
         prepared = self.prepared(document)
 
-        argv = build_core_argv(prepared, RUN_ID, "htsim-core")
+        argv = build_core_argv(
+            prepared, RUN_ID, "htsim-core", core_workers=4
+        )
 
         self.assertEqual(option_value(argv, "--core-workers"), "4")
-        self.assertNotIn("--workers", argv)
+        self.assertNotIn("--threads", argv)
 
     def test_tbs_profile_projects_all_core_inputs_and_hides_python_models(self):
         document = base_config("TBS")
@@ -279,8 +293,8 @@ class CoreArgvTests(unittest.TestCase):
             "insert_mean": 6,
             "insert_max": 10,
             "insert_sd": 2.5,
-            "depth": 3.25,
         }
+        document["reads"] = {"depth": 3.25}
         for filename in (
             "targets.bed",
             "sample; literal.vcf",
@@ -340,8 +354,7 @@ class CoreArgvTests(unittest.TestCase):
             "--conversion-rate",
             "--quality",
             "--error",
-            "--workers",
-            "--max-in-flight-fragments",
+            "--threads",
             "--output",
             "--format",
         }
@@ -432,8 +445,7 @@ class CoreArgvTests(unittest.TestCase):
 
     def test_json_number_and_boolean_spellings_are_stable(self):
         document = base_config()
-        document["fragments"].pop("count")
-        document["fragments"]["depth"] = 2.5
+        document["reads"] = {"depth": 2.5}
         document["fragments"]["insert_sd"] = -0.0
         document["mutation"]["rate"] = 1e-7
         document["mutation"]["indel_fraction"] = 1.0

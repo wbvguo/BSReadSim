@@ -238,11 +238,21 @@ def _check_htslib_indel_serialization(root: Path, core: Path) -> None:
         b"pure-insertion\t0\tchr1\t21\t60\t3I\t*\t0\t0\tACG\tABC\n"
     )
     completed = subprocess.run(
-        [str(core), "--sam-to-bam", "0"],
+        [str(core), "--sam-to-bam", "0", "0"],
         input=sam,
         check=False,
         capture_output=True,
     )
+    parallel = subprocess.run(
+        [str(core), "--sam-to-bam", "0", "4"],
+        input=sam,
+        check=False,
+        capture_output=True,
+    )
+    if parallel.returncode != 0 or parallel.stderr:
+        raise SystemExit("parallel HTSlib BAM writer rejected valid SAM")
+    if parallel.stdout != completed.stdout:
+        raise SystemExit("BAM bytes changed with compression thread count")
     if completed.returncode != 0:
         raise SystemExit(
             "HTSlib rejected details indel CIGARs: {!r}".format(completed.stderr)
@@ -259,7 +269,7 @@ def _check_htslib_indel_serialization(root: Path, core: Path) -> None:
         raise SystemExit("HTSlib changed a details indel CIGAR")
 
     malformed = subprocess.run(
-        [str(core), "--sam-to-bam", "6"],
+        [str(core), "--sam-to-bam", "6", "0"],
         input=b"not a SAM stream\n",
         check=False,
         capture_output=True,
@@ -288,7 +298,7 @@ def main() -> int:
                 "-o",
                 "output",
                 "-n",
-                "12",
+                "256",
                 "--seed",
                 "17",
                 "--mutation-rate",
@@ -307,14 +317,8 @@ def main() -> int:
                 "37",
                 "--error-rate",
                 "0",
-                "--workers",
-                "2",
-                "--core-workers",
-                "1",
-                "--chunk-size",
-                "4",
-                "--max-in-flight-fragments",
-                "4",
+                "--threads",
+                "16",
                 "--prefix",
                 "sample",
                 "--format",
@@ -341,7 +345,7 @@ def main() -> int:
         roles = {item["role"]: item for item in manifest["outputs"]}
         if set(roles) != {"bam"}:
             raise SystemExit("BAM run emitted the wrong output roles")
-        if roles["bam"]["record_count"] != 24:
+        if roles["bam"]["record_count"] != 256:
             raise SystemExit("BAM manifest recorded the wrong alignment count")
         bam_path = root / "output" / "sample.bam"
         if roles["bam"]["sha256"] != hashlib.sha256(
@@ -407,7 +411,7 @@ def main() -> int:
                 raise SystemExit("BAM header omitted a Bismark tag schema")
         if references != (("chr1", 9),):
             raise SystemExit("BAM reference dictionary is wrong")
-        if len(records) != 24:
+        if len(records) != 256:
             raise SystemExit("BAM contains the wrong record count")
         if (root / "output" / "sample.R1.fastq.gz").exists() or (
             root / "output" / "sample.R2.fastq.gz"
@@ -538,8 +542,8 @@ def main() -> int:
                 "tiny.fa",
                 "--output",
                 "undirectional",
-                "--fragments",
-                "64",
+                "--reads",
+                "128",
                 "--seed",
                 "29",
                 "--mutation-rate",

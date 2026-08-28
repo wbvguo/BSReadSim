@@ -24,13 +24,13 @@ def base_config(technology: str = "WGBS") -> dict:
         "technology": technology,
         "mutation": {},
         "seeds": {"mutation": "0", "phasing": "0", "methylation": "0"},
+        "reads": {"depth": 20},
         "fragments": {
             "paired_end": True,
             "read_length_1": 100,
             "read_length_2": 100,
             "insert_min": 100,
             "insert_max": 1000,
-            "depth": 20,
         },
         "methylation": {
             "beta": {
@@ -101,12 +101,7 @@ class NormalizedConfigTests(unittest.TestCase):
         )
         self.assertEqual(loaded.normalized["fragments"]["insert_mean"], 400)
         self.assertEqual(loaded.normalized["fragments"]["insert_sd"], 25)
-        self.assertEqual(loaded.normalized["execution"]["workers"], 1)
-        self.assertEqual(loaded.normalized["execution"]["core_workers"], 1)
-        self.assertEqual(loaded.normalized["execution"]["chunk_size"], 10000)
-        self.assertEqual(
-            loaded.normalized["execution"]["max_in_flight_fragments"], 4096
-        )
+        self.assertEqual(loaded.normalized["execution"], {"threads": 1})
         self.assertEqual(loaded.normalized["output"]["format"], "fastq.gz")
         self.assertEqual(loaded.normalized["output"]["gzip_level"], 6)
         self.assertFalse(loaded.normalized["output"]["save_methdb"])
@@ -310,19 +305,47 @@ class NormalizedConfigTests(unittest.TestCase):
         with self.assertRaises(ConfigValidationError):
             normalize_run_config(config, self.base_directory)
 
-    def test_core_worker_bounds_are_schema_validated(self) -> None:
-        for value in (0, 65):
+    def test_thread_budget_bounds_are_schema_validated(self) -> None:
+        for value in (0, 257):
             with self.subTest(value=value):
                 config = base_config()
-                config["execution"]["core_workers"] = value
+                config["execution"]["threads"] = value
                 with self.assertRaises(ConfigValidationError):
                     normalize_run_config(config, self.base_directory)
 
-    def test_depth_and_fragment_count_are_mutually_exclusive(self) -> None:
+    def test_depth_and_read_count_are_mutually_exclusive(self) -> None:
         config = base_config()
-        config["fragments"]["count"] = 100
+        config["reads"]["count"] = 100
         with self.assertRaises(ConfigValidationError):
             normalize_run_config(config, self.base_directory)
+
+    def test_read_count_forms_complete_fragments(self) -> None:
+        odd_paired = base_config()
+        odd_paired["reads"] = {"count": 3}
+        with self.assertRaisesRegex(ConfigValidationError, "must be even"):
+            normalize_run_config(odd_paired, self.base_directory)
+
+        maximum_paired = base_config()
+        maximum_paired["reads"] = {"count": 2 * ((1 << 32) - 1)}
+        normalized = normalize_run_config(
+            maximum_paired, self.base_directory
+        ).normalized
+        self.assertEqual(normalized["reads"]["count"], 8589934590)
+
+        oversized_single = base_config()
+        oversized_single["fragments"]["paired_end"] = False
+        oversized_single["fragments"].pop("read_length_2")
+        oversized_single["reads"] = {"count": 1 << 32}
+        with self.assertRaisesRegex(ConfigValidationError, "exceeds uint32"):
+            normalize_run_config(oversized_single, self.base_directory)
+
+    def test_legacy_fragment_quantity_fields_are_rejected(self) -> None:
+        for field, value in (("count", 2), ("depth", 1.0)):
+            with self.subTest(field=field):
+                legacy = base_config()
+                legacy["fragments"][field] = value
+                with self.assertRaises(ConfigValidationError):
+                    normalize_run_config(legacy, self.base_directory)
 
     def test_insert_relationship_and_read_lengths_are_checked(self) -> None:
         invalid_relationship = base_config()
@@ -488,7 +511,7 @@ class NormalizedConfigTests(unittest.TestCase):
         unknown = base_config()
         unknown["unexpected"] = True
         wrong_type = base_config()
-        wrong_type["execution"]["workers"] = "four"
+        wrong_type["execution"]["threads"] = "four"
 
         for config in (unknown, wrong_type):
             with self.subTest(config=config):

@@ -10,6 +10,8 @@ from __future__ import annotations
 from contextlib import suppress
 
 from dataclasses import dataclass
+import gzip
+import io
 from multiprocessing import shared_memory
 
 from ..output.fastq import format_fragment_records_trusted
@@ -57,6 +59,7 @@ class WorkerBatchResult:
     read2: BufferRegion | None
     alignment: BufferRegion | None
     summary: FragmentSummary
+    precompressed_fastq: bool = False
     required_capacity: int = 0
 
     @property
@@ -71,6 +74,7 @@ _worker_include_details = None  # type: bool | None
 _worker_include_alignment = None  # type: bool | None
 _worker_include_fragment_summary = None  # type: bool | None
 _worker_include_fragment_realization = None  # type: bool | None
+_worker_fastq_gzip_level = None  # type: int | None
 
 
 def initialize_process_worker(
@@ -81,6 +85,7 @@ def initialize_process_worker(
     include_alignment: bool = False,
     include_fragment_summary: bool = False,
     include_fragment_realization: bool = False,
+    fastq_gzip_level: int | None = None,
 ) -> None:
     """Initialize immutable per-run worker state exactly once per process."""
 
@@ -91,6 +96,7 @@ def initialize_process_worker(
     global _worker_include_alignment
     global _worker_include_fragment_summary
     global _worker_include_fragment_realization
+    global _worker_fastq_gzip_level
     if not isinstance(include_details, bool):
         raise RuntimeError("process worker include_details must be a boolean")
     if not isinstance(include_alignment, bool):
@@ -103,6 +109,17 @@ def initialize_process_worker(
         raise RuntimeError("fragment realization requires fragment summary")
     if include_fragment_summary and not include_alignment:
         raise RuntimeError("fragment summary requires BAM output")
+    if (
+        fastq_gzip_level is not None
+        and (
+            isinstance(fastq_gzip_level, bool)
+            or not isinstance(fastq_gzip_level, int)
+            or not 0 <= fastq_gzip_level <= 9
+        )
+    ):
+        raise RuntimeError("FASTQ gzip level must be an integer in [0, 9]")
+    if fastq_gzip_level is not None and include_alignment:
+        raise RuntimeError("FASTQ gzip members cannot be combined with BAM output")
     if include_alignment and not include_details:
         raise RuntimeError("formatted details outputs require Full Details columns")
     if not isinstance(header, Header):
@@ -114,6 +131,7 @@ def initialize_process_worker(
     _worker_include_alignment = include_alignment
     _worker_include_fragment_summary = include_fragment_summary
     _worker_include_fragment_realization = include_fragment_realization
+    _worker_fastq_gzip_level = fastq_gzip_level
 
 
 def process_shared_batch(
@@ -131,6 +149,7 @@ def process_shared_batch(
         _worker_include_alignment,
         _worker_include_fragment_summary,
         _worker_include_fragment_realization,
+        _worker_fastq_gzip_level,
     )
     if (
         state[0] is None
@@ -156,6 +175,7 @@ def process_shared_batch(
             include_alignment=state[4],
             include_fragment_summary=state[5],
             include_fragment_realization=state[6],
+            fastq_gzip_level=state[7],
         )
     finally:
         buffer.release()
@@ -174,6 +194,7 @@ def process_payload_batch(
     include_alignment: bool = False,
     include_fragment_summary: bool = False,
     include_fragment_realization: bool = False,
+    fastq_gzip_level: int | None = None,
 ) -> WorkerBatchResult:
     """Revalidate, process, and format one authenticated batch payload."""
 
@@ -197,6 +218,17 @@ def process_payload_batch(
         raise RuntimeError("fragment summary requires BAM output")
     if include_fragment_realization and not include_fragment_summary:
         raise RuntimeError("fragment realization requires fragment summary")
+    if (
+        fastq_gzip_level is not None
+        and (
+            isinstance(fastq_gzip_level, bool)
+            or not isinstance(fastq_gzip_level, int)
+            or not 0 <= fastq_gzip_level <= 9
+        )
+    ):
+        raise RuntimeError("FASTQ gzip level must be an integer in [0, 9]")
+    if fastq_gzip_level is not None and include_alignment:
+        raise RuntimeError("FASTQ gzip members cannot be combined with BAM output")
     descriptor = payload_slices[0]
     if (
         descriptor.offset < 0
@@ -336,6 +368,12 @@ def process_payload_batch(
                     )
                 )
 
+    precompressed_fastq = fastq_gzip_level is not None
+    if precompressed_fastq:
+        read1_parts = [_gzip_member(read1_parts, fastq_gzip_level)]
+        if read2_parts:
+            read2_parts = [_gzip_member(read2_parts, fastq_gzip_level)]
+
     read1_size = sum(len(value) for value in read1_parts)
     read2_size = sum(len(value) for value in read2_parts)
     alignment_size = sum(len(value) for value in alignment_parts)
@@ -362,6 +400,7 @@ def process_payload_batch(
             read2=None,
             alignment=None,
             summary=summary,
+            precompressed_fastq=precompressed_fastq,
             required_capacity=required_capacity,
         )
 
@@ -381,7 +420,24 @@ def process_payload_batch(
             else None
         ),
         summary=summary,
+        precompressed_fastq=precompressed_fastq,
     )
+
+
+def _gzip_member(parts: list[bytes], compression_level: int) -> bytes:
+    """Return one deterministic gzip member for an ordered FASTQ batch."""
+
+    target = io.BytesIO()
+    with gzip.GzipFile(
+        filename="",
+        mode="wb",
+        compresslevel=compression_level,
+        fileobj=target,
+        mtime=0,
+    ) as stream:
+        for value in parts:
+            stream.write(value)
+    return target.getvalue()
 
 
 def _copy_parts(buffer: memoryview, offset: int, parts: list[bytes]) -> None:

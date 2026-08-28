@@ -253,6 +253,18 @@ def main(argv: list[str]) -> int:
             )
             if parallel != full_bytes:
                 raise SystemExit("core worker count changed protocol bytes")
+        large_chunk_arguments = _replace(
+            full_arguments, "--chunk-size", "257"
+        )
+        large_chunk_serial = _require_success(
+            _run(large_chunk_arguments), "large-chunk serial invocation"
+        )
+        large_chunk_parallel = _require_success(
+            _run(_replace(large_chunk_arguments, "--core-workers", "4")),
+            "large-chunk parallel invocation",
+        )
+        if large_chunk_parallel != large_chunk_serial:
+            raise SystemExit("parallel fragment construction changed protocol bytes")
         rechunked = _require_success(
             _run(_replace(full_arguments, "--chunk-size", "31")),
             "rechunked invocation",

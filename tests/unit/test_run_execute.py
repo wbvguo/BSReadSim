@@ -15,6 +15,7 @@ from bsreadsim.run.config import (
 )
 from bsreadsim.run.execute import (
     PipelineError,
+    _build_execution_plan,
     _protocol_batch_fragment_limit,
     run_prepared,
 )
@@ -106,24 +107,24 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(
             _protocol_batch_fragment_limit(
                 emit_details=True,
-                max_in_flight=256,
+                max_in_flight=2048,
             ),
-            8,
+            128,
         )
         self.assertEqual(
             _protocol_batch_fragment_limit(
                 emit_details=False,
-                max_in_flight=256,
+                max_in_flight=2048,
             ),
-            64,
+            1024,
         )
         self.assertEqual(
             _protocol_batch_fragment_limit(
                 emit_details=True,
-                max_in_flight=256,
+                max_in_flight=2048,
                 materializes_detail_objects=False,
             ),
-            64,
+            1024,
         )
         self.assertEqual(
             _protocol_batch_fragment_limit(
@@ -140,6 +141,30 @@ class PipelineTests(unittest.TestCase):
             ),
             3,
         )
+
+    def test_global_thread_budget_is_split_without_stage_multiplication(self) -> None:
+        fastq = _build_execution_plan(16, "fastq.gz")
+        self.assertEqual(fastq.core_workers, 8)
+        self.assertEqual(fastq.process_workers, 8)
+        self.assertEqual(fastq.bam_compression_threads, 0)
+        self.assertTrue(fastq.use_process_pool)
+        self.assertEqual(fastq.protocol_batch_fragments, 1024)
+        self.assertEqual(fastq.max_in_flight_fragments, 16384)
+
+        bam = _build_execution_plan(16, "bam")
+        self.assertEqual(
+            bam.core_workers
+            + bam.process_workers
+            + bam.bam_compression_threads
+            + 1,
+            16,
+        )
+        self.assertEqual(bam.bam_compression_threads, 2)
+
+        serial = _build_execution_plan(1, "fastq.gz")
+        self.assertFalse(serial.use_process_pool)
+        self.assertEqual(serial.core_workers, 1)
+        self.assertEqual(serial.process_workers, 1)
 
     def test_advanced_sequencing_models_load_before_process_launch(self) -> None:
         quality_bytes = quality_model_bytes()
@@ -280,8 +305,7 @@ class PipelineTests(unittest.TestCase):
 
     def test_depth_passes_all_technology_capability_gates(self) -> None:
         document = baseline_config()
-        del document["fragments"]["count"]
-        document["fragments"]["depth"] = 2
+        document["reads"] = {"depth": 2}
 
         with self.assertRaisesRegex(PipelineError, "cannot resolve"):
             run_prepared(

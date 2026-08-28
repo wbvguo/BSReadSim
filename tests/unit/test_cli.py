@@ -134,7 +134,7 @@ class CommandLineTests(unittest.TestCase):
             build_rrbs_document(arguments, REPOSITORY_ROOT), REPOSITORY_ROOT
         ).normalized
         self.assertEqual(normalized["technology"], "RRBS")
-        self.assertEqual(normalized["fragments"]["count"], 1)
+        self.assertEqual(normalized["reads"]["count"], 2)
         self.assertEqual(normalized["mutation"]["rate"], 0)
         self.assertEqual(normalized["seeds"]["mutation"], "7")
         self.assertEqual(normalized["seeds"]["phasing"], "8")
@@ -151,7 +151,7 @@ class CommandLineTests(unittest.TestCase):
         ).normalized
         self.assertEqual(normalized["mutation"]["rate"], 0.002)
         self.assertEqual(normalized["seeds"]["mutation"], "19")
-        self.assertEqual(normalized["fragments"]["count"], 1)
+        self.assertEqual(normalized["reads"]["count"], 1)
 
         from_vcf = build_parser().parse_args(
             [
@@ -226,7 +226,8 @@ class CommandLineTests(unittest.TestCase):
         ts = run_module("run", "ts", "--help")
         for result in (wgbs, rrbs, tbs, wgs, wes, ts):
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("-n FRAGMENTS", result.stdout)
+            self.assertIn("--reads N", result.stdout)
+            self.assertNotIn("--fragments", result.stdout)
             self.assertIn("-f {fastq,fastq.gz,bam}", result.stdout)
             self.assertIn("--seed-mut", result.stdout)
         self.assertIn("--gc-profile", wgbs.stdout)
@@ -321,7 +322,8 @@ class CommandLineTests(unittest.TestCase):
         )
         document = build_run_document(arguments, REPOSITORY_ROOT)
         self.assertEqual(document["technology"], "WGBS")
-        self.assertEqual(document["fragments"]["count"], 10)
+        self.assertEqual(document["reads"]["count"], 10)
+        self.assertNotIn("count", document["fragments"])
         self.assertEqual(document["output"]["format"], "fastq.gz")
         self.assertTrue(document["output"]["save_methdb"])
         self.assertTrue(document["output"]["save_vcf"])
@@ -365,7 +367,7 @@ class CommandLineTests(unittest.TestCase):
             arguments = build_parser().parse_args(
                 [
                     "run", "wgbs", "-r", "reference.fa", "-o", "output", "-n", "100",
-                    "--gc-profile", "gc.tsv", "--workers", "2",
+                    "--gc-profile", "gc.tsv", "--threads", "2",
                 ]
             )
             normalized = normalize_run_config(
@@ -375,6 +377,7 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(artifact["sha256"], hashlib.sha256(profile).hexdigest())
         self.assertEqual(normalized["fragments"]["insert_sd"], 25)
         self.assertEqual(normalized["mutation"]["rate"], 0)
+        self.assertEqual(normalized["execution"]["threads"], 2)
 
     def test_rrbs_and_tbs_sampling_modes_are_unambiguous(self) -> None:
         rrbs_common = [
@@ -419,6 +422,38 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(set(document["inputs"]), {"vcf", "bed_methyl", "asm_bed"})
         self.assertEqual(document["seeds"]["phasing"], "9")
 
+    def test_read_count_is_total_records_and_requires_complete_pairs(self) -> None:
+        paired = build_parser().parse_args(
+            [
+                "run", "wgbs", "-r", "reference.fa", "-o", "output",
+                "--reads", "10",
+            ]
+        )
+        self.assertEqual(
+            build_run_document(paired, REPOSITORY_ROOT)["reads"],
+            {"count": 10},
+        )
+
+        odd_paired = build_parser().parse_args(
+            [
+                "run", "wgbs", "-r", "reference.fa", "-o", "output",
+                "--reads", "9",
+            ]
+        )
+        with self.assertRaisesRegex(CommandLineError, "must be even"):
+            build_run_document(odd_paired, REPOSITORY_ROOT)
+
+        single = build_parser().parse_args(
+            [
+                "run", "wgbs", "-r", "reference.fa", "-o", "output",
+                "--reads", "9", "--single-end",
+            ]
+        )
+        self.assertEqual(
+            build_run_document(single, REPOSITORY_ROOT)["reads"],
+            {"count": 9},
+        )
+
     def test_old_command_and_option_names_are_not_accepted(self) -> None:
         for arguments in (
             ("catalog", "variants", "--help"),
@@ -431,6 +466,10 @@ class CommandLineTests(unittest.TestCase):
             (
                 "run", "wgbs", "-r", "ref.fa", "-o", "out", "-n", "1",
                 "--insert-size", "150",
+            ),
+            (
+                "run", "wgbs", "-r", "ref.fa", "-o", "out",
+                "--fragments", "2",
             ),
         ):
             result = run_module(*arguments)

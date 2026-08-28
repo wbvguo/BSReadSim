@@ -9,6 +9,7 @@
     "reference",
     "inputs",
     "mutation",
+    "reads",
     "fragments",
     "seeds",
     "methylation",
@@ -122,6 +123,46 @@
         }
       }
     },
+    "reads": {
+      "type": "object",
+      "description": "Requested dataset size expressed as total read records or mean sequencing depth.",
+      "additionalProperties": false,
+      "properties": {
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8589934590,
+          "description": "Total read records across both mates. Paired-end counts must be even."
+        },
+        "depth": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1.7976931348623157e+308
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "count"
+          ],
+          "not": {
+            "required": [
+              "depth"
+            ]
+          }
+        },
+        {
+          "required": [
+            "depth"
+          ],
+          "not": {
+            "required": [
+              "count"
+            ]
+          }
+        }
+      ]
+    },
     "fragments": {
       "type": "object",
       "description": "Runtime validation enforces insert_min <= insert_mean <= insert_max. Whole-genome and targeted technologies with insert_sd=0 use insert_mean as one fixed length; otherwise each read length must fit insert_min.",
@@ -168,16 +209,6 @@
           "minimum": 1,
           "maximum": 4294967295
         },
-        "depth": {
-          "type": "number",
-          "exclusiveMinimum": 0,
-          "maximum": 1.7976931348623157e+308
-        },
-        "count": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 4294967295
-        },
         "max_ambiguous_fraction": {
           "$ref": "#/$defs/probability",
           "default": 0.05
@@ -207,30 +238,6 @@
               ]
             }
           }
-        },
-        {
-          "oneOf": [
-            {
-              "required": [
-                "depth"
-              ],
-              "not": {
-                "required": [
-                  "count"
-                ]
-              }
-            },
-            {
-              "required": [
-                "count"
-              ],
-              "not": {
-                "required": [
-                  "depth"
-                ]
-              }
-            }
-          ]
         }
       ]
     },
@@ -497,29 +504,11 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "workers": {
+        "threads": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 1024,
+          "maximum": 256,
           "default": 1
-        },
-        "core_workers": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 64,
-          "default": 1
-        },
-        "chunk_size": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 10000000,
-          "default": 10000
-        },
-        "max_in_flight_fragments": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 1000000,
-          "default": 4096
         }
       }
     },

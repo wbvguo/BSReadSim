@@ -46,11 +46,12 @@ public:
     using std::runtime_error::runtime_error;
 };
 
-// Convert mean sequencing depth to an exact uint32 fragment/read-pair count.
-// The frozen evaluation order is:
-//   floor((double(effective_reference_bases) * depth)
-//         / (read_length * (paired_end ? 2 : 1)))
-// under round-to-nearest floating point. No wider integer is used.
+// Convert mean sequencing depth to an exact uint32 fragment count by first
+// resolving the required number of reads, then rounding up to a complete
+// fragment bundle. The frozen evaluation order is:
+//   raw_reads = (double(effective_reference_bases) * depth) / read_length
+//   ceil(raw_reads / (paired_end ? 2 : 1))
+// under round-to-nearest floating point.
 std::uint32_t fragments(
     double depth,
     std::uint64_t effective_reference_bases,

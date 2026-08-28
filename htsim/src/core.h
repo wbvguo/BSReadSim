@@ -43,7 +43,7 @@ struct BetaShape {
 struct CoreConfig {
     // Transport details are execution metadata, not scientific configuration.
     bool emit_details = false;
-    std::uint32_t protocol_batch_fragments = 64;
+    std::uint32_t protocol_batch_fragments = 1024;
     std::string run_id;
     crypto::Sha256Digest normalized_config_sha256 = {};
     std::uint64_t master_seed = 0;

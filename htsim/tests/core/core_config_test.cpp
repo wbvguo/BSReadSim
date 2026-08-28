@@ -143,7 +143,7 @@ void test_output_controls()
             [&] {parse_core_config(invalid);},
             "invalid Details-column mode was accepted: " + value);
     }
-    for (const std::string value : {"0", "65", "-1"}) {
+    for (const std::string value : {"0", "4097", "-1"}) {
         auto invalid = arguments;
         replace_value(invalid, "--protocol-batch-fragments", value);
         require_error(

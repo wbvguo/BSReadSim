@@ -17,6 +17,7 @@ from jsonschema.exceptions import SchemaError, ValidationError
 
 PathLike = str | Path
 UINT64_MAX = (1 << 64) - 1
+UINT32_MAX = (1 << 32) - 1
 RUN_CONFIG_SCHEMA_FILENAME = "run-config.schema.json"
 
 
@@ -186,6 +187,18 @@ def _parse_seed(seed: Any) -> int | None:
 
 def _validate_cross_field_rules(config: Mapping[str, Any]) -> None:
     fragments = config["fragments"]
+    reads = config["reads"]
+    if "count" in reads:
+        reads_per_fragment = 2 if fragments["paired_end"] else 1
+        read_count = reads["count"]
+        if read_count % reads_per_fragment != 0:
+            raise ConfigValidationError(
+                "$.reads.count: paired-end read count must be even"
+            )
+        if read_count // reads_per_fragment > UINT32_MAX:
+            raise ConfigValidationError(
+                "$.reads.count: derived fragment count exceeds uint32"
+            )
     insert_min = fragments["insert_min"]
     insert_mean = fragments["insert_mean"]
     insert_max = fragments["insert_max"]

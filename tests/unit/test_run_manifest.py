@@ -222,7 +222,7 @@ class ManifestTests(unittest.TestCase):
         for option in (
             "--reference",
             "--output",
-            "--fragments",
+            "--reads",
             "--seed-mut",
             "--seed-phase",
             "--seed-meth",
@@ -242,10 +242,7 @@ class ManifestTests(unittest.TestCase):
             "--conversion-rate",
             "--phred",
             "--error-rate",
-            "--workers",
-            "--core-workers",
-            "--chunk-size",
-            "--max-in-flight-fragments",
+            "--threads",
             "--prefix",
             "--format",
             "--gzip-level",
@@ -269,7 +266,8 @@ class ManifestTests(unittest.TestCase):
             "-r",
             "reference.fa",
             "-n",
-            "1",
+            "2",
+            "--single-end",
             "-s7",
         )
         manifest = build_complete_manifest(

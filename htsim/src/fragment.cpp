@@ -198,26 +198,26 @@ std::uint32_t fragments(
         throw DepthCountError("depth conversion requires positive read length");
     }
 
-    const std::uint64_t sequenced_bases_per_fragment =
-        static_cast<std::uint64_t>(read_length)
-        * (paired_end ? UINT64_C(2) : UINT64_C(1));
+    const std::uint64_t reads_per_fragment =
+        paired_end ? UINT64_C(2) : UINT64_C(1);
     const double numerator =
         static_cast<double>(effective_reference_bases) * depth;
-    const double raw_count = numerator
-        / static_cast<double>(sequenced_bases_per_fragment);
-    if (!std::isfinite(raw_count)) {
-        throw DepthCountError("depth-derived read-pair count is not finite");
+    const double raw_reads = numerator / static_cast<double>(read_length);
+    if (!std::isfinite(raw_reads)) {
+        throw DepthCountError("depth-derived read count is not finite");
     }
-    const double floored = std::ceil(raw_count);
-    if (floored < 1.0) {
+    const double raw_fragments =
+        raw_reads / static_cast<double>(reads_per_fragment);
+    const double resolved_fragments = std::ceil(raw_fragments);
+    if (resolved_fragments < 1.0) {
         throw DepthCountError(
-            "depth derives zero read pairs for the effective reference");
+            "depth derives zero fragments for the effective reference");
     }
-    if (floored
+    if (resolved_fragments
         > static_cast<double>(std::numeric_limits<std::uint32_t>::max())) {
-        throw DepthCountError("depth-derived read-pair count exceeds uint32");
+        throw DepthCountError("depth-derived fragment count exceeds uint32");
     }
-    return static_cast<std::uint32_t>(floored);
+    return static_cast<std::uint32_t>(resolved_fragments);
 }
 
 } // namespace htsim::depth_count

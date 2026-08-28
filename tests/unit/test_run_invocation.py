@@ -65,8 +65,8 @@ class FullRunCommandTests(unittest.TestCase):
                         "reference.fa",
                         "--output",
                         "output-{}".format(technology),
-                        "--fragments",
-                        "3",
+                        "--reads",
+                        "6",
                         *specific,
                     ]
                 )
@@ -130,14 +130,8 @@ class FullRunCommandTests(unittest.TestCase):
             str(self.directory / "quality.json"),
             "--error-model",
             str(self.directory / "error.json"),
-            "--workers",
-            "2",
-            "--core-workers",
-            "3",
-            "--chunk-size",
-            "17",
-            "--max-in-flight-fragments",
-            "19",
+            "--threads",
+            "12",
             "--prefix",
             "advanced",
             "--format",
@@ -234,7 +228,7 @@ class FullRunCommandTests(unittest.TestCase):
                 "-o",
                 "output",
                 "-n",
-                "1",
+                "2",
             ]
         )
         normalized = effective.normalized

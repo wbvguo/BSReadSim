@@ -23,13 +23,13 @@ def base_config() -> dict:
         "technology": "WGBS",
         "mutation": {},
         "seeds": {"mutation": "0", "phasing": "0", "methylation": "0"},
+        "reads": {"count": 2},
         "fragments": {
             "paired_end": False,
             "read_length_1": 4,
             "insert_min": 4,
             "insert_mean": 6,
             "insert_max": 10,
-            "count": 2,
         },
         "methylation": {
             "beta": {

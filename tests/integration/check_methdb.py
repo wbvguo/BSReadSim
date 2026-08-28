@@ -81,7 +81,7 @@ def main() -> int:
         )
         common = (
             "-r", "reference.fa",
-            "-n", "8",
+            "-n", "16",
             "--seed-meth", "23",
             "--mutation-rate", "0",
             "--read-length", "50",
@@ -201,7 +201,7 @@ def main() -> int:
             core,
             "-r", "reference.fa",
             "-o", "rebound",
-            "-n", "1",
+            "-n", "2",
             "--seed", "999",
             "--seed-meth", "24",
             "--mutation-rate", "0",
@@ -217,7 +217,7 @@ def main() -> int:
 
         variant_common = (
             "-r", "reference.fa",
-            "-n", "8",
+            "-n", "16",
             "--seed-meth", "23",
             "--read-length", "50",
             "--insert-mean", "150",

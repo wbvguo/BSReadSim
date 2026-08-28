@@ -14,6 +14,7 @@ from . import __version__
 _BISULFITE_TECHNOLOGIES = frozenset(("WGBS", "RRBS", "TBS"))
 _WHOLE_GENOME_TECHNOLOGIES = frozenset(("WGBS", "WGS"))
 _TARGETED_TECHNOLOGIES = frozenset(("TBS", "WES", "TS"))
+_UINT32_MAX = (1 << 32) - 1
 
 
 class CommandLineError(ValueError):
@@ -217,7 +218,11 @@ def _add_direct_run_arguments(
     )
     count = required.add_mutually_exclusive_group(required=True)
     count.add_argument(
-        "-n", "--fragments", type=int, help="number of source DNA fragments"
+        "-n",
+        "--reads",
+        type=int,
+        metavar="N",
+        help="total number of read records; paired-end values must be even",
     )
     count.add_argument(
         "-d",
@@ -311,10 +316,14 @@ def _add_direct_run_arguments(
     )
 
     execution = parser.add_argument_group("execution")
-    execution.add_argument("--workers", type=int)
-    execution.add_argument("--core-workers", type=int)
-    execution.add_argument("--chunk-size", type=int)
-    execution.add_argument("--max-in-flight-fragments", type=int)
+    execution.add_argument(
+        "-t",
+        "--threads",
+        type=int,
+        default=1,
+        metavar="N",
+        help="total CPU thread budget for the simulation pipeline (default: 1)",
+    )
 
     output = parser.add_argument_group("output")
     output.add_argument("-p", "--prefix", default="sim")
@@ -599,6 +608,30 @@ def _resolve_mutation_rate(
     return default if arguments.mutation_rate is None else arguments.mutation_rate
 
 
+def _read_quantity(arguments: argparse.Namespace) -> dict[str, object]:
+    """Project the public read quantity without leaking fragment semantics."""
+    if arguments.reads is None:
+        return {"depth": arguments.depth}
+
+    read_count = arguments.reads
+    if read_count < 1:
+        raise CommandLineError("--reads must be a positive integer")
+    reads_per_fragment = 1 if arguments.single_end else 2
+    if read_count % reads_per_fragment != 0:
+        raise CommandLineError(
+            "--reads must be even for paired-end simulation"
+        )
+    maximum = _UINT32_MAX * reads_per_fragment
+    if read_count > maximum:
+        raise CommandLineError(
+            "--reads exceeds the maximum for {} simulation ({})".format(
+                "single-end" if arguments.single_end else "paired-end",
+                maximum,
+            )
+        )
+    return {"count": read_count}
+
+
 def build_rrbs_document(
     arguments: argparse.Namespace,
     base_directory: Path,
@@ -616,9 +649,6 @@ def build_rrbs_document(
         "paired_end": not arguments.single_end,
         "read_length_1": arguments.read_length,
         **_insert_parameters(arguments),
-        # The htsim config contract requires a count even though catalog-only
-        # generation never samples or emits protocol fragments.
-        "count": 1,
         "max_ambiguous_fraction": arguments.max_ambiguous_fraction,
     }
     if not arguments.single_end:
@@ -628,6 +658,9 @@ def build_rrbs_document(
         "reference": str(arguments.reference.expanduser()),
         "inputs": {},
         "technology": "RRBS",
+        # Artifact construction emits no reads. This minimum complete quantity
+        # exists only because build and run share one normalized core shape.
+        "reads": {"count": 1 if arguments.single_end else 2},
         "rrbs": {"cut_sites": list(arguments.cut_sites)},
         "mutation": {
             "rate": mutation_rate,
@@ -692,6 +725,7 @@ def build_variant_document(
         "reference": str(arguments.reference.expanduser()),
         "inputs": {},
         "technology": "WGBS",
+        "reads": {"count": 1},
         "mutation": {
             "rate": mutation_rate,
             "indel_fraction": arguments.indel_fraction,
@@ -714,7 +748,6 @@ def build_variant_document(
             "insert_mean": 1,
             "insert_max": 1,
             "insert_sd": 0,
-            "count": 1,
             "max_ambiguous_fraction": 0,
         },
         "methylation": {
@@ -766,6 +799,7 @@ def build_methdb_document(
         "reference": str(arguments.reference.expanduser()),
         "inputs": {},
         "technology": "WGBS",
+        "reads": {"count": 1},
         "mutation": {
             "rate": mutation_rate,
             "indel_fraction": arguments.indel_fraction,
@@ -784,7 +818,6 @@ def build_methdb_document(
             "insert_mean": 1,
             "insert_max": 1,
             "insert_sd": 0,
-            "count": 1,
             "max_ambiguous_fraction": 0,
         },
         "methylation": {
@@ -889,6 +922,7 @@ def build_run_document(
         "reference": str(arguments.reference.expanduser()),
         "inputs": {},
         "technology": technology,
+        "reads": _read_quantity(arguments),
         "mutation": {
             "rate": mutation_rate,
             "indel_fraction": arguments.indel_fraction,
@@ -968,11 +1002,6 @@ def build_run_document(
         raise CommandLineError("internal CLI fragment projection failed")
     if not arguments.single_end:
         fragments["read_length_2"] = arguments.read_length
-    if arguments.fragments is not None:
-        fragments["count"] = arguments.fragments
-    else:
-        fragments["depth"] = arguments.depth
-
     if technology == "RRBS":
         cut_sites = arguments.cut_sites
         if not cut_sites:
@@ -1039,15 +1068,7 @@ def build_run_document(
     execution = document["execution"]
     if not isinstance(execution, dict):
         raise CommandLineError("internal CLI execution projection failed")
-    for name in (
-        "workers",
-        "core_workers",
-        "chunk_size",
-        "max_in_flight_fragments",
-    ):
-        value = getattr(arguments, name)
-        if value is not None:
-            execution[name] = value
+    execution["threads"] = arguments.threads
     return document
 
 

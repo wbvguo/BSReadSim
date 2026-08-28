@@ -13,6 +13,7 @@ import hashlib
 import os
 from pathlib import Path
 import subprocess
+import threading
 
 
 from ..process.batch import (
@@ -935,6 +936,9 @@ class BamOutput:
         self._completed = False
         self._size_bytes = 0
         self._sha256 = ""
+        self._digest = hashlib.sha256()
+        self._reader_error = None  # type: BaseException | None
+        self._reader = None  # type: threading.Thread | None
         self._stderr_path = path.with_name(path.name + ".writer-stderr")
         self.raw = None  # type: BinaryIO | None
         self.stderr = None  # type: BinaryIO | None
@@ -945,15 +949,22 @@ class BamOutput:
             self.process = subprocess.Popen(
                 config.writer_argv,
                 stdin=subprocess.PIPE,
-                stdout=self.raw,
+                stdout=subprocess.PIPE,
                 stderr=self.stderr,
                 close_fds=True,
             )
-            if self.process.stdin is None:
-                raise OutputError("BAM writer has no SAM input stream")
+            if self.process.stdin is None or self.process.stdout is None:
+                raise OutputError("BAM writer has no streaming pipe")
+            self._reader = threading.Thread(
+                target=self._drain_stdout,
+                name="bsreadsim-bam-output",
+                daemon=True,
+            )
+            self._reader.start()
             self.write_bytes(config.sam_header)
         except Exception:
             self._stop_process()
+            self._join_reader()
             self._close_files()
             self._unlink_stderr()
             raise
@@ -991,6 +1002,9 @@ class BamOutput:
                 raise OutputError(
                     "BAM writer did not terminate"
                 ) from timeout_error
+            self._join_reader()
+            if self._reader_error is not None:
+                raise OutputError("failed while receiving BAM output") from self._reader_error
             if self.raw is None:
                 raise OutputError("BAM staged file is unavailable")
             self.raw.flush()
@@ -1004,25 +1018,13 @@ class BamOutput:
         except BaseException as observed:
             error = observed
         finally:
+            self._join_reader()
             self._close_files()
             self.closed = True
 
         if error is None:
-            try:
-                digest = hashlib.sha256()
-                size = 0
-                with self.path.open("rb") as staged:
-                    while True:
-                        block = staged.read(1024 * 1024)
-                        if not block:
-                            break
-                        size += len(block)
-                        digest.update(block)
-                self._size_bytes = size
-                self._sha256 = digest.hexdigest()
-                self._completed = True
-            except BaseException as observed:
-                error = observed
+            self._sha256 = self._digest.hexdigest()
+            self._completed = True
         self._unlink_stderr()
         if error is not None:
             if isinstance(error, OutputError):
@@ -1043,6 +1045,39 @@ class BamOutput:
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=5)
+
+    def _drain_stdout(self) -> None:
+        process = self.process
+        raw = self.raw
+        if process is None or process.stdout is None or raw is None:
+            self._reader_error = OutputError("BAM output pipe is unavailable")
+            return
+        try:
+            while True:
+                block = process.stdout.read(1024 * 1024)
+                if not block:
+                    return
+                view = memoryview(block)
+                while view:
+                    written = raw.write(view)
+                    if written is None or written <= 0:
+                        raise OSError("staged BAM write made no progress")
+                    self._digest.update(view[:written])
+                    self._size_bytes += written
+                    view = view[written:]
+        except BaseException as error:
+            self._reader_error = error
+        finally:
+            with suppress(OSError):
+                process.stdout.close()
+
+    def _join_reader(self) -> None:
+        reader = self._reader
+        if reader is None:
+            return
+        reader.join(timeout=self._WAIT_SECONDS)
+        if reader.is_alive() and self._reader_error is None:
+            self._reader_error = OutputError("BAM output reader did not terminate")
 
     def _close_files(self) -> None:
         for stream in (self.raw, self.stderr):

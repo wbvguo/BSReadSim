@@ -36,6 +36,7 @@ def build_full_run_argv(
     if technology not in _TECHNOLOGIES:
         raise FullCommandError("normalized technology is not a released run command")
     bisulfite = technology in _BISULFITE_TECHNOLOGIES
+    reads = _mapping(config, "reads")
     fragments = _mapping(config, "fragments")
     inputs = _mapping(config, "inputs")
     mutation = _mapping(config, "mutation")
@@ -48,12 +49,12 @@ def build_full_run_argv(
     argv = [received[0], "run", technology.lower()]
     _option(argv, "--reference", _string(config, "reference"))
     _option(argv, "--output", _string(output, "directory"))
-    if "count" in fragments:
-        _option(argv, "--fragments", fragments["count"])
-    elif "depth" in fragments:
-        _option(argv, "--depth", fragments["depth"])
+    if "count" in reads:
+        _option(argv, "--reads", reads["count"])
+    elif "depth" in reads:
+        _option(argv, "--depth", reads["depth"])
     else:
-        raise FullCommandError("normalized fragments require count or depth")
+        raise FullCommandError("normalized reads require count or depth")
 
     _option(argv, "--seed", _string(config, "seed"))
     _option(argv, "--seed-mut", _string(seeds, "mutation"))
@@ -250,13 +251,7 @@ def _sequencing_options(
 
 
 def _execution_options(argv: list[str], execution: Mapping[str, Any]) -> None:
-    for name, option in (
-        ("workers", "--workers"),
-        ("core_workers", "--core-workers"),
-        ("chunk_size", "--chunk-size"),
-        ("max_in_flight_fragments", "--max-in-flight-fragments"),
-    ):
-        _option(argv, option, execution[name])
+    _option(argv, "--threads", execution["threads"])
 
 
 def _output_options(

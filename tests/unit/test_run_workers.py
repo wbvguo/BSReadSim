@@ -1,6 +1,7 @@
 """Tests for the bounded local/shared batch processing boundary."""
 
 from dataclasses import replace
+import gzip
 import multiprocessing
 import unittest
 
@@ -44,6 +45,7 @@ def run_inline(
     include_details: bool,
     include_alignment: bool = False,
     include_fragment_summary: bool = False,
+    fastq_gzip_level: int | None = None,
 ):
     descriptors, output_offset = slot.prepare(
         ((decoded.first_fragment_ordinal, bytes(decoded.raw_payload)),)
@@ -65,6 +67,7 @@ def run_inline(
             include_details=include_details,
             include_alignment=include_alignment,
             include_fragment_summary=include_fragment_summary,
+            fastq_gzip_level=fastq_gzip_level,
         )
     finally:
         buffer.release()
@@ -82,6 +85,32 @@ def region_bytes(slot, region):
 
 
 class ProcessPoolTests(unittest.TestCase):
+    def test_fastq_batch_can_be_encoded_as_a_deterministic_gzip_member(self) -> None:
+        header, decoded = decoded_payload(details=False)
+        raw_slot = LocalBatchSlot(0)
+        compressed_slot = LocalBatchSlot(1)
+        try:
+            _, _, raw = run_inline(
+                raw_slot, header, decoded, include_details=False
+            )
+            _, _, compressed = run_inline(
+                compressed_slot,
+                header,
+                decoded,
+                include_details=False,
+                fastq_gzip_level=6,
+            )
+            self.assertFalse(raw.precompressed_fastq)
+            self.assertTrue(compressed.precompressed_fastq)
+            self.assertEqual(compressed.record_lengths, raw.record_lengths)
+            self.assertEqual(
+                gzip.decompress(region_bytes(compressed_slot, compressed.read1)),
+                region_bytes(raw_slot, raw.read1),
+            )
+        finally:
+            raw_slot.close()
+            compressed_slot.close()
+
     def test_local_and_shared_slots_use_the_same_processing_core(self) -> None:
         header, decoded = decoded_payload(details=True)
         local = LocalBatchSlot(0)

@@ -31,7 +31,9 @@ def build_core_argv(
     core_executable: PathLike,
     *,
     emit_details: bool = False,
-    protocol_batch_fragments: int = 64,
+    protocol_batch_fragments: int = 1024,
+    chunk_size: int = 8192,
+    core_workers: int = 1,
     methdb_output_path: PathLike | None = None,
 ) -> tuple[str, ...]:
     """Return one complete, deterministic ``htsim-core`` argv tuple.
@@ -49,13 +51,25 @@ def build_core_argv(
     if (
         isinstance(protocol_batch_fragments, bool)
         or not isinstance(protocol_batch_fragments, int)
-        or not 1 <= protocol_batch_fragments <= 64
+        or not 1 <= protocol_batch_fragments <= 4096
     ):
-        raise CoreArgvError("protocol_batch_fragments must be in [1, 64]")
+        raise CoreArgvError("protocol_batch_fragments must be in [1, 4096]")
+    if (
+        isinstance(chunk_size, bool)
+        or not isinstance(chunk_size, int)
+        or not 1 <= chunk_size <= UINT32_MAX
+    ):
+        raise CoreArgvError("chunk_size must be in [1, 4294967295]")
+    if (
+        isinstance(core_workers, bool)
+        or not isinstance(core_workers, int)
+        or not 1 <= core_workers <= 64
+    ):
+        raise CoreArgvError("core_workers must be in [1, 64]")
     config, roles = _validate_prepared_run(prepared)
 
+    reads = _mapping(config, "reads")
     fragments = _mapping(config, "fragments")
-    execution = _mapping(config, "execution")
     mutation = _mapping(config, "mutation")
     sequencing = _mapping(config, "sequencing")
     seeds = _mapping(config, "seeds")
@@ -168,15 +182,23 @@ def build_core_argv(
             _number("fragments.insert_sd", fragments["insert_sd"]),
         )
     )
-    if "depth" in fragments:
-        arguments.extend(("--depth", _number("fragments.depth", fragments["depth"])))
+    if "depth" in reads:
+        arguments.extend(("--depth", _number("reads.depth", reads["depth"])))
     else:
+        reads_per_fragment = 2 if fragments["paired_end"] else 1
+        read_count = int(
+            _unsigned(
+                "reads.count",
+                reads["count"],
+                UINT32_MAX * reads_per_fragment,
+            )
+        )
+        if read_count % reads_per_fragment != 0:
+            raise CoreArgvError("reads.count must form complete fragments")
         arguments.extend(
             (
                 "--fragments",
-                _unsigned(
-                    "fragments.count", fragments["count"], UINT32_MAX
-                ),
+                str(read_count // reads_per_fragment),
             )
         )
     arguments.extend(
@@ -187,9 +209,9 @@ def build_core_argv(
                 fragments["max_ambiguous_fraction"],
             ),
             "--chunk-size",
-            _unsigned("execution.chunk_size", execution["chunk_size"], UINT32_MAX),
+            str(chunk_size),
             "--core-workers",
-            _unsigned("execution.core_workers", execution["core_workers"], 64),
+            str(core_workers),
         )
     )
 
