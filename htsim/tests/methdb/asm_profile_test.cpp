@@ -52,6 +52,11 @@ void require(bool condition, const std::string &message)
     if (!condition) {throw std::runtime_error(message);}
 }
 
+std::uint16_t q(float probability)
+{
+    return htsim::methdb::probability_to_u16(probability);
+}
+
 template <typename Operation>
 void require_error(Operation operation, const std::string &message)
 {
@@ -202,15 +207,15 @@ void verify_valid_profile(const std::vector<std::uint8_t> &input)
         chr1[0].target_reference_position == 1U
             && chr1[0].linked_variant_position == 3U
             && chr1[0].context == MethylationContext::cg_c
-            && chr1[0].reference_methylation_probability == 0.25F
-            && chr1[0].alternate_methylation_probability == 0.75F
+            && chr1[0].reference_probability_u16 == q(0.25F)
+            && chr1[0].alternate_probability_u16 == q(0.75F)
             && chr1[0].linked_reference_base == 0U
             && chr1[0].linked_alternate_base == 3U,
         "first ASM record changed");
     require(
         chr1[1].context == MethylationContext::cg_g
-            && chr1[1].reference_methylation_probability == 0.0F
-            && chr1[1].alternate_methylation_probability == 1.0F,
+            && chr1[1].reference_probability_u16 == q(0.0F)
+            && chr1[1].alternate_probability_u16 == q(1.0F),
         "reverse ASM record changed");
     require(
         chr1[2].context == MethylationContext::chg_c
@@ -270,8 +275,8 @@ void verify_valid_asm_bed(const std::vector<std::uint8_t> &input)
             && chr1[0].linked_variant_position == 3U
             && chr1[0].context == MethylationContext::cg_c
             && chr1[0].dinucleotide_second == 2U
-            && chr1[0].reference_methylation_probability == 0.25F
-            && chr1[0].alternate_methylation_probability == 0.75F
+            && chr1[0].reference_probability_u16 == q(0.25F)
+            && chr1[0].alternate_probability_u16 == q(0.75F)
             && chr1[1].context == MethylationContext::cg_g
             && chr1[2].context == MethylationContext::chg_c
             && chr1[3].context == MethylationContext::chh_c,
@@ -429,8 +434,10 @@ void test_reference_validation_boundaries()
             htsim::methdb::validate_asm_records(
                 bases,
                 {
-                    {2U, 3U, 0.2F, 0.8F, MethylationContext::cg_g, 2U, 0U, 3U},
-                    {1U, 3U, 0.2F, 0.8F, MethylationContext::cg_c, 2U, 0U, 3U},
+                    {2U, 3U, q(0.2F), q(0.8F),
+                     MethylationContext::cg_g, 2U, 0U, 3U},
+                    {1U, 3U, q(0.2F), q(0.8F),
+                     MethylationContext::cg_c, 2U, 0U, 3U},
                 });
         },
         "unsorted normalized ASM records were accepted");
@@ -438,14 +445,16 @@ void test_reference_validation_boundaries()
         [&] {
             htsim::methdb::validate_asm_records(
                 bases,
-                {{1U, 3U, 0.2F, 0.8F, MethylationContext::chh_c, 0U, 0U, 3U}});
+                {{1U, 3U, q(0.2F), q(0.8F),
+                  MethylationContext::chh_c, 0U, 0U, 3U}});
         },
         "wrong normalized ASM context was accepted");
     require_error(
         [&] {
             htsim::methdb::validate_asm_records(
                 bases,
-                {{1U, 3U, 0.2F, 0.8F, MethylationContext::cg_c, 2U, 1U, 3U}});
+                {{1U, 3U, q(0.2F), q(0.8F),
+                  MethylationContext::cg_c, 2U, 1U, 3U}});
         },
         "wrong normalized linked REF was accepted");
 }

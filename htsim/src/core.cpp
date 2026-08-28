@@ -1171,7 +1171,7 @@ void generate_rrbs_candidate_bed(
     }
 }
 
-void generate_methdb_catalog(
+void build_methdb_snapshot(
     const CoreConfig &config,
     std::ostream &sink)
 {
@@ -1803,8 +1803,7 @@ protocol::Trailer generate_core_stream(
                         std::make_unique<methdb::DiploidMethylationCatalog>(
                             contig.index,
                             static_cast<std::uint32_t>(contig.length),
-                            std::vector<methdb::DiploidSite>{},
-                            std::array<std::vector<methdb::DiploidSite>, 2>{});
+                            methdb::DiploidRuntimeArrays{});
                 } else if (saved_methdb_contig) {
                     if (!saved_methdb_contig->diploid) {
                         throw CoreGeneratorError(
@@ -1815,8 +1814,7 @@ protocol::Trailer generate_core_stream(
                         std::make_unique<methdb::DiploidMethylationCatalog>(
                             contig.index,
                             static_cast<std::uint32_t>(contig.length),
-                            std::move(saved_methdb_contig->shared_sites),
-                            std::move(saved_methdb_contig->haplotype_sites));
+                            std::move(saved_methdb_contig->diploid_sites));
                 } else if (generated_methdb) {
                     const methdb::MethylationCatalog baseline(
                         contig.bases,
@@ -1842,16 +1840,9 @@ protocol::Trailer generate_core_stream(
                         *pre_asm_catalog,
                         *variants,
                         asm_records);
-                    if (asm_records.empty()) {
-                        diploid_methylation_catalog =
-                            std::move(pre_asm_catalog);
-                    } else {
-                        diploid_methylation_catalog = std::make_unique<
-                            methdb::DiploidMethylationCatalog>(
-                                *pre_asm_catalog,
-                                *variants,
-                                asm_records);
-                    }
+                    pre_asm_catalog->apply_asm_layer(*variants, asm_records);
+                    diploid_methylation_catalog =
+                        std::move(pre_asm_catalog);
                 } else {
                     diploid_methylation_catalog =
                         std::make_unique<methdb::DiploidMethylationCatalog>(

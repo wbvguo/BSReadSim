@@ -13,7 +13,7 @@ void print_help(std::ostream &output)
     output
         << "Usage: htsim-core [core contract options]\n"
         << "       htsim-core rrbs-catalog [core contract options]\n"
-        << "       htsim-core methdb-catalog [core contract options]\n"
+        << "       htsim-core methdb-build [core contract options]\n"
         << "       htsim-core variant-catalog [core contract options]\n"
         << "       htsim-core methdb-export INPUT.methdb\n"
         << "       htsim-core --sam-to-bam LEVEL\n"
@@ -76,10 +76,10 @@ int main(int argc, char *argv[])
             return 0;
         }
         if (argc >= 2 && argv != nullptr && argv[1] != nullptr
-            && std::string_view(argv[1]) == "methdb-catalog") {
+            && std::string_view(argv[1]) == "methdb-build") {
             const htsim::core::CoreConfig config =
                 htsim::core::parse_core_config(argc - 1, argv + 1);
-            htsim::core::generate_methdb_catalog(config, std::cout);
+            htsim::core::build_methdb_snapshot(config, std::cout);
             std::cout.flush();
             if (!std::cout) {
                 throw htsim::core::CoreGeneratorError(

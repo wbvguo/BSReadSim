@@ -76,8 +76,9 @@ the directory but does not inflate every chromosome.
 
 Methylation probabilities use a two-byte unsigned
 normalized integer (uint16 UNORM): the writer stores
-`round(probability * 65535)` and the reader divides that value by `65535` when
-expanding it to float32. The resolution is therefore a constant `1/65535`
+`round(probability * 65535)`. The reader and runtime keep that integer intact;
+division by `65535` occurs only at text or simulation-protocol output
+boundaries. The resolution is therefore a constant `1/65535`
 across `[0, 1]`, both endpoints are exact, and the maximum quantization error is
 `1/131070`. The writer uses only a bounded compression buffer, rather than
 retaining the serialized profile in memory.
@@ -94,8 +95,7 @@ simulation. With `--save-methdb`, the same simulation process writes canonical
 sections to a transactional sidecar while constructing the runtime catalog;
 it does not run a second whole-genome MethDB build first.
 
-This is the only supported MethDB representation; incompatible historical
-files must be regenerated.
+Version 2 is the only accepted MethDB representation.
 
 ## Exported extended BED
 

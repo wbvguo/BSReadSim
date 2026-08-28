@@ -11,7 +11,6 @@
 #include <charconv>
 #include <cmath>
 #include <cstdio>
-#include <cstring>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -321,8 +320,6 @@ namespace {
 inline constexpr std::size_t cgmap_spool_record_bytes = 12U;
 inline constexpr std::uint8_t pending_bed_dinucleotide = 0xffU;
 
-static_assert(sizeof(float) == sizeof(std::uint32_t));
-static_assert(std::numeric_limits<float>::is_iec559);
 static_assert(sizeof(off_t) >= sizeof(std::int64_t));
 static_assert(std::numeric_limits<off_t>::is_signed);
 
@@ -583,12 +580,8 @@ std::array<std::uint8_t, cgmap_spool_record_bytes> cgmap_encode_record(
     bytes[4] = static_cast<std::uint8_t>(record.context);
     bytes[5] = record.has_probability ? 1U : 0U;
     bytes[6] = record.dinucleotide_second;
-    std::uint32_t probability_bits = 0U;
-    std::memcpy(
-        &probability_bits,
-        &record.methylation_probability,
-        sizeof(probability_bits));
-    cgmap_put_u32(bytes, 8U, probability_bits);
+    bytes[8] = static_cast<std::uint8_t>(record.probability_u16);
+    bytes[9] = static_cast<std::uint8_t>(record.probability_u16 >> 8U);
     return bytes;
 }
 
@@ -605,7 +598,8 @@ CgmapRecord cgmap_decode_record(
                 model::MethylationContext::cg_g))
         : cgmap_valid_context(
             static_cast<model::MethylationContext>(bytes[4]));
-    if (bytes[5] > 1U || bytes[7] != 0U || !valid_context
+    if (bytes[5] > 1U || bytes[7] != 0U || bytes[10] != 0U
+        || bytes[11] != 0U || !valid_context
         || (bed_methyl
             ? (bytes[5] != 1U || bytes[6] != pending_bed_dinucleotide)
             : bytes[6] > 3U)) {
@@ -616,15 +610,10 @@ CgmapRecord cgmap_decode_record(
     record.context = static_cast<model::MethylationContext>(bytes[4]);
     record.has_probability = bytes[5] == 1U;
     record.dinucleotide_second = bytes[6];
-    const std::uint32_t probability_bits = cgmap_get_u32(bytes, 8U);
-    std::memcpy(
-        &record.methylation_probability,
-        &probability_bits,
-        sizeof(probability_bits));
-    if (!std::isfinite(record.methylation_probability)
-        || record.methylation_probability < 0.0F
-        || record.methylation_probability > 1.0F
-        || (!record.has_probability && record.methylation_probability != 0.0F)) {
+    record.probability_u16 = static_cast<std::uint16_t>(bytes[8])
+        | static_cast<std::uint16_t>(
+            static_cast<std::uint16_t>(bytes[9]) << 8U);
+    if (!record.has_probability && record.probability_u16 != 0U) {
         throw CgmapProfileError("CGmap spool record is corrupt");
     }
     return record;
@@ -687,12 +676,8 @@ void validate_cgmap_records(
         first = false;
         previous = record.reference_position;
         if (!cgmap_valid_context(record.context)
-            || !std::isfinite(record.methylation_probability)
-            || record.methylation_probability < 0.0F
-            || record.methylation_probability > 1.0F
             || record.dinucleotide_second > 3U
-            || (!record.has_probability
-                && record.methylation_probability != 0.0F)) {
+            || (!record.has_probability && record.probability_u16 != 0U)) {
             throw CgmapProfileError("CGmap record value is invalid");
         }
         const auto observed = classify_context(
@@ -832,7 +817,7 @@ public:
                             position = start;
                             record = CgmapRecord{
                                 position,
-                                probability,
+                                probability_to_u16(probability),
                                 strand,
                                 true,
                                 pending_bed_dinucleotide,
@@ -863,7 +848,9 @@ public:
                             }
                             record = CgmapRecord{
                                 position,
-                                probability.value_or(0.0F),
+                                probability
+                                    ? probability_to_u16(*probability)
+                                    : ProbabilityU16{0U},
                                 context,
                                 probability.has_value(),
                                 dinucleotide_second,
@@ -1055,10 +1042,8 @@ using AsmFilePointer = std::unique_ptr<std::FILE, AsmFileCloser>;
 
 namespace {
 
-inline constexpr std::size_t asm_spool_record_bytes = 20U;
+inline constexpr std::size_t asm_spool_record_bytes = 16U;
 
-static_assert(sizeof(float) == sizeof(std::uint32_t));
-static_assert(std::numeric_limits<float>::is_iec559);
 static_assert(sizeof(off_t) >= sizeof(std::int64_t));
 static_assert(std::numeric_limits<off_t>::is_signed);
 
@@ -1289,22 +1274,16 @@ std::array<std::uint8_t, asm_spool_record_bytes> asm_encode_record(
     std::array<std::uint8_t, asm_spool_record_bytes> bytes = {};
     asm_put_u32(bytes, 0U, record.target_reference_position);
     asm_put_u32(bytes, 4U, record.linked_variant_position);
-    std::uint32_t reference_probability_bits = 0U;
-    std::uint32_t alternate_probability_bits = 0U;
-    std::memcpy(
-        &reference_probability_bits,
-        &record.reference_methylation_probability,
-        sizeof(reference_probability_bits));
-    std::memcpy(
-        &alternate_probability_bits,
-        &record.alternate_methylation_probability,
-        sizeof(alternate_probability_bits));
-    asm_put_u32(bytes, 8U, reference_probability_bits);
-    asm_put_u32(bytes, 12U, alternate_probability_bits);
-    bytes[16] = static_cast<std::uint8_t>(record.context);
-    bytes[17] = record.dinucleotide_second;
-    bytes[18] = record.linked_reference_base;
-    bytes[19] = record.linked_alternate_base;
+    bytes[8] = static_cast<std::uint8_t>(record.reference_probability_u16);
+    bytes[9] = static_cast<std::uint8_t>(
+        record.reference_probability_u16 >> 8U);
+    bytes[10] = static_cast<std::uint8_t>(record.alternate_probability_u16);
+    bytes[11] = static_cast<std::uint8_t>(
+        record.alternate_probability_u16 >> 8U);
+    bytes[12] = static_cast<std::uint8_t>(record.context);
+    bytes[13] = record.dinucleotide_second;
+    bytes[14] = record.linked_reference_base;
+    bytes[15] = record.linked_alternate_base;
     return bytes;
 }
 
@@ -1315,20 +1294,16 @@ AsmRecord asm_decode_record(
     AsmRecord record;
     record.target_reference_position = asm_get_u32(bytes, 0U);
     record.linked_variant_position = asm_get_u32(bytes, 4U);
-    const std::uint32_t reference_probability_bits = asm_get_u32(bytes, 8U);
-    const std::uint32_t alternate_probability_bits = asm_get_u32(bytes, 12U);
-    std::memcpy(
-        &record.reference_methylation_probability,
-        &reference_probability_bits,
-        sizeof(reference_probability_bits));
-    std::memcpy(
-        &record.alternate_methylation_probability,
-        &alternate_probability_bits,
-        sizeof(alternate_probability_bits));
-    record.context = static_cast<model::MethylationContext>(bytes[16]);
-    record.dinucleotide_second = bytes[17];
-    record.linked_reference_base = bytes[18];
-    record.linked_alternate_base = bytes[19];
+    record.reference_probability_u16 = static_cast<std::uint16_t>(bytes[8])
+        | static_cast<std::uint16_t>(
+            static_cast<std::uint16_t>(bytes[9]) << 8U);
+    record.alternate_probability_u16 = static_cast<std::uint16_t>(bytes[10])
+        | static_cast<std::uint16_t>(
+            static_cast<std::uint16_t>(bytes[11]) << 8U);
+    record.context = static_cast<model::MethylationContext>(bytes[12]);
+    record.dinucleotide_second = bytes[13];
+    record.linked_reference_base = bytes[14];
+    record.linked_alternate_base = bytes[15];
     const bool bed = format == AsmProfileFormat::bed;
     const std::uint8_t context_value = static_cast<std::uint8_t>(record.context);
     const bool valid_context = bed
@@ -1339,12 +1314,6 @@ AsmRecord asm_decode_record(
                 model::MethylationContext::cg_g))
         : asm_valid_context(record.context);
     if (!valid_context
-        || !std::isfinite(record.reference_methylation_probability)
-        || !std::isfinite(record.alternate_methylation_probability)
-        || record.reference_methylation_probability < 0.0F
-        || record.reference_methylation_probability > 1.0F
-        || record.alternate_methylation_probability < 0.0F
-        || record.alternate_methylation_probability > 1.0F
         || (bed
             ? record.dinucleotide_second != pending_bed_dinucleotide
             : record.dinucleotide_second > 3U)
@@ -1415,12 +1384,6 @@ void validate_asm_records(
         first = false;
         previous = record.target_reference_position;
         if (!asm_valid_context(record.context)
-            || !std::isfinite(record.reference_methylation_probability)
-            || !std::isfinite(record.alternate_methylation_probability)
-            || record.reference_methylation_probability < 0.0F
-            || record.reference_methylation_probability > 1.0F
-            || record.alternate_methylation_probability < 0.0F
-            || record.alternate_methylation_probability > 1.0F
             || record.dinucleotide_second > 3U
             || record.linked_reference_base > 3U
             || record.linked_alternate_base > 3U
@@ -1581,8 +1544,8 @@ public:
                             record = AsmRecord{
                                 target_position,
                                 variant_position,
-                                reference_probability,
-                                alternate_probability,
+                                probability_to_u16(reference_probability),
+                                probability_to_u16(alternate_probability),
                                 context,
                                 pending_bed_dinucleotide,
                                 linked_reference_base,
@@ -1641,8 +1604,8 @@ public:
                             record = AsmRecord{
                                 target_position,
                                 variant_position,
-                                reference_probability,
-                                alternate_probability,
+                                probability_to_u16(reference_probability),
+                                probability_to_u16(alternate_probability),
                                 context,
                                 dinucleotide_second,
                                 linked_reference_base,
@@ -2255,21 +2218,21 @@ MethylationCatalog::MethylationCatalog(
             const ShapePair &shape = shape_for_context(*context, shapes);
             const SiteEntity entity = reference_site_entity(
                 static_cast<std::uint32_t>(position));
-            const std::optional<float> pooled = context_pool
+            const std::optional<ProbabilityU16> pooled = context_pool
                 ? context_pool->sample(
                       *context, master_seed, contig_index, entity)
                 : std::nullopt;
-            const float probability = pooled
+            const ProbabilityU16 probability = pooled
                 ? *pooled
-                : beta_sampler::sample_beta_for_site(
+                : probability_to_u16(beta_sampler::sample_beta_for_site(
                       master_seed,
                       contig_index,
                       entity,
                       shape.alpha,
-                      shape.beta);
+                      shape.beta));
             sites_.push_back(CatalogSite{
                 static_cast<std::uint32_t>(position),
-                probability_to_u16(probability),
+                probability,
                 *context,
                 pooled
                     ? model::MethylationSource::pooled_cgmap
@@ -2293,8 +2256,7 @@ MethylationCatalog::MethylationCatalog(
                         "CGmap context disagrees with the prepared "
                         "methylation profile");
                 }
-                site->probability_u16 =
-                    probability_to_u16(record.methylation_probability);
+                site->probability_u16 = record.probability_u16;
                 site->methylation_source = model::MethylationSource::cgmap;
             }
         }
@@ -2357,12 +2319,8 @@ std::size_t pool_index(model::MethylationContext context)
 void validate_record(const CgmapRecord &record)
 {
     (void)pool_index(record.context);
-    if (!std::isfinite(record.methylation_probability)
-        || record.methylation_probability < 0.0F
-        || record.methylation_probability > 1.0F
-        || record.dinucleotide_second > 3U
-        || (!record.has_probability
-            && record.methylation_probability != 0.0F)) {
+    if (record.dinucleotide_second > 3U
+        || (!record.has_probability && record.probability_u16 != 0U)) {
         throw CgmapPoolError("CGmap pool record is not normalized");
     }
 }
@@ -2386,7 +2344,7 @@ CgmapPool::CgmapPool(const std::vector<CgmapRecord> &records)
         if (values.size() >= std::numeric_limits<std::uint32_t>::max()) {
             throw CgmapPoolError("CGmap context pool exceeds uint32");
         }
-        values.push_back(record.methylation_probability);
+        values.push_back(record.probability_u16);
     }
 }
 
@@ -2399,7 +2357,7 @@ std::uint32_t CgmapPool::size(model::MethylationContext context) const
     return static_cast<std::uint32_t>(observed);
 }
 
-std::optional<float> CgmapPool::sample(
+std::optional<ProbabilityU16> CgmapPool::sample(
     model::MethylationContext context,
     std::uint64_t master_seed,
     std::uint32_t contig_index,
@@ -2434,7 +2392,20 @@ std::optional<float> CgmapPool::sample(
 namespace htsim::methdb {
 namespace {
 
-inline constexpr std::uint64_t insertion_origin_flag = UINT64_C(1) << 63U;
+std::uint32_t insertion_runtime_key(
+    std::uint32_t event_ordinal,
+    std::uint8_t insertion_offset)
+{
+    if (event_ordinal == model::no_variant_index
+        || event_ordinal > (std::numeric_limits<std::uint32_t>::max() >> 2U)) {
+        throw DiploidCatalogError(
+            "insertion event ordinal exceeds the runtime key boundary");
+    }
+    if (insertion_offset >= model::maximum_insertion_bases) {
+        throw DiploidCatalogError("insertion origin offset must be in [0, 3]");
+    }
+    return (event_ordinal << 2U) | insertion_offset;
+}
 
 struct BaseOrigin {
     bool insertion = false;
@@ -2442,13 +2413,22 @@ struct BaseOrigin {
     std::uint32_t event_ordinal = 0;
     std::uint8_t insertion_offset = 0;
 
-    std::uint64_t id() const
+    std::uint32_t runtime_key() const
     {
         return insertion
-            ? insertion_origin_id(event_ordinal, insertion_offset)
-            : reference_origin_id(reference_anchor);
+            ? insertion_runtime_key(event_ordinal, insertion_offset)
+            : reference_anchor;
     }
 };
+
+bool same_origin(const BaseOrigin &left, const BaseOrigin &right) noexcept
+{
+    return left.insertion == right.insertion
+        && left.reference_anchor == right.reference_anchor
+        && (!left.insertion
+            || (left.event_ordinal == right.event_ordinal
+                && left.insertion_offset == right.insertion_offset));
+}
 
 bool origin_less(const BaseOrigin &left, const BaseOrigin &right) noexcept
 {
@@ -2697,7 +2677,7 @@ SiteEntity site_entity(
               site.origin.reference_anchor, mask, zero_based_haplotype);
 }
 
-DiploidSite make_site(
+RuntimeSite make_runtime_site(
     const RawSite &raw,
     bool shared,
     std::uint8_t zero_based_haplotype,
@@ -2713,78 +2693,107 @@ DiploidSite make_site(
         : raw.equals_reference
             ? model::MethylationAllele::reference_haplotype
             : model::MethylationAllele::alternate_haplotype;
-    const std::optional<float> pooled = context_pool
+    const std::optional<ProbabilityU16> pooled = context_pool
         ? context_pool->sample(
               raw.context, master_seed, contig_index, entity)
         : std::nullopt;
-    return DiploidSite{
-        raw.origin.id(),
+    const ProbabilityU16 probability = pooled
+        ? *pooled
+        : probability_to_u16(beta_sampler::sample_beta_for_site(
+              master_seed,
+              contig_index,
+              entity,
+              shape.alpha,
+              shape.beta));
+    return pack_runtime_site(
+        raw.origin.runtime_key(),
+        probability,
         raw.context,
         pooled
             ? model::MethylationSource::pooled_cgmap
             : model::MethylationSource::beta,
         allele,
-        pooled
-            ? *pooled
-            : beta_sampler::sample_beta_for_site(
-                  master_seed,
-                  contig_index,
-                  entity,
-                  shape.alpha,
-                  shape.beta),
-        raw.equals_reference,
-    };
+        raw.equals_reference);
 }
 
-void sort_and_validate(std::vector<DiploidSite> &sites)
+void append_runtime_site(
+    DiploidRuntimeArrays &arrays,
+    const RawSite &raw,
+    bool shared,
+    std::uint8_t zero_based_haplotype,
+    std::uint64_t master_seed,
+    std::uint32_t contig_index,
+    const ContextShapes &shapes,
+    const CgmapPool *context_pool)
 {
-    std::sort(
-        sites.begin(), sites.end(),
-        [](const DiploidSite &left, const DiploidSite &right) {
-            return left.origin_id < right.origin_id;
-        });
+    RuntimeSite site = make_runtime_site(
+        raw,
+        shared,
+        zero_based_haplotype,
+        master_seed,
+        contig_index,
+        shapes,
+        context_pool);
+    if (raw.origin.insertion) {
+        if (shared) {
+            arrays.insertion_shared.push_back(site);
+        } else {
+            arrays.insertion_haplotypes[zero_based_haplotype].push_back(site);
+        }
+    } else if (shared) {
+        arrays.reference_shared.push_back(site);
+    } else {
+        arrays.reference_haplotypes[zero_based_haplotype].push_back(site);
+    }
+}
+
+void sort_runtime_sites(std::vector<RuntimeSite> &sites)
+{
+    std::sort(sites.begin(), sites.end());
     for (std::size_t index = 1; index < sites.size(); ++index) {
-        if (sites[index - 1U].origin_id == sites[index].origin_id) {
+        if (runtime_site_key(sites[index - 1U])
+            == runtime_site_key(sites[index])) {
             throw DiploidCatalogError("methylation profile has duplicate origins");
         }
     }
 }
 
-const DiploidSite *find_site(
-    const std::vector<DiploidSite> &sites,
-    std::uint64_t origin_id) noexcept
+const RuntimeSite *find_runtime_site(
+    const std::vector<RuntimeSite> &sites,
+    std::uint32_t key) noexcept
 {
+    const RuntimeSite query = static_cast<RuntimeSite>(key) << 32U;
     const auto found = std::lower_bound(
-        sites.begin(), sites.end(), origin_id,
-        [](const DiploidSite &site, std::uint64_t value) {
-            return site.origin_id < value;
-        });
-    return found != sites.end() && found->origin_id == origin_id
+        sites.begin(), sites.end(), query);
+    return found != sites.end() && runtime_site_key(*found) == key
         ? &*found
         : nullptr;
 }
 
 void overlay_cgmap(
-    std::vector<DiploidSite> &sites,
+    std::vector<RuntimeSite> &reference_sites,
     const std::vector<CgmapRecord> &records)
 {
     for (const CgmapRecord &record : records) {
         if (!record.has_probability) {continue;}
-        const std::uint64_t origin =
-            reference_origin_id(record.reference_position);
+        const RuntimeSite query =
+            static_cast<RuntimeSite>(record.reference_position) << 32U;
         const auto found = std::lower_bound(
-            sites.begin(), sites.end(), origin,
-            [](const DiploidSite &site, std::uint64_t value) {
-                return site.origin_id < value;
-            });
-        if (found == sites.end() || found->origin_id != origin
-            || found->context != record.context
-            || found->allele
+            reference_sites.begin(), reference_sites.end(), query);
+        if (found == reference_sites.end()
+            || runtime_site_key(*found) != record.reference_position
+            || runtime_site_context(*found) != record.context
+            || runtime_site_allele(*found)
                 == model::MethylationAllele::alternate_haplotype) {
             continue;
         }
-        found->methylation_probability = record.methylation_probability;
-        found->methylation_source = model::MethylationSource::cgmap;
+        *found = pack_runtime_site(
+            record.reference_position,
+            record.probability_u16,
+            runtime_site_context(*found),
+            model::MethylationSource::cgmap,
+            runtime_site_allele(*found),
+            runtime_site_reference_equivalent(*found));
     }
 }
 
@@ -2829,35 +2838,56 @@ std::uint8_t alternate_haplotype(
         "ASM linked VCF SNV must be heterozygous");
 }
 
-void overlay_asm(
-    std::vector<DiploidSite> &shared_sites,
-    std::array<std::vector<DiploidSite>, 2> &haplotype_sites,
+void validate_runtime_asm_layer(
+    const DiploidRuntimeArrays &arrays,
     const std::vector<variant::Variant> &variants,
     const std::vector<AsmRecord> &records)
 {
-    std::vector<DiploidSite> retained_shared;
-    retained_shared.reserve(shared_sites.size());
-    std::array<std::vector<DiploidSite>, 2> additions;
+    for (const AsmRecord &record : records) {
+        const std::uint32_t target = record.target_reference_position;
+        const RuntimeSite *shared = find_runtime_site(
+            arrays.reference_shared, target);
+        if (shared == nullptr
+            || runtime_site_context(*shared) != record.context
+            || runtime_site_allele(*shared)
+                != model::MethylationAllele::shared
+            || !runtime_site_reference_equivalent(*shared)
+            || find_runtime_site(arrays.reference_haplotypes[0], target)
+                != nullptr
+            || find_runtime_site(arrays.reference_haplotypes[1], target)
+                != nullptr) {
+            throw DiploidCatalogError(
+                "ASM target is not one shared reference-equivalent diploid site");
+        }
+        (void)resolve_asm_snv(variants, record);
+    }
+}
+
+void overlay_asm(
+    DiploidRuntimeArrays &arrays,
+    const std::vector<variant::Variant> &variants,
+    const std::vector<AsmRecord> &records)
+{
+    validate_runtime_asm_layer(arrays, variants, records);
+    std::vector<RuntimeSite> retained_shared;
+    retained_shared.reserve(arrays.reference_shared.size());
+    std::array<std::vector<RuntimeSite>, 2> additions;
     additions[0].reserve(records.size());
     additions[1].reserve(records.size());
 
     std::size_t shared_index = 0U;
     for (const AsmRecord &record : records) {
-        const std::uint64_t target =
-            reference_origin_id(record.target_reference_position);
-        while (shared_index < shared_sites.size()
-               && shared_sites[shared_index].origin_id < target) {
-            retained_shared.push_back(shared_sites[shared_index++]);
+        const std::uint32_t target = record.target_reference_position;
+        while (shared_index < arrays.reference_shared.size()
+               && runtime_site_key(arrays.reference_shared[shared_index])
+                   < target) {
+            retained_shared.push_back(
+                arrays.reference_shared[shared_index++]);
         }
-        if (shared_index == shared_sites.size()
-            || shared_sites[shared_index].origin_id != target
-            || shared_sites[shared_index].context != record.context
-            || shared_sites[shared_index].allele
-                != model::MethylationAllele::shared
-            || find_site(haplotype_sites[0], target) != nullptr
-            || find_site(haplotype_sites[1], target) != nullptr) {
-            throw DiploidCatalogError(
-                "ASM target is not one shared reference-equivalent diploid site");
+        if (shared_index == arrays.reference_shared.size()
+            || runtime_site_key(arrays.reference_shared[shared_index])
+                != target) {
+            throw DiploidCatalogError("validated ASM target disappeared");
         }
 
         const variant::Variant &event = resolve_asm_snv(variants, record);
@@ -2866,34 +2896,109 @@ void overlay_asm(
         const std::uint8_t ref_haplotype =
             static_cast<std::uint8_t>(1U - alt_haplotype);
 
-        DiploidSite reference_site = shared_sites[shared_index];
-        reference_site.methylation_source = model::MethylationSource::asm_source;
-        reference_site.allele =
-            model::MethylationAllele::reference_haplotype;
-        reference_site.methylation_probability =
-            record.reference_methylation_probability;
-        additions[ref_haplotype].push_back(reference_site);
-
-        DiploidSite alternate_site = shared_sites[shared_index];
-        alternate_site.methylation_source = model::MethylationSource::asm_source;
-        alternate_site.allele =
-            model::MethylationAllele::alternate_haplotype;
-        alternate_site.methylation_probability =
-            record.alternate_methylation_probability;
-        additions[alt_haplotype].push_back(alternate_site);
+        additions[ref_haplotype].push_back(pack_runtime_site(
+            target,
+            record.reference_probability_u16,
+            record.context,
+            model::MethylationSource::asm_source,
+            model::MethylationAllele::reference_haplotype,
+            true));
+        additions[alt_haplotype].push_back(pack_runtime_site(
+            target,
+            record.alternate_probability_u16,
+            record.context,
+            model::MethylationSource::asm_source,
+            model::MethylationAllele::alternate_haplotype,
+            true));
         ++shared_index;
     }
     retained_shared.insert(
         retained_shared.end(),
-        shared_sites.begin() + static_cast<std::ptrdiff_t>(shared_index),
-        shared_sites.end());
-    shared_sites.swap(retained_shared);
+        arrays.reference_shared.begin()
+            + static_cast<std::ptrdiff_t>(shared_index),
+        arrays.reference_shared.end());
+    arrays.reference_shared.swap(retained_shared);
     for (std::size_t haplotype = 0U; haplotype < additions.size(); ++haplotype) {
-        haplotype_sites[haplotype].insert(
-            haplotype_sites[haplotype].end(),
+        arrays.reference_haplotypes[haplotype].insert(
+            arrays.reference_haplotypes[haplotype].end(),
             additions[haplotype].begin(),
             additions[haplotype].end());
-        sort_and_validate(haplotype_sites[haplotype]);
+        sort_runtime_sites(arrays.reference_haplotypes[haplotype]);
+    }
+}
+
+void validate_runtime_array(
+    const std::vector<RuntimeSite> &sites,
+    std::uint32_t reference_length,
+    bool insertion,
+    bool shared)
+{
+    std::uint32_t previous = 0U;
+    bool first = true;
+    for (const RuntimeSite site : sites) {
+        const std::uint32_t key = runtime_site_key(site);
+        if ((!first && key <= previous)
+            || (!insertion && key >= reference_length)
+            || (insertion && runtime_site_reference_equivalent(site))
+            || ((runtime_site_allele(site)
+                    == model::MethylationAllele::shared)
+                != shared)) {
+            throw DiploidCatalogError(
+                "packed diploid methylation profile row is invalid");
+        }
+        (void)runtime_site_context(site);
+        (void)runtime_site_source(site);
+        previous = key;
+        first = false;
+    }
+}
+
+void validate_no_overlap(
+    const std::vector<RuntimeSite> &shared,
+    const std::vector<RuntimeSite> &specific)
+{
+    std::size_t left = 0U;
+    std::size_t right = 0U;
+    while (left < shared.size() && right < specific.size()) {
+        const std::uint32_t shared_key = runtime_site_key(shared[left]);
+        const std::uint32_t specific_key = runtime_site_key(specific[right]);
+        if (shared_key == specific_key) {
+            throw DiploidCatalogError(
+                "shared and haplotype profile sites overlap at one key");
+        }
+        if (shared_key < specific_key) {
+            ++left;
+        } else {
+            ++right;
+        }
+    }
+}
+
+void validate_runtime_arrays(
+    const DiploidRuntimeArrays &arrays,
+    std::uint32_t reference_length)
+{
+    validate_runtime_array(
+        arrays.reference_shared, reference_length, false, true);
+    validate_runtime_array(
+        arrays.insertion_shared, reference_length, true, true);
+    for (std::size_t haplotype = 0U; haplotype < 2U; ++haplotype) {
+        validate_runtime_array(
+            arrays.reference_haplotypes[haplotype],
+            reference_length,
+            false,
+            false);
+        validate_runtime_array(
+            arrays.insertion_haplotypes[haplotype],
+            reference_length,
+            true,
+            false);
+        validate_no_overlap(
+            arrays.reference_shared,
+            arrays.reference_haplotypes[haplotype]);
+        validate_no_overlap(
+            arrays.insertion_shared,
+            arrays.insertion_haplotypes[haplotype]);
     }
 }
 
@@ -2903,83 +3008,6 @@ bool context_matches_base(
 {
     const auto value = static_cast<std::uint8_t>(context);
     return (value < 8U && base == 1U) || (value >= 8U && base == 2U);
-}
-
-std::uint32_t runtime_insertion_key(std::uint64_t origin_id)
-{
-    if ((origin_id & insertion_origin_flag) == 0U) {
-        throw DiploidCatalogError("reference origin used as an insertion key");
-    }
-    const std::uint64_t payload = origin_id & ~insertion_origin_flag;
-    if (payload > std::numeric_limits<std::uint32_t>::max()) {
-        throw DiploidCatalogError(
-            "insertion event ordinal exceeds the runtime key boundary");
-    }
-    return static_cast<std::uint32_t>(payload);
-}
-
-std::uint64_t decoded_origin_id(RuntimeSite site, bool insertion) noexcept
-{
-    const std::uint64_t key = runtime_site_key(site);
-    return insertion ? insertion_origin_flag | key : key;
-}
-
-void pack_diploid_sites(
-    const std::vector<DiploidSite> &sites,
-    std::uint32_t reference_length,
-    std::vector<RuntimeSite> &reference,
-    std::vector<RuntimeSite> &insertion)
-{
-    std::uint64_t previous = 0U;
-    bool first = true;
-    for (const DiploidSite &site : sites) {
-        if ((!first && site.origin_id <= previous)
-            || !std::isfinite(site.methylation_probability)
-            || site.methylation_probability < 0.0F
-            || site.methylation_probability > 1.0F
-            || static_cast<std::uint8_t>(site.allele) > 2U) {
-            throw DiploidCatalogError(
-                "loaded diploid methylation profile row is invalid");
-        }
-        const bool inserted = (site.origin_id & insertion_origin_flag) != 0U;
-        const std::uint32_t key = inserted
-            ? runtime_insertion_key(site.origin_id)
-            : static_cast<std::uint32_t>(site.origin_id);
-        if (!inserted && site.origin_id >= reference_length) {
-            throw DiploidCatalogError(
-                "loaded diploid reference origin is outside the contig");
-        }
-        auto &output = inserted ? insertion : reference;
-        output.push_back(pack_runtime_site(
-            key,
-            probability_to_u16(site.methylation_probability),
-            site.context,
-            site.methylation_source,
-            site.allele,
-            site.reference_equivalent));
-        previous = site.origin_id;
-        first = false;
-    }
-}
-
-std::vector<DiploidSite> decode_diploid_sites(
-    const std::vector<RuntimeSite> &reference,
-    const std::vector<RuntimeSite> &insertion)
-{
-    std::vector<DiploidSite> result;
-    result.reserve(reference.size() + insertion.size());
-    const auto append = [&](RuntimeSite site, bool inserted) {
-        result.emplace_back(
-            decoded_origin_id(site, inserted),
-            runtime_site_context(site),
-            runtime_site_source(site),
-            runtime_site_allele(site),
-            probability_from_u16(runtime_site_probability(site)),
-            runtime_site_reference_equivalent(site));
-    };
-    for (const RuntimeSite site : reference) {append(site, false);}
-    for (const RuntimeSite site : insertion) {append(site, true);}
-    return result;
 }
 
 const RuntimeSite *select_runtime_site(
@@ -3015,26 +3043,6 @@ const RuntimeSite *select_runtime_site(
 }
 
 } // namespace
-
-std::uint64_t reference_origin_id(std::uint32_t reference_position) noexcept
-{
-    return reference_position;
-}
-
-std::uint64_t insertion_origin_id(
-    std::uint32_t event_ordinal,
-    std::uint8_t insertion_offset)
-{
-    if (event_ordinal == model::no_variant_index) {
-        throw DiploidCatalogError("insertion origin uses the no-event sentinel");
-    }
-    if (insertion_offset >= model::maximum_insertion_bases) {
-        throw DiploidCatalogError("insertion origin offset must be in [0, 3]");
-    }
-    return insertion_origin_flag
-        | (static_cast<std::uint64_t>(event_ordinal) << 2U)
-        | insertion_offset;
-}
 
 void validate_asm_targets(
     const reference::Contig &contig,
@@ -3101,66 +3109,12 @@ void validate_asm_targets(
 DiploidMethylationCatalog::DiploidMethylationCatalog(
     std::uint32_t contig_index,
     std::uint32_t reference_length,
-    std::vector<DiploidSite> shared_sites,
-    std::array<std::vector<DiploidSite>, 2> haplotype_sites)
+    DiploidRuntimeArrays runtime_arrays)
     : contig_index_(contig_index),
-      reference_length_(reference_length)
+      reference_length_(reference_length),
+      runtime_arrays_(std::move(runtime_arrays))
 {
-    pack_diploid_sites(
-        shared_sites,
-        reference_length_,
-        reference_shared_sites_,
-        insertion_shared_sites_);
-    for (std::size_t haplotype = 0U; haplotype < 2U; ++haplotype) {
-        pack_diploid_sites(
-            haplotype_sites[haplotype],
-            reference_length_,
-            reference_haplotype_sites_[haplotype],
-            insertion_haplotype_sites_[haplotype]);
-    }
-}
-
-DiploidMethylationCatalog::DiploidMethylationCatalog(
-    const DiploidMethylationCatalog &pre_asm_catalog,
-    const std::vector<variant::Variant> &variants,
-    const std::vector<AsmRecord> &asm_records)
-    : contig_index_(pre_asm_catalog.contig_index_),
-      reference_length_(pre_asm_catalog.reference_length_)
-{
-    if (asm_records.empty()) {
-        reference_shared_sites_ = pre_asm_catalog.reference_shared_sites_;
-        reference_haplotype_sites_ =
-            pre_asm_catalog.reference_haplotype_sites_;
-        insertion_shared_sites_ = pre_asm_catalog.insertion_shared_sites_;
-        insertion_haplotype_sites_ =
-            pre_asm_catalog.insertion_haplotype_sites_;
-        return;
-    }
-    try {
-        std::vector<DiploidSite> shared_sites =
-            pre_asm_catalog.shared_sites();
-        std::array<std::vector<DiploidSite>, 2> haplotype_sites = {{
-            pre_asm_catalog.haplotype_sites(0U),
-            pre_asm_catalog.haplotype_sites(1U),
-        }};
-        overlay_asm(shared_sites, haplotype_sites, variants, asm_records);
-        pack_diploid_sites(
-            shared_sites,
-            reference_length_,
-            reference_shared_sites_,
-            insertion_shared_sites_);
-        for (std::size_t haplotype = 0U; haplotype < 2U; ++haplotype) {
-            pack_diploid_sites(
-                haplotype_sites[haplotype],
-                reference_length_,
-                reference_haplotype_sites_[haplotype],
-                insertion_haplotype_sites_[haplotype]);
-        }
-    } catch (const DiploidCatalogError &) {
-        throw;
-    } catch (const std::exception &error) {
-        throw DiploidCatalogError(error.what());
-    }
+    validate_runtime_arrays(runtime_arrays_, reference_length_);
 }
 
 DiploidMethylationCatalog::DiploidMethylationCatalog(
@@ -3173,8 +3127,7 @@ DiploidMethylationCatalog::DiploidMethylationCatalog(
     const std::vector<AsmRecord> *asm_records,
     bool pool_cgmap)
 {
-    std::vector<DiploidSite> shared_sites;
-    std::array<std::vector<DiploidSite>, 2> haplotype_sites;
+    DiploidRuntimeArrays runtime_arrays;
     try {
         if (contig.length != contig.bases.size()
             || contig.length > std::numeric_limits<std::uint32_t>::max()
@@ -3205,88 +3158,88 @@ DiploidMethylationCatalog::DiploidMethylationCatalog(
         auto left = haplotype_0.next();
         auto right = haplotype_1.next();
         while (left || right) {
-            if (left && right && left->origin.id() == right->origin.id()) {
+            if (left && right && same_origin(left->origin, right->origin)) {
                 if (left->context == right->context) {
                     if (left->equals_reference != right->equals_reference) {
                         throw DiploidCatalogError(
                             "identical diploid sites disagree with the reference");
                     }
-                    shared_sites.push_back(make_site(
+                    append_runtime_site(
+                        runtime_arrays,
                         *left,
                         true,
                         0U,
                         master_seed,
                         contig.index,
                         shapes,
-                        context_pool.get()));
+                        context_pool.get());
                 } else {
-                    haplotype_sites[0].push_back(make_site(
+                    append_runtime_site(
+                        runtime_arrays,
                         *left,
                         false,
                         0U,
                         master_seed,
                         contig.index,
                         shapes,
-                        context_pool.get()));
-                    haplotype_sites[1].push_back(make_site(
+                        context_pool.get());
+                    append_runtime_site(
+                        runtime_arrays,
                         *right,
                         false,
                         1U,
                         master_seed,
                         contig.index,
                         shapes,
-                        context_pool.get()));
+                        context_pool.get());
                 }
                 left = haplotype_0.next();
                 right = haplotype_1.next();
             } else if (left
                        && (!right || origin_less(left->origin, right->origin))) {
-                haplotype_sites[0].push_back(make_site(
+                append_runtime_site(
+                    runtime_arrays,
                     *left,
                     false,
                     0U,
                     master_seed,
                     contig.index,
                     shapes,
-                    context_pool.get()));
+                    context_pool.get());
                 left = haplotype_0.next();
             } else {
-                haplotype_sites[1].push_back(make_site(
+                append_runtime_site(
+                    runtime_arrays,
                     *right,
                     false,
                     1U,
                     master_seed,
                     contig.index,
                     shapes,
-                    context_pool.get()));
+                    context_pool.get());
                 right = haplotype_1.next();
             }
         }
-        sort_and_validate(shared_sites);
-        sort_and_validate(haplotype_sites[0]);
-        sort_and_validate(haplotype_sites[1]);
+        sort_runtime_sites(runtime_arrays.reference_shared);
+        sort_runtime_sites(runtime_arrays.insertion_shared);
+        for (std::size_t haplotype = 0U; haplotype < 2U; ++haplotype) {
+            sort_runtime_sites(runtime_arrays.reference_haplotypes[haplotype]);
+            sort_runtime_sites(runtime_arrays.insertion_haplotypes[haplotype]);
+        }
         if (cgmap_records != nullptr && !pool_cgmap) {
-            overlay_cgmap(shared_sites, *cgmap_records);
-            overlay_cgmap(haplotype_sites[0], *cgmap_records);
-            overlay_cgmap(haplotype_sites[1], *cgmap_records);
+            overlay_cgmap(runtime_arrays.reference_shared, *cgmap_records);
+            overlay_cgmap(
+                runtime_arrays.reference_haplotypes[0], *cgmap_records);
+            overlay_cgmap(
+                runtime_arrays.reference_haplotypes[1], *cgmap_records);
         }
         if (asm_records != nullptr) {
             validate_asm_records(contig.bases, *asm_records);
             overlay_asm(
-                shared_sites, haplotype_sites, variants.variants(), *asm_records);
+                runtime_arrays, variants.variants(), *asm_records);
         }
-        pack_diploid_sites(
-            shared_sites,
-            reference_length_,
-            reference_shared_sites_,
-            insertion_shared_sites_);
-        for (std::size_t haplotype = 0U; haplotype < 2U; ++haplotype) {
-            pack_diploid_sites(
-                haplotype_sites[haplotype],
-                reference_length_,
-                reference_haplotype_sites_[haplotype],
-                insertion_haplotype_sites_[haplotype]);
-        }
+        validate_runtime_arrays(runtime_arrays, reference_length_);
+        runtime_arrays_ = std::move(runtime_arrays);
     } catch (const DiploidCatalogError &) {
         throw;
     } catch (const std::exception &error) {
@@ -3294,62 +3247,44 @@ DiploidMethylationCatalog::DiploidMethylationCatalog(
     }
 }
 
-const std::vector<DiploidSite> &
-DiploidMethylationCatalog::shared_sites() const
+const DiploidRuntimeArrays &
+DiploidMethylationCatalog::runtime_arrays() const noexcept
 {
-    if (!decoded_shared_sites_) {
-        decoded_shared_sites_ = decode_diploid_sites(
-            reference_shared_sites_, insertion_shared_sites_);
-    }
-    return *decoded_shared_sites_;
+    return runtime_arrays_;
 }
 
-const std::vector<DiploidSite> &
-DiploidMethylationCatalog::haplotype_sites(
-    std::uint8_t zero_based_haplotype) const
+void DiploidMethylationCatalog::validate_asm_layer(
+    const std::vector<variant::Variant> &variants,
+    const std::vector<AsmRecord> &asm_records) const
 {
-    if (zero_based_haplotype > 1U) {
-        throw DiploidCatalogError("haplotype must be zero or one");
+    try {
+        validate_runtime_asm_layer(runtime_arrays_, variants, asm_records);
+    } catch (const DiploidCatalogError &) {
+        throw;
+    } catch (const std::exception &error) {
+        throw DiploidCatalogError(error.what());
     }
-    auto &decoded = decoded_haplotype_sites_[zero_based_haplotype];
-    if (!decoded) {
-        decoded = decode_diploid_sites(
-            reference_haplotype_sites_[zero_based_haplotype],
-            insertion_haplotype_sites_[zero_based_haplotype]);
-    }
-    return *decoded;
 }
 
-const std::vector<RuntimeSite> &
-DiploidMethylationCatalog::reference_shared_sites() const noexcept
+void DiploidMethylationCatalog::apply_asm_layer(
+    const std::vector<variant::Variant> &variants,
+    const std::vector<AsmRecord> &asm_records)
 {
-    return reference_shared_sites_;
-}
-
-const std::vector<RuntimeSite> &
-DiploidMethylationCatalog::reference_haplotype_sites(
-    std::uint8_t zero_based_haplotype) const
-{
-    if (zero_based_haplotype > 1U) {
-        throw DiploidCatalogError("haplotype must be zero or one");
+    if (asm_records.empty()) {return;}
+    try {
+        overlay_asm(runtime_arrays_, variants, asm_records);
+        validate_runtime_arrays(runtime_arrays_, reference_length_);
+    } catch (const DiploidCatalogError &) {
+        throw;
+    } catch (const std::exception &error) {
+        throw DiploidCatalogError(error.what());
     }
-    return reference_haplotype_sites_[zero_based_haplotype];
 }
 
-const std::vector<RuntimeSite> &
-DiploidMethylationCatalog::insertion_shared_sites() const noexcept
+DiploidRuntimeArrays
+DiploidMethylationCatalog::take_runtime_arrays() && noexcept
 {
-    return insertion_shared_sites_;
-}
-
-const std::vector<RuntimeSite> &
-DiploidMethylationCatalog::insertion_haplotype_sites(
-    std::uint8_t zero_based_haplotype) const
-{
-    if (zero_based_haplotype > 1U) {
-        throw DiploidCatalogError("haplotype must be zero or one");
-    }
-    return insertion_haplotype_sites_[zero_based_haplotype];
+    return std::move(runtime_arrays_);
 }
 
 std::vector<model::MethylationSite>
@@ -3389,12 +3324,12 @@ DiploidMethylationCatalog::sites_for_projection(
         first_variant = false;
     }
 
-    const auto &reference_shared = reference_shared_sites_;
+    const auto &reference_shared = runtime_arrays_.reference_shared;
     const auto &reference_specific =
-        reference_haplotype_sites_[zero_based_haplotype];
-    const auto &insertion_shared = insertion_shared_sites_;
+        runtime_arrays_.reference_haplotypes[zero_based_haplotype];
+    const auto &insertion_shared = runtime_arrays_.insertion_shared;
     const auto &insertion_specific =
-        insertion_haplotype_sites_[zero_based_haplotype];
+        runtime_arrays_.insertion_haplotypes[zero_based_haplotype];
     const RuntimeSite reference_query =
         static_cast<RuntimeSite>(projection.reference_start) << 32U;
     std::size_t reference_shared_index = static_cast<std::size_t>(
@@ -3460,8 +3395,8 @@ DiploidMethylationCatalog::sites_for_projection(
                 throw DiploidCatalogError(
                     "inserted projection bases disagree with their event");
             }
-            const std::uint32_t key = runtime_insertion_key(
-                insertion_origin_id(variant_index, insertion_offset));
+            const std::uint32_t key = insertion_runtime_key(
+                variant_index, insertion_offset);
             if (!insertion_cursor_initialized) {
                 const RuntimeSite query = static_cast<RuntimeSite>(key) << 32U;
                 insertion_shared_index = static_cast<std::size_t>(

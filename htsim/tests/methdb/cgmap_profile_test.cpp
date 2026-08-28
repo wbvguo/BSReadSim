@@ -52,6 +52,11 @@ void require(bool condition, const std::string &message)
     if (!condition) {throw std::runtime_error(message);}
 }
 
+std::uint16_t q(float probability)
+{
+    return htsim::methdb::probability_to_u16(probability);
+}
+
 template <typename Operation>
 void require_error(Operation operation, const std::string &message)
 {
@@ -183,13 +188,13 @@ void verify_valid_profile(const std::vector<std::uint8_t> &input)
         chr1[0].reference_position == 1U
             && chr1[0].context == MethylationContext::cg_c
             && chr1[0].has_probability
-            && chr1[0].methylation_probability == 0.25F,
+            && chr1[0].probability_u16 == q(0.25F),
         "first CGmap record changed");
     require(
         chr1[1].reference_position == 2U
             && chr1[1].context == MethylationContext::cg_g
             && !chr1[1].has_probability
-            && chr1[1].methylation_probability == 0.0F,
+            && chr1[1].probability_u16 == 0U,
         "CGmap na record changed");
     require(
         chr1[2].context == MethylationContext::chg_c
@@ -201,7 +206,7 @@ void verify_valid_profile(const std::vector<std::uint8_t> &input)
         chr2.size() == 1U && chr2[0].reference_position == 2U
             && chr2[0].context == MethylationContext::cg_g
             && chr2[0].has_probability
-            && chr2[0].methylation_probability == 0.0F,
+            && chr2[0].probability_u16 == 0U,
         "chr2 CGmap record changed");
     require(
         profile.records(chr1_contig).size() == chr1.size(),
@@ -262,7 +267,7 @@ void verify_valid_bed_methyl(const std::vector<std::uint8_t> &input)
         chr1[0].reference_position == 1U
             && chr1[0].context == MethylationContext::cg_c
             && chr1[0].dinucleotide_second == 2U
-            && chr1[0].methylation_probability == 0.25F
+            && chr1[0].probability_u16 == q(0.25F)
             && chr1[1].context == MethylationContext::cg_g
             && chr1[2].context == MethylationContext::chg_c
             && chr1[3].context == MethylationContext::chh_c,
@@ -271,7 +276,7 @@ void verify_valid_bed_methyl(const std::vector<std::uint8_t> &input)
     require(
         chr2.size() == 1U
             && chr2[0].context == MethylationContext::cg_g
-            && chr2[0].methylation_probability == 0.0F,
+            && chr2[0].probability_u16 == 0U,
         "unstranded bedMethyl row did not resolve from the reference");
 }
 
@@ -409,8 +414,8 @@ void test_reference_validation_boundaries()
             htsim::methdb::validate_cgmap_records(
                 bases,
                 {
-                    {2U, 0.2F, MethylationContext::cg_g, true, 2U},
-                    {1U, 0.2F, MethylationContext::cg_c, true, 2U},
+                    {2U, q(0.2F), MethylationContext::cg_g, true, 2U},
+                    {1U, q(0.2F), MethylationContext::cg_c, true, 2U},
                 });
         },
         "unsorted normalized CGmap records were accepted");
@@ -418,14 +423,14 @@ void test_reference_validation_boundaries()
         [&] {
             htsim::methdb::validate_cgmap_records(
                 bases,
-                {{1U, 0.2F, MethylationContext::chh_c, true, 0U}});
+                {{1U, q(0.2F), MethylationContext::chh_c, true, 0U}});
         },
         "wrong normalized CGmap context was accepted");
     require_error(
         [&] {
             htsim::methdb::validate_cgmap_records(
                 bases,
-                {{1U, 0.2F, MethylationContext::cg_c, false, 2U}});
+                {{1U, q(0.2F), MethylationContext::cg_c, false, 2U}});
         },
         "nonzero undefined CGmap probability was accepted");
 

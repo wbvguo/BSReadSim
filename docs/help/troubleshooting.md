@@ -110,15 +110,15 @@ active.
 
 ## A MethDB is rejected
 
-MethDB stores a prepared methylation profile bound to the reference, prepared
-variant set, and methylation settings used when it was built. Repeat the exact
-reference, mutation or VCF choice, and relevant `--seed-mut`, `--seed-phase`,
-and `--seed-meth` values.
+MethDB stores the complete prepared methylation profile, including its
+normalized phased variants, and is bound to the normalized reference catalog.
+Use the exact same reference. Do not repeat the original VCF, mutation options,
+or methylation/phasing seeds; those inputs have already been resolved into the
+MethDB.
 
 Do not combine `--methdb` with `--cgmap`, `--bed-methyl`, `--asm`,
 `--asm-bed`, or `--cgmap-pool`. A MethDB is already the complete normalized
-methylation profile. Historical incompatible representations must be
-regenerated with the current `build methdb` or `--save-methdb` implementation.
+methylation profile. Only MethDB version 2 is accepted.
 
 ## Read and insert lengths conflict
 

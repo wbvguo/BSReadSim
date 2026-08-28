@@ -24,6 +24,11 @@ void require(bool condition, const std::string &message)
     if (!condition) {throw std::runtime_error(message);}
 }
 
+std::uint16_t q(float probability)
+{
+    return htsim::methdb::probability_to_u16(probability);
+}
+
 template <typename Operation>
 void require_error(Operation operation, const std::string &message)
 {
@@ -38,12 +43,12 @@ void require_error(Operation operation, const std::string &message)
 std::vector<CgmapRecord> records()
 {
     return {
-        {1U, 0.125F, MethylationContext::cg_c, true, 2U},
-        {2U, 0.875F, MethylationContext::cg_g, true, 2U},
-        {4U, 0.25F, MethylationContext::chg_c, true, 0U},
-        {5U, 0.0F, MethylationContext::chg_g, false, 0U},
-        {6U, 0.5F, MethylationContext::chh_c, true, 0U},
-        {7U, 0.75F, MethylationContext::chh_g, true, 0U},
+        {1U, q(0.125F), MethylationContext::cg_c, true, 2U},
+        {2U, q(0.875F), MethylationContext::cg_g, true, 2U},
+        {4U, q(0.25F), MethylationContext::chg_c, true, 0U},
+        {5U, 0U, MethylationContext::chg_g, false, 0U},
+        {6U, q(0.5F), MethylationContext::chh_c, true, 0U},
+        {7U, q(0.75F), MethylationContext::chh_g, true, 0U},
     };
 }
 
@@ -76,13 +81,14 @@ void test_context_classes_and_exact_addresses()
         MethylationContext::chg_g, seed, contig_index, inserted);
     const auto chh = pool.sample(
         MethylationContext::chh_c, seed, contig_index, inserted);
-    require(cg0.has_value() && cg1.has_value() && chg == 0.25F
+    require(cg0.has_value() && cg1.has_value() && chg == q(0.25F)
                 && chh.has_value(),
             "CGmap pool failed to sample a populated typed class");
 
     const std::uint64_t key = htsim::rng::derive_key(
         seed, htsim::rng::Stage::methylation_level, contig_index);
-    const auto expected = [&](auto entity, const std::vector<float> &values) {
+    const auto expected = [&]
+        (auto entity, const std::vector<std::uint16_t> &values) {
         const std::uint64_t index = htsim::rng::bounded_integer(
             key,
             entity.value(),
@@ -90,21 +96,22 @@ void test_context_classes_and_exact_addresses()
             values.size());
         return values.at(static_cast<std::size_t>(index));
     };
-    require(*cg0 == expected(entity0, {0.125F, 0.875F})
-                && *cg1 == expected(entity1, {0.125F, 0.875F})
-                && *chh == expected(inserted, {0.5F, 0.75F}),
+    require(*cg0 == expected(entity0, {q(0.125F), q(0.875F)})
+                && *cg1 == expected(entity1, {q(0.125F), q(0.875F)})
+                && *chh == expected(inserted, {q(0.5F), q(0.75F)}),
             "CGmap pool did not use the frozen uint64 address contract");
 
     // Temporary implementation vector output is intentionally kept tiny; the
     // asserted literal vector below freezes it independently of rng helpers.
-    require(*cg0 == 0.125F && *cg1 == 0.125F && *chh == 0.5F,
+    require(*cg0 == q(0.125F) && *cg1 == q(0.125F)
+                && *chh == q(0.5F),
             "CGmap pool exact selection vector changed");
 }
 
 void test_empty_class_falls_back_without_a_draw()
 {
     const CgmapPool pool({
-        {3U, 0.4F, MethylationContext::cg_c, true, 2U},
+        {3U, q(0.4F), MethylationContext::cg_c, true, 2U},
     });
     const auto absent = pool.sample(
         MethylationContext::chg_c,
@@ -129,7 +136,7 @@ void test_order_and_entity_stability()
             5U,
             htsim::methdb::reference_site_entity(position));
     };
-    std::vector<float> forward;
+    std::vector<std::uint16_t> forward;
     forward.reserve(positions.size());
     for (const std::uint32_t position : positions) {
         forward.push_back(sample(position));
@@ -175,12 +182,7 @@ void test_invalid_normalized_records_fail_closed()
                   "unknown context was accepted");
 
     invalid = records();
-    invalid[0].methylation_probability = 2.0F;
-    require_error([&] {(void)CgmapPool(invalid);},
-                  "probability above one was accepted");
-
-    invalid = records();
-    invalid[3].methylation_probability = 0.25F;
+    invalid[3].probability_u16 = q(0.25F);
     require_error([&] {(void)CgmapPool(invalid);},
                   "undefined nonzero probability was accepted");
 

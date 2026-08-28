@@ -1075,7 +1075,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     from .run.catalog import (
         CatalogError,
         export_methdb_bed,
-        export_methdb_catalog,
+        build_methdb_snapshot,
         export_rrbs_catalog,
         export_variant_catalog,
     )
@@ -1099,7 +1099,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     core_executable=arguments.core,
                 )
             else:
-                output_path = export_methdb_catalog(
+                output_path = build_methdb_snapshot(
                     build_methdb_document(arguments, Path.cwd()),
                     arguments.output,
                     base_directory=Path.cwd(),

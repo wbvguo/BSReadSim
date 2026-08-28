@@ -17,8 +17,9 @@ namespace {
 using htsim::methdb::AsmRecord;
 using htsim::methdb::CatalogSite;
 using htsim::methdb::DiploidMethylationCatalog;
-using htsim::methdb::DiploidSite;
+using htsim::methdb::DiploidRuntimeArrays;
 using htsim::methdb::MethylationCatalog;
+using htsim::methdb::RuntimeSite;
 using htsim::methdb::Snapshot;
 using htsim::methdb::SnapshotWriter;
 using htsim::model::HaplotypeMask;
@@ -149,43 +150,31 @@ std::vector<CatalogSite> large_reference_sites()
     return sites;
 }
 
-DiploidSite inherited_site(
+RuntimeSite runtime_site(
     std::uint32_t position,
     std::uint16_t probability,
     MethylationContext context,
-    MethylationSource source)
+    MethylationSource source,
+    MethylationAllele allele = MethylationAllele::shared,
+    bool reference_equivalent = true)
 {
-    return {
+    return htsim::methdb::pack_runtime_site(
         position,
+        probability,
         context,
         source,
-        MethylationAllele::shared,
-        htsim::methdb::probability_from_u16(probability),
-        true,
-    };
+        allele,
+        reference_equivalent);
 }
 
-bool same_site(const DiploidSite &left, const DiploidSite &right)
+bool same_arrays(
+    const DiploidRuntimeArrays &left,
+    const DiploidRuntimeArrays &right)
 {
-    return left.origin_id == right.origin_id
-        && left.context == right.context
-        && left.methylation_source == right.methylation_source
-        && left.allele == right.allele
-        && left.reference_equivalent == right.reference_equivalent
-        && htsim::methdb::probability_to_u16(left.methylation_probability)
-            == htsim::methdb::probability_to_u16(
-                right.methylation_probability);
-}
-
-void require_same_sites(
-    const std::vector<DiploidSite> &observed,
-    const std::vector<DiploidSite> &expected,
-    const std::string &message)
-{
-    require(observed.size() == expected.size(), message + " count");
-    for (std::size_t index = 0U; index < expected.size(); ++index) {
-        require(same_site(observed[index], expected[index]), message);
-    }
+    return left.reference_shared == right.reference_shared
+        && left.reference_haplotypes == right.reference_haplotypes
+        && left.insertion_shared == right.insertion_shared
+        && left.insertion_haplotypes == right.insertion_haplotypes;
 }
 
 void test_v2_is_canonical_compact_and_lazy()
@@ -231,29 +220,32 @@ void test_v2_is_canonical_compact_and_lazy()
     insertion.source = VariantSource::de_novo;
     variants.push_back(insertion);
 
-    std::vector<DiploidSite> pre_asm_shared = {
-        inherited_site(0U, 0U, MethylationContext::cg_c,
-                       MethylationSource::beta),
-        inherited_site(2U, 32768U, MethylationContext::cg_c,
-                       MethylationSource::beta),
-        inherited_site(7U, 49151U, MethylationContext::chg_c,
-                       MethylationSource::cgmap),
-        {htsim::methdb::insertion_origin_id(1U, 0U),
-         MethylationContext::chh_g, MethylationSource::beta,
-         MethylationAllele::shared,
-         htsim::methdb::probability_from_u16(24576U)},
+    DiploidRuntimeArrays pre_asm_sites;
+    pre_asm_sites.reference_shared = {
+        runtime_site(0U, 0U, MethylationContext::cg_c,
+                     MethylationSource::beta),
+        runtime_site(2U, 32768U, MethylationContext::cg_c,
+                     MethylationSource::beta),
+        runtime_site(7U, 49151U, MethylationContext::chg_c,
+                     MethylationSource::cgmap),
     };
-    const std::array<std::vector<DiploidSite>, 2> no_haplotype_sites{};
+    pre_asm_sites.insertion_shared = {
+        runtime_site(
+            (1U << 2U) | 0U,
+            24576U,
+            MethylationContext::chh_g,
+            MethylationSource::beta,
+            MethylationAllele::shared,
+            false),
+    };
     const DiploidMethylationCatalog pre_asm_catalog(
-        1U, 100U, pre_asm_shared, no_haplotype_sites);
+        1U, 100U, pre_asm_sites);
 
     AsmRecord asm_record;
     asm_record.target_reference_position = 2U;
     asm_record.linked_variant_position = 50U;
-    asm_record.reference_methylation_probability =
-        htsim::methdb::probability_from_u16(8192U);
-    asm_record.alternate_methylation_probability =
-        htsim::methdb::probability_from_u16(57343U);
+    asm_record.reference_probability_u16 = 8192U;
+    asm_record.alternate_probability_u16 = 57343U;
     asm_record.context = MethylationContext::cg_c;
     asm_record.dinucleotide_second = 2U;
     asm_record.linked_reference_base = 3U;
@@ -331,34 +323,31 @@ void test_v2_is_canonical_compact_and_lazy()
                 "MethDB v2 embedded event changed");
     }
 
-    std::vector<DiploidSite> expected_shared = {
-        inherited_site(0U, 0U, MethylationContext::cg_c,
-                       MethylationSource::beta),
-        inherited_site(7U, 49151U, MethylationContext::chg_c,
-                       MethylationSource::cgmap),
-        pre_asm_shared.back(),
+    DiploidRuntimeArrays expected_sites;
+    expected_sites.reference_shared = {
+        runtime_site(0U, 0U, MethylationContext::cg_c,
+                     MethylationSource::beta),
+        runtime_site(7U, 49151U, MethylationContext::chg_c,
+                     MethylationSource::cgmap),
     };
-    std::array<std::vector<DiploidSite>, 2> expected_haplotypes;
-    expected_haplotypes[0].push_back({
-        2U, MethylationContext::cg_c, MethylationSource::asm_source,
+    expected_sites.insertion_shared = pre_asm_sites.insertion_shared;
+    expected_sites.reference_haplotypes[0].push_back(runtime_site(
+        2U,
+        57343U,
+        MethylationContext::cg_c,
+        MethylationSource::asm_source,
         MethylationAllele::alternate_haplotype,
-        htsim::methdb::probability_from_u16(57343U), true});
-    expected_haplotypes[1].push_back({
-        2U, MethylationContext::cg_c, MethylationSource::asm_source,
+        true));
+    expected_sites.reference_haplotypes[1].push_back(runtime_site(
+        2U,
+        8192U,
+        MethylationContext::cg_c,
+        MethylationSource::asm_source,
         MethylationAllele::reference_haplotype,
-        htsim::methdb::probability_from_u16(8192U), true});
-    require_same_sites(
-        loaded_diploid.shared_sites,
-        expected_shared,
-        "MethDB v2 shared layer changed");
-    require_same_sites(
-        loaded_diploid.haplotype_sites[0],
-        expected_haplotypes[0],
-        "MethDB v2 haplotype 0 changed");
-    require_same_sites(
-        loaded_diploid.haplotype_sites[1],
-        expected_haplotypes[1],
-        "MethDB v2 haplotype 1 changed");
+        true));
+    require(
+        same_arrays(loaded_diploid.diploid_sites, expected_sites),
+        "MethDB v2 packed diploid runtime arrays changed");
 
     std::ostringstream table;
     htsim::methdb::export_snapshot_bed(file.path(), table);

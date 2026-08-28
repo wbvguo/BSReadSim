@@ -137,7 +137,7 @@ void generate_rrbs_candidate_bed(
 
 // Serialize the exact normalized methylation probability catalog. The
 // snapshot is independent of fragment/state/conversion/sequencing draws.
-void generate_methdb_catalog(
+void build_methdb_snapshot(
     const CoreConfig &config,
     std::ostream &sink);
 

@@ -164,9 +164,9 @@ void test_cgmap_overlay_and_na_fallback()
 {
     const auto bases = encode("ACGACAGCAATCGTTGAA");
     const std::vector<CgmapRecord> records = {
-        {1U, 0.125F, MethylationContext::cg_c, true, 2U},
-        {2U, 0.0F, MethylationContext::cg_g, false, 2U},
-        {4U, 0.75F, MethylationContext::chg_c, true, 0U},
+        {1U, q(0.125F), MethylationContext::cg_c, true, 2U},
+        {2U, 0U, MethylationContext::cg_g, false, 2U},
+        {4U, q(0.75F), MethylationContext::chg_c, true, 0U},
     };
     const MethylationCatalog catalog(
         bases, 2U, 17U, true, shapes(), &records);
@@ -207,7 +207,7 @@ void test_cgmap_overlay_and_na_fallback()
         "CGmap overlay bypassed the CpG-only filter");
 
     const std::vector<CgmapRecord> mismatched = {
-        {1U, 0.5F, MethylationContext::chh_c, true, 0U},
+        {1U, q(0.5F), MethylationContext::chh_c, true, 0U},
     };
     require_error(
         [&] {
@@ -221,9 +221,9 @@ void test_cgmap_context_pool_and_beta_fallback()
 {
     const auto bases = encode("ACGACAGCAATCGTTGAA");
     const std::vector<CgmapRecord> records = {
-        {1U, 0.125F, MethylationContext::cg_c, true, 2U},
-        {2U, 0.875F, MethylationContext::cg_g, true, 2U},
-        {4U, 0.75F, MethylationContext::chg_c, true, 0U},
+        {1U, q(0.125F), MethylationContext::cg_c, true, 2U},
+        {2U, q(0.875F), MethylationContext::cg_g, true, 2U},
+        {4U, q(0.75F), MethylationContext::chg_c, true, 0U},
     };
     constexpr std::uint64_t seed = 17U;
     constexpr std::uint32_t contig_index = 4U;
@@ -243,7 +243,7 @@ void test_cgmap_context_pool_and_beta_fallback()
         if (expected) {
             require(
                 site.methylation_source == MethylationSource::pooled_cgmap
-                    && site.probability_u16 == q(*expected),
+                    && site.probability_u16 == *expected,
                 "reference catalog lost a typed CGmap pool draw");
             saw_pooled = true;
         } else {
