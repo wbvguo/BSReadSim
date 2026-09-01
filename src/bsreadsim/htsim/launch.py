@@ -117,9 +117,22 @@ def build_core_argv(
     reference = roles["reference"]
     _append_file(arguments, "--reference", reference)
 
-    for input_name in ("vcf", "cgmap", "bed_methyl", "methdb", "asm", "asm_bed"):
+    for input_name in (
+        "vcf",
+        "cgmap",
+        "bed_methyl",
+        "methbg",
+        "methbed",
+        "methdb",
+        "asm",
+        "asm_bed",
+    ):
         if input_name in inputs:
-            option_name = input_name.replace("_", "-")
+            option_name = (
+                "bedmethyl"
+                if input_name == "bed_methyl"
+                else input_name.replace("_", "-")
+            )
             _append_file(
                 arguments,
                 "--" + option_name,
@@ -217,8 +230,17 @@ def build_core_argv(
 
     if technology == "RRBS":
         rrbs = _mapping(config, "rrbs")
-        for cut_site in rrbs["cut_sites"]:
-            arguments.extend(("--rrbs-cut-site", _text("rrbs.cut_site", cut_site)))
+        cut_sites = rrbs["cut_sites"]
+        if not isinstance(cut_sites, list) or not cut_sites:
+            raise CoreArgvError("normalized rrbs.cut_sites must be a nonempty list")
+        arguments.extend(
+            (
+                "--rrbs-cut-site",
+                ",".join(
+                    _text("rrbs.cut_site", cut_site) for cut_site in cut_sites
+                ),
+            )
+        )
         if "candidate_bed" in rrbs:
             candidate_bed = Path(
                 _text("rrbs.candidate_bed", rrbs["candidate_bed"])
@@ -238,9 +260,9 @@ def build_core_argv(
         _append_file(arguments, "--tbs-bed", roles["input.tbs-bed"])
         arguments.extend(
             (
-                "--tbs-center-stddev",
+                "--tbs-center-sd",
                 _number(
-                    "tbs.fragment_center_stddev", tbs["fragment_center_stddev"]
+                    "tbs.center_sd", tbs["center_sd"]
                 ),
             )
         )
@@ -284,7 +306,7 @@ def build_core_argv(
             _boolean("mutation.homozygous_only", mutation["homozygous_only"]),
             "--collect-non-cpg",
             _boolean("methylation.collect_non_cpg", methylation["collect_non_cpg"]),
-            "--cgmap-pool",
+            "--pool-meth",
             _boolean("methylation.cgmap_pool", methylation["cgmap_pool"]),
             "--update-variant-boundaries",
             _boolean(
@@ -378,7 +400,16 @@ def _expected_roles(
 
     add("reference", config["reference"])
     inputs = _mapping(config, "inputs")
-    for name in ("vcf", "cgmap", "bed_methyl", "methdb", "asm", "asm_bed"):
+    for name in (
+        "vcf",
+        "cgmap",
+        "bed_methyl",
+        "methbg",
+        "methbed",
+        "methdb",
+        "asm",
+        "asm_bed",
+    ):
         if name in inputs:
             add("input." + name, inputs[name])
     if config["technology"] in ("TBS", "WES", "TS"):

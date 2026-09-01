@@ -60,7 +60,11 @@ enum class BaseEncoding : std::uint8_t {acgtn_u8 = 1};
 enum class AmbiguityPolicy : std::uint8_t {preserve_n = 0};
 enum class CaptureStrand : std::uint8_t {unknown = 0, forward = 1, reverse = 2};
 enum class VariantKind : std::uint8_t {snv = 1, insertion = 2, deletion = 3};
-enum class VariantSource : std::uint8_t {vcf = 1, de_novo = 2};
+enum class VariantSource : std::uint8_t {
+    vcf = 1,
+    de_novo = 2,
+    asm_profile = 3,
+};
 enum class MethylationContext : std::uint8_t {
     cg_c = 1,
     chg_c = 3,

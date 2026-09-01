@@ -176,6 +176,7 @@ def run_direct_profile_cli(core: Path, root: Path) -> None:
                 "--insert-max", "8",
                 "--insert-sd", "1",
                 "--max-ambiguous-fraction", "0",
+                "--sampling", "gc",
                 "--gc-profile", str(profile_path),
                 "--error-rate", "0",
                 "--threads", "1",

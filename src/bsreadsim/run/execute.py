@@ -1150,11 +1150,12 @@ def _expected_skipped_fragment_count(
     fragments = _mapping(config, "fragments")
     if config["technology"] in ("WGBS", "WGS") and _uses_variable_insert(fragments):
         return None
-    if (
-        config["technology"] in ("TBS", "WES", "TS")
-        and _mapping(config, "tbs")["fragment_center_stddev"] > 0
-    ):
-        return None
+    if config["technology"] in ("TBS", "WES", "TS"):
+        if (
+            _uses_variable_insert(fragments)
+            or _mapping(config, "tbs")["center_sd"] > 0
+        ):
+            return None
     return 0
 
 
@@ -1171,6 +1172,8 @@ def _require_released_capabilities(config: Mapping[str, object]) -> None:
         "vcf",
         "cgmap",
         "bed_methyl",
+        "methbg",
+        "methbed",
         "methdb",
         "asm",
         "asm_bed",
@@ -1190,13 +1193,17 @@ def _require_released_capabilities(config: Mapping[str, object]) -> None:
                     ", ".join(methylation_inputs)
                 )
             )
-    if ("asm" in inputs or "asm_bed" in inputs) and "vcf" not in inputs:
-        raise PipelineError("ASM generation requires a VCF input")
     mutation = _mapping(config, "mutation")
     coverage = _mapping(config, "coverage")
     if mutation["rate"] != 0 and "vcf" in inputs:
         raise PipelineError(
             "VCF and de novo mutation generation are mutually exclusive"
+        )
+    if mutation["rate"] != 0 and (
+        "asm" in inputs or "asm_bed" in inputs
+    ):
+        raise PipelineError(
+            "ASM and de novo mutation generation are mutually exclusive"
         )
     if coverage["kind"] == "profile":
         if "artifact" in coverage:
@@ -1239,17 +1246,11 @@ def _require_released_capabilities(config: Mapping[str, object]) -> None:
         raise PipelineError(
             "exactly one of reads.depth and reads.count is required"
         )
-    variable_insert = _uses_variable_insert(fragments)
-    if targeted and variable_insert:
-        raise PipelineError(
-            "the TBS baseline requires --insert-sd 0; WES and TS use the "
-            "same targeted constraint"
-        )
     if targeted:
         tbs = _mapping(config, "tbs")
-        if tbs["fragment_center_stddev"] < 0:
+        if tbs["center_sd"] < 0:
             raise PipelineError(
-                "TBS fragment_center_stddev must be non-negative"
+                "TBS center SD must be non-negative"
             )
 
     methylation = _mapping(config, "methylation")
@@ -1259,11 +1260,10 @@ def _require_released_capabilities(config: Mapping[str, object]) -> None:
         raise PipelineError(
             "MethDB embeds variants and forbids external variant generation"
         )
-    if methylation["cgmap_pool"] and "methdb" not in inputs and not (
-        "cgmap" in inputs or "bed_methyl" in inputs
-    ):
+    poolable_profiles = {"cgmap", "bed_methyl", "methbg", "methbed"}
+    if methylation["cgmap_pool"] and not (set(inputs) & poolable_profiles):
         raise PipelineError(
-            "cgmap_pool=true requires a CGmap or bedMethyl input"
+            "--pool-meth requires a text methylation profile"
         )
     if bisulfite and (
         "vcf" in inputs or mutation["rate"] != 0
@@ -1347,7 +1347,7 @@ def _build_process_config(prepared: PreparedRun) -> ProcessConfig:
             quality=quality,
             error=error,
             bisulfite=normalized["technology"] in ("WGBS", "RRBS", "TBS"),
-            methylation_model=BernoulliStateModel(),
+            meth_model=BernoulliStateModel(),
         )
     except (PreparationError, SequencingModelError, ProcessError) as error_value:
         raise PipelineError(

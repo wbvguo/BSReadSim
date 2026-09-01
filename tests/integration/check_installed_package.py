@@ -48,6 +48,8 @@ def _baseline_arguments(output_directory: str) -> list[str]:
         "37",
         "--error-rate",
         "0.01",
+        "--sampling",
+        "gc",
         "--gc-profile",
         "coverage.tsv",
         "--threads",
@@ -138,7 +140,7 @@ def main() -> int:
             raise SystemExit("installed resource copy failed: {!r}".format(copied.stderr))
         if Path(copied.stdout.strip()) != bundled_reference:
             raise SystemExit("installed resource copy reported the wrong path")
-        if not bundled_reference.read_bytes().startswith(b">bsreadsim_test\n"):
+        if not bundled_reference.read_bytes().startswith(b">chr10\n"):
             raise SystemExit("installed wheel lost the bundled test FASTA")
 
         (directory / "tiny.fa").write_bytes(b">chr1\nACGTCGTAA\n")

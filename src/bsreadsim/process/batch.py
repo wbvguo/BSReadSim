@@ -38,6 +38,7 @@ class VariantKind(IntEnum):
 class VariantSource(str, Enum):
     VCF = "vcf"
     DE_NOVO = "de_novo"
+    ASM = "asm"
 
     # Match enum.StrEnum while retaining Python 3.10 compatibility.
     __str__ = str.__str__

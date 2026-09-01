@@ -25,7 +25,11 @@ from ..output.bam import (
     BAM_MAPQ,
 )
 from ..output import OutputFileSummary, OutputSummary
-from .prepare import FileDigest, PreparedRun
+from .prepare import (
+    FileDigest,
+    PreparedRun,
+    SEED_DERIVATION_CONTRACT,
+)
 from ..htsim.protocol import (
     AmbiguityPolicy,
     BaseEncoding,
@@ -131,6 +135,7 @@ def build_complete_manifest(
         "contracts": {
             "read_name": READ_NAME_CONTRACT,
             "rng": RNG_CONTRACT,
+            "seed_derivation": SEED_DERIVATION_CONTRACT,
         },
         "models": {
             "library_orientation": library_orientation_model,
@@ -148,7 +153,7 @@ def build_complete_manifest(
             "numerical_tolerance_exceptions": [],
             "scope": (
                 "same released core/Python versions, effective config, "
-                "input/model digests, and master seed"
+                "input/model digests, and resolved seeds"
             ),
         },
         "software_versions": {
@@ -708,6 +713,8 @@ def _input_format(role: str) -> str:
         "input.vcf": "vcf",
         "input.cgmap": "cgmap",
         "input.bed_methyl": "bedMethyl",
+        "input.methbg": "MethBG",
+        "input.methbed": "MethBED",
         "input.asm": "asm",
         "input.asm_bed": "asm-bed",
         "input.tbs-bed": "bed",

@@ -80,7 +80,7 @@ int main(int argc, char *argv[])
             std::cout.flush();
             if (!std::cout) {
                 throw htsim::methdb::SnapshotError(
-                    "failed while flushing the MethDB BED");
+                    "failed while flushing MethBED");
             }
             return 0;
         }

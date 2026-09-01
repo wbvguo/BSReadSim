@@ -319,6 +319,9 @@ namespace {
 
 inline constexpr std::size_t cgmap_spool_record_bytes = 12U;
 inline constexpr std::uint8_t pending_bed_dinucleotide = 0xffU;
+inline constexpr std::uint8_t pending_cg_context = 0xfeU;
+inline constexpr std::uint8_t pending_chg_context = 0xfdU;
+inline constexpr std::uint8_t pending_chh_context = 0xfcU;
 
 static_assert(sizeof(off_t) >= sizeof(std::int64_t));
 static_assert(std::numeric_limits<off_t>::is_signed);
@@ -363,28 +366,96 @@ std::vector<std::string_view> bed_methyl_split_fields(std::string_view line)
     return fields;
 }
 
+std::vector<std::string_view> methbg_split_fields(std::string_view line)
+{
+    std::vector<std::string_view> fields;
+    fields.reserve(4U);
+    std::size_t begin = 0U;
+    while (true) {
+        const std::size_t end = line.find('\t', begin);
+        fields.push_back(line.substr(
+            begin,
+            end == std::string_view::npos ? line.size() - begin : end - begin));
+        if (end == std::string_view::npos) {break;}
+        begin = end + 1U;
+    }
+    if (fields.size() != 4U) {
+        throw CgmapProfileError(
+            "MethBG row must contain exactly four tab-separated fields");
+    }
+    return fields;
+}
+
+std::vector<std::string_view> methbed_split_fields(std::string_view line)
+{
+    std::vector<std::string_view> fields;
+    fields.reserve(10U);
+    std::size_t begin = 0U;
+    while (true) {
+        const std::size_t end = line.find('\t', begin);
+        fields.push_back(line.substr(
+            begin,
+            end == std::string_view::npos ? line.size() - begin : end - begin));
+        if (end == std::string_view::npos) {break;}
+        begin = end + 1U;
+    }
+    if (fields.size() != 6U && fields.size() != 8U
+        && fields.size() != 9U && fields.size() != 10U) {
+        throw CgmapProfileError(
+            "MethBED row must contain 6, 8, 9, or 10 tab-separated fields");
+    }
+    return fields;
+}
+
 bool bed_methyl_header(std::string_view line) noexcept
 {
     return line.rfind("track ", 0U) == 0U
         || line.rfind("browser ", 0U) == 0U;
 }
 
-std::uint32_t bed_methyl_parse_u32(
+std::uint32_t profile_parse_u32(
     std::string_view text,
+    const char *label,
     const char *field)
 {
     if (text.empty()) {
         throw CgmapProfileError(
-            std::string("bedMethyl ") + field + " is empty");
+            std::string(label) + " " + field + " is empty");
     }
     std::uint32_t value = 0U;
     const auto parsed = std::from_chars(
         text.data(), text.data() + text.size(), value);
     if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size()) {
         throw CgmapProfileError(
-            std::string("bedMethyl ") + field + " is not a uint32 decimal");
+            std::string(label) + " " + field + " is not a uint32 decimal");
     }
     return value;
+}
+
+std::uint32_t bed_methyl_parse_u32(
+    std::string_view text,
+    const char *field)
+{
+    return profile_parse_u32(text, "bedMethyl", field);
+}
+
+float profile_parse_probability(std::string_view text, const char *label)
+{
+    if (text.empty()) {
+        throw CgmapProfileError(
+            std::string(label) + " methylation level is empty");
+    }
+    double value = 0.0;
+    const auto parsed = std::from_chars(
+        text.data(), text.data() + text.size(), value);
+    if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size()
+        || !std::isfinite(value) || value < 0.0 || value > 1.0) {
+        throw CgmapProfileError(
+            std::string(label)
+            + " methylation level must be finite and in [0, 1]");
+    }
+    if (value == 0.0) {return 0.0F;}
+    return static_cast<float>(value);
 }
 
 float bed_methyl_parse_percent(std::string_view text)
@@ -435,6 +506,39 @@ model::MethylationContext bed_methyl_parse_strand(std::string_view strand)
         return static_cast<model::MethylationContext>(0U);
     }
     throw CgmapProfileError("bedMethyl strand must be +, -, or .");
+}
+
+model::MethylationContext methbed_parse_orientation(
+    std::string_view strand,
+    std::string_view base)
+{
+    const auto strand_hint = bed_methyl_parse_strand(strand);
+    model::MethylationContext base_hint =
+        static_cast<model::MethylationContext>(0U);
+    if (base == "C") {
+        base_hint = model::MethylationContext::cg_c;
+    } else if (base == "G") {
+        base_hint = model::MethylationContext::cg_g;
+    } else if (base != ".") {
+        throw CgmapProfileError("MethBED base must be C, G, or .");
+    }
+    if (static_cast<std::uint8_t>(strand_hint) != 0U
+        && static_cast<std::uint8_t>(base_hint) != 0U
+        && strand_hint != base_hint) {
+        throw CgmapProfileError("MethBED strand and base disagree");
+    }
+    return static_cast<std::uint8_t>(base_hint) == 0U
+        ? strand_hint
+        : base_hint;
+}
+
+std::uint8_t methbed_parse_context(std::string_view context)
+{
+    if (context == ".") {return pending_bed_dinucleotide;}
+    if (context == "CG") {return pending_cg_context;}
+    if (context == "CHG") {return pending_chg_context;}
+    if (context == "CHH") {return pending_chh_context;}
+    throw CgmapProfileError("MethBED context must be CG, CHG, CHH, or .");
 }
 
 void bed_methyl_validate_extended_counts(
@@ -589,21 +693,28 @@ CgmapRecord cgmap_decode_record(
     const std::array<std::uint8_t, cgmap_spool_record_bytes> &bytes,
     MethylationProfileFormat format)
 {
-    const bool bed_methyl = format == MethylationProfileFormat::bed_methyl;
-    const bool valid_context = bed_methyl
+    const bool derived_context = format != MethylationProfileFormat::cgmap;
+    const bool valid_context = derived_context
         ? (bytes[4] == 0U
             || bytes[4] == static_cast<std::uint8_t>(
                 model::MethylationContext::cg_c)
             || bytes[4] == static_cast<std::uint8_t>(
                 model::MethylationContext::cg_g))
         : cgmap_valid_context(
-            static_cast<model::MethylationContext>(bytes[4]));
+              static_cast<model::MethylationContext>(bytes[4]));
+    const bool valid_pending_context =
+        bytes[6] == pending_bed_dinucleotide
+        || (format == MethylationProfileFormat::methbed
+            && (bytes[6] == pending_cg_context
+                || bytes[6] == pending_chg_context
+                || bytes[6] == pending_chh_context));
     if (bytes[5] > 1U || bytes[7] != 0U || bytes[10] != 0U
         || bytes[11] != 0U || !valid_context
-        || (bed_methyl
-            ? (bytes[5] != 1U || bytes[6] != pending_bed_dinucleotide)
+        || (derived_context
+            ? (bytes[5] != 1U || !valid_pending_context)
             : bytes[6] > 3U)) {
-        throw CgmapProfileError("CGmap spool record flags are corrupt");
+        throw CgmapProfileError(
+            "methylation profile spool record flags are corrupt");
     }
     CgmapRecord record;
     record.reference_position = cgmap_get_u32(bytes, 0U);
@@ -619,20 +730,23 @@ CgmapRecord cgmap_decode_record(
     return record;
 }
 
-CgmapRecord normalize_bed_methyl_record(
+CgmapRecord normalize_bed_record(
     const model::Bases &contig_bases,
-    CgmapRecord record)
+    CgmapRecord record,
+    const char *label)
 {
     if (record.reference_position >= contig_bases.size()
-        || record.dinucleotide_second != pending_bed_dinucleotide) {
+        || record.dinucleotide_second < pending_chh_context) {
         throw CgmapProfileError(
-            "bedMethyl record is outside the contig or not normalized");
+            std::string(label)
+            + " record is outside the contig or not normalized");
     }
     const auto observed = classify_context(
         contig_bases, record.reference_position, true);
     if (!observed) {
         throw CgmapProfileError(
-            "bedMethyl target is not a resolved reference C/G context");
+            std::string(label)
+            + " target is not a resolved reference C/G context");
     }
     const std::uint8_t strand_hint = static_cast<std::uint8_t>(record.context);
     const bool observed_is_g = static_cast<std::uint8_t>(*observed) >= 8U;
@@ -643,7 +757,22 @@ CgmapRecord normalize_bed_methyl_record(
             == static_cast<std::uint8_t>(model::MethylationContext::cg_g)
             && !observed_is_g)) {
         throw CgmapProfileError(
-            "bedMethyl strand disagrees with the reference C/G base");
+            std::string(label)
+            + " strand/base disagrees with the reference C/G base");
+    }
+    const std::uint8_t observed_class =
+        static_cast<std::uint8_t>(*observed) & 7U;
+    const bool context_disagrees =
+        (record.dinucleotide_second == pending_cg_context
+            && observed_class != 1U)
+        || (record.dinucleotide_second == pending_chg_context
+            && observed_class != 3U)
+        || (record.dinucleotide_second == pending_chh_context
+            && observed_class != 7U);
+    if (context_disagrees) {
+        throw CgmapProfileError(
+            std::string(label)
+            + " context disagrees with the reference context");
     }
     record.context = *observed;
     record.dinucleotide_second = observed_is_g
@@ -710,14 +839,20 @@ public:
     {
         try {
             if (format_ != MethylationProfileFormat::cgmap
-                && format_ != MethylationProfileFormat::bed_methyl) {
+                && format_ != MethylationProfileFormat::bed_methyl
+                && format_ != MethylationProfileFormat::methbg
+                && format_ != MethylationProfileFormat::methbed) {
                 throw CgmapProfileError(
                     "unsupported methylation profile format");
             }
-            const char *const label =
-                format_ == MethylationProfileFormat::bed_methyl
-                ? "bedMethyl"
-                : "CGmap";
+            const char *label = "CGmap";
+            if (format_ == MethylationProfileFormat::bed_methyl) {
+                label = "bedMethyl";
+            } else if (format_ == MethylationProfileFormat::methbg) {
+                label = "MethBG";
+            } else if (format_ == MethylationProfileFormat::methbed) {
+                label = "MethBED";
+            }
             if (reference_catalog_.empty()) {
                 throw CgmapProfileError(
                     std::string(label) + " requires a non-empty reference catalog");
@@ -753,26 +888,34 @@ public:
             bool have_previous = false;
             std::uint32_t previous_contig = 0U;
             std::uint32_t previous_position = 0U;
-            std::optional<std::size_t> bed_field_count;
+            std::optional<std::size_t> consistent_field_count;
             snapshot.visit_lines(
                 [&](std::string_view line, std::uint64_t line_number) {
                     if (line.empty() || line.front() == '#'
-                        || (format_ == MethylationProfileFormat::bed_methyl
+                        || (format_ != MethylationProfileFormat::cgmap
                             && bed_methyl_header(line))) {
                         return;
                     }
                     try {
-                        const auto fields =
-                            format_ == MethylationProfileFormat::bed_methyl
-                            ? bed_methyl_split_fields(line)
-                            : cgmap_split_fields(line);
+                        std::vector<std::string_view> fields;
                         if (format_ == MethylationProfileFormat::bed_methyl) {
-                            if (bed_field_count
-                                && *bed_field_count != fields.size()) {
+                            fields = bed_methyl_split_fields(line);
+                        } else if (format_ == MethylationProfileFormat::methbg) {
+                            fields = methbg_split_fields(line);
+                        } else if (format_ == MethylationProfileFormat::methbed) {
+                            fields = methbed_split_fields(line);
+                        } else {
+                            fields = cgmap_split_fields(line);
+                        }
+                        if (format_ == MethylationProfileFormat::bed_methyl
+                            || format_ == MethylationProfileFormat::methbed) {
+                            if (consistent_field_count
+                                && *consistent_field_count != fields.size()) {
                                 throw CgmapProfileError(
-                                    "bedMethyl rows must use one consistent field count");
+                                    std::string(label)
+                                    + " rows must use one consistent field count");
                             }
-                            bed_field_count = fields.size();
+                            consistent_field_count = fields.size();
                         }
                         const auto found = contig_indices.find(std::string(fields[0]));
                         if (found == contig_indices.end()) {
@@ -821,6 +964,82 @@ public:
                                 strand,
                                 true,
                                 pending_bed_dinucleotide,
+                            };
+                        } else if (format_ == MethylationProfileFormat::methbg) {
+                            const std::uint32_t start = profile_parse_u32(
+                                fields[1], "MethBG", "chromStart");
+                            const std::uint32_t end = profile_parse_u32(
+                                fields[2], "MethBG", "chromEnd");
+                            if (start >= reference_catalog_[contig_index].length
+                                || end != static_cast<std::uint64_t>(start) + 1U
+                                || end > reference_catalog_[contig_index].length) {
+                                throw CgmapProfileError(
+                                    "MethBG target must be one in-range half-open base");
+                            }
+                            position = start;
+                            record = CgmapRecord{
+                                position,
+                                probability_to_u16(
+                                    profile_parse_probability(fields[3], "MethBG")),
+                                static_cast<model::MethylationContext>(0U),
+                                true,
+                                pending_bed_dinucleotide,
+                            };
+                        } else if (format_ == MethylationProfileFormat::methbed) {
+                            const std::uint32_t start = profile_parse_u32(
+                                fields[1], "MethBED", "chromStart");
+                            const std::uint32_t end = profile_parse_u32(
+                                fields[2], "MethBED", "chromEnd");
+                            if (start >= reference_catalog_[contig_index].length
+                                || end != static_cast<std::uint64_t>(start) + 1U
+                                || end > reference_catalog_[contig_index].length) {
+                                throw CgmapProfileError(
+                                    "MethBED target must be one in-range half-open base");
+                            }
+                            if (fields[3].empty()
+                                || fields[3].find('\0') != std::string_view::npos) {
+                                throw CgmapProfileError(
+                                    "MethBED name must not be empty");
+                            }
+                            const std::uint32_t score = profile_parse_u32(
+                                fields[4], "MethBED", "score");
+                            if (score > 1000U) {
+                                throw CgmapProfileError(
+                                    "MethBED score must be in [0, 1000]");
+                            }
+                            std::string_view base = ".";
+                            if (fields.size() >= 9U) {base = fields[8];}
+                            const auto orientation = methbed_parse_orientation(
+                                fields[5], base);
+                            if (fields.size() >= 8U) {
+                                const bool missing_methylated = fields[6] == ".";
+                                const bool missing_total = fields[7] == ".";
+                                if (missing_methylated != missing_total) {
+                                    throw CgmapProfileError(
+                                        "MethBED methylated and total counts must both be set or both be .");
+                                }
+                                if (!missing_methylated) {
+                                    const std::uint32_t methylated = profile_parse_u32(
+                                        fields[6], "MethBED", "methylated count");
+                                    const std::uint32_t total = profile_parse_u32(
+                                        fields[7], "MethBED", "total count");
+                                    if (methylated > total) {
+                                        throw CgmapProfileError(
+                                            "MethBED methylated count exceeds total count");
+                                    }
+                                }
+                            }
+                            const std::uint8_t context_hint = fields.size() == 10U
+                                ? methbed_parse_context(fields[9])
+                                : pending_bed_dinucleotide;
+                            position = start;
+                            record = CgmapRecord{
+                                position,
+                                probability_to_u16(
+                                    static_cast<float>(score) / 1000.0F),
+                                orientation,
+                                true,
+                                context_hint,
                             };
                         } else {
                             const std::uint32_t one_based_position =
@@ -949,9 +1168,15 @@ public:
                 "CGmap validation contig disagrees with the reference catalog");
         }
         std::vector<CgmapRecord> result = records(contig.index);
-        if (format_ == MethylationProfileFormat::bed_methyl) {
+        if (format_ != MethylationProfileFormat::cgmap) {
+            const char *label = "bedMethyl";
+            if (format_ == MethylationProfileFormat::methbg) {
+                label = "MethBG";
+            } else if (format_ == MethylationProfileFormat::methbed) {
+                label = "MethBED";
+            }
             for (CgmapRecord &record : result) {
-                record = normalize_bed_methyl_record(contig.bases, record);
+                record = normalize_bed_record(contig.bases, record, label);
             }
         }
         validate_cgmap_records(contig.bases, result);
@@ -1050,7 +1275,7 @@ static_assert(std::numeric_limits<off_t>::is_signed);
 std::vector<std::string_view> asm_split_fields(std::string_view line)
 {
     std::vector<std::string_view> fields;
-    fields.reserve(14U);
+    fields.reserve(13U);
     std::size_t begin = 0U;
     while (true) {
         const std::size_t end = line.find('\t', begin);
@@ -1060,17 +1285,25 @@ std::vector<std::string_view> asm_split_fields(std::string_view line)
         if (end == std::string_view::npos) {break;}
         begin = end + 1U;
     }
-    if (fields.size() != 14U) {
+    if (fields.size() != 13U) {
         throw AsmProfileError(
-            "ASM row must contain exactly fourteen tab-separated fields");
+            "CGmapTools ASS row must contain exactly thirteen tab-separated fields");
     }
     return fields;
+}
+
+bool asm_cgmaptools_header(std::string_view line) noexcept
+{
+    return line
+        == "Chr\tSNP_Pos\tRef\tAllele1\tAllele2\tC_Pos\t"
+           "Allele1_linked_C\tAllele2_linked_C\tAllele1_linked_C_met\t"
+           "Allele2_linked_C_met\tpvalue\tfdr\tASM";
 }
 
 std::vector<std::string_view> asm_bed_split_fields(std::string_view line)
 {
     std::vector<std::string_view> fields;
-    fields.reserve(12U);
+    fields.reserve(16U);
     std::size_t begin = 0U;
     while (true) {
         const std::size_t end = line.find('\t', begin);
@@ -1080,9 +1313,9 @@ std::vector<std::string_view> asm_bed_split_fields(std::string_view line)
         if (end == std::string_view::npos) {break;}
         begin = end + 1U;
     }
-    if (fields.size() != 12U) {
+    if (fields.size() != 12U && fields.size() != 16U) {
         throw AsmProfileError(
-            "ASM BED row must contain exactly twelve tab-separated fields");
+            "ASM BED row must contain exactly twelve or sixteen tab-separated fields");
     }
     return fields;
 }
@@ -1106,6 +1339,71 @@ std::uint32_t asm_parse_u32(std::string_view text, const char *field)
             std::string("ASM BED ") + field + " is not a uint32 decimal");
     }
     return value;
+}
+
+struct AsmReadSupport {
+    std::uint32_t methylated = 0U;
+    std::uint32_t unmethylated = 0U;
+};
+
+AsmReadSupport asm_parse_support(
+    std::string_view text,
+    const char *field)
+{
+    const std::size_t separator = text.find('-');
+    if (separator == std::string_view::npos || separator == 0U
+        || separator + 1U == text.size()
+        || text.find('-', separator + 1U) != std::string_view::npos) {
+        throw AsmProfileError(
+            std::string("ASM ") + field
+            + " must be methylated-unmethylated counts");
+    }
+    const auto parse_count = [&](std::string_view value) {
+        std::uint32_t count = 0U;
+        const auto parsed = std::from_chars(
+            value.data(), value.data() + value.size(), count);
+        if (parsed.ec != std::errc{}
+            || parsed.ptr != value.data() + value.size()) {
+            throw AsmProfileError(
+                std::string("ASM ") + field
+                + " contains a non-uint32 count");
+        }
+        return count;
+    };
+    const AsmReadSupport support{
+        parse_count(text.substr(0U, separator)),
+        parse_count(text.substr(separator + 1U)),
+    };
+    if (static_cast<std::uint64_t>(support.methylated)
+            + support.unmethylated
+        == 0U) {
+        throw AsmProfileError(
+            std::string("ASM ") + field
+            + " must contain at least one supporting read");
+    }
+    return support;
+}
+
+bool asm_parse_cgmaptools_call(std::string_view text)
+{
+    if (text == "TRUE") {return true;}
+    if (text == "FALSE") {return false;}
+    throw AsmProfileError("CGmapTools ASS ASM field must be TRUE or FALSE");
+}
+
+std::optional<float> asm_parse_probability(
+    std::string_view text,
+    const char *field,
+    bool allow_na);
+
+void asm_validate_bed_evidence(
+    const std::vector<std::string_view> &fields)
+{
+    if (fields.size() != 16U) {return;}
+    (void)asm_parse_support(fields[12], "REF_SUPPORT");
+    (void)asm_parse_support(fields[13], "ALT_SUPPORT");
+    (void)asm_parse_probability(fields[14], "P_VALUE", false);
+    (void)asm_parse_probability(fields[15], "Q_VALUE", false);
 }
 
 model::MethylationContext asm_bed_parse_strand(std::string_view strand)
@@ -1158,22 +1456,6 @@ std::optional<float> asm_parse_probability(
     return static_cast<float>(value);
 }
 
-void asm_validate_optional_finite(std::string_view text, const char *field)
-{
-    if (text == "na") {return;}
-    if (text.empty()) {
-        throw AsmProfileError(std::string("ASM ") + field + " is empty");
-    }
-    double value = 0.0;
-    const auto parsed = std::from_chars(
-        text.data(), text.data() + text.size(), value);
-    if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size()
-        || !std::isfinite(value)) {
-        throw AsmProfileError(
-            std::string("ASM ") + field + " must be finite, or na");
-    }
-}
-
 std::uint8_t asm_parse_base(std::string_view text, const char *field)
 {
     if (text == "A") {return 0U;}
@@ -1182,28 +1464,6 @@ std::uint8_t asm_parse_base(std::string_view text, const char *field)
     if (text == "T") {return 3U;}
     throw AsmProfileError(
         std::string("ASM ") + field + " must be one uppercase A/C/G/T base");
-}
-
-model::MethylationContext asm_parse_context(
-    std::string_view nucleotide,
-    std::string_view context)
-{
-    std::uint8_t value = 0U;
-    if (context == "CG") {
-        value = 1U;
-    } else if (context == "CHG") {
-        value = 3U;
-    } else if (context == "CHH") {
-        value = 7U;
-    } else {
-        throw AsmProfileError("ASM context must be CG, CHG, or CHH");
-    }
-    if (nucleotide == "G") {
-        value = static_cast<std::uint8_t>(value | 8U);
-    } else if (nucleotide != "C") {
-        throw AsmProfileError("ASM nucleotide must be C or G");
-    }
-    return static_cast<model::MethylationContext>(value);
 }
 
 bool asm_valid_context(model::MethylationContext context) noexcept
@@ -1218,33 +1478,6 @@ bool asm_valid_context(model::MethylationContext context) noexcept
         return true;
     }
     return false;
-}
-
-std::uint8_t asm_parse_dinucleotide(
-    std::string_view value,
-    model::MethylationContext context)
-{
-    std::uint8_t second = 0U;
-    if (value == "CA") {
-        second = 0U;
-    } else if (value == "CC") {
-        second = 1U;
-    } else if (value == "CG") {
-        second = 2U;
-    } else if (value == "CT") {
-        second = 3U;
-    } else {
-        throw AsmProfileError(
-            "ASM dinucleotide must be CA, CC, CG, or CT");
-    }
-    const bool is_cpg =
-        context == model::MethylationContext::cg_c
-        || context == model::MethylationContext::cg_g;
-    if ((second == 2U) != is_cpg) {
-        throw AsmProfileError(
-            "ASM dinucleotide disagrees with its context class");
-    }
-    return second;
 }
 
 void asm_put_u32(
@@ -1288,8 +1521,7 @@ std::array<std::uint8_t, asm_spool_record_bytes> asm_encode_record(
 }
 
 AsmRecord asm_decode_record(
-    const std::array<std::uint8_t, asm_spool_record_bytes> &bytes,
-    AsmProfileFormat format)
+    const std::array<std::uint8_t, asm_spool_record_bytes> &bytes)
 {
     AsmRecord record;
     record.target_reference_position = asm_get_u32(bytes, 0U);
@@ -1304,19 +1536,14 @@ AsmRecord asm_decode_record(
     record.dinucleotide_second = bytes[13];
     record.linked_reference_base = bytes[14];
     record.linked_alternate_base = bytes[15];
-    const bool bed = format == AsmProfileFormat::bed;
     const std::uint8_t context_value = static_cast<std::uint8_t>(record.context);
-    const bool valid_context = bed
-        ? (context_value == 0U
-            || context_value == static_cast<std::uint8_t>(
-                model::MethylationContext::cg_c)
-            || context_value == static_cast<std::uint8_t>(
-                model::MethylationContext::cg_g))
-        : asm_valid_context(record.context);
-    if (!valid_context
-        || (bed
-            ? record.dinucleotide_second != pending_bed_dinucleotide
-            : record.dinucleotide_second > 3U)
+    const bool valid_context_hint = context_value == 0U
+        || context_value == static_cast<std::uint8_t>(
+            model::MethylationContext::cg_c)
+        || context_value == static_cast<std::uint8_t>(
+            model::MethylationContext::cg_g);
+    if (!valid_context_hint
+        || record.dinucleotide_second != pending_bed_dinucleotide
         || record.linked_reference_base > 3U
         || record.linked_alternate_base > 3U
         || record.linked_reference_base == record.linked_alternate_base) {
@@ -1325,7 +1552,7 @@ AsmRecord asm_decode_record(
     return record;
 }
 
-AsmRecord normalize_asm_bed_record(
+AsmRecord normalize_asm_record(
     const model::Bases &contig_bases,
     AsmRecord record)
 {
@@ -1333,13 +1560,13 @@ AsmRecord normalize_asm_bed_record(
         || record.linked_variant_position >= contig_bases.size()
         || record.dinucleotide_second != pending_bed_dinucleotide) {
         throw AsmProfileError(
-            "ASM BED record is outside the contig or not normalized");
+            "ASM record is outside the contig or not normalized");
     }
     const auto observed = classify_context(
         contig_bases, record.target_reference_position, true);
     if (!observed) {
         throw AsmProfileError(
-            "ASM BED target is not a resolved reference C/G context");
+            "ASM target is not a resolved reference C/G context");
     }
     const std::uint8_t strand_hint = static_cast<std::uint8_t>(record.context);
     const bool observed_is_g = static_cast<std::uint8_t>(*observed) >= 8U;
@@ -1413,6 +1640,78 @@ void validate_asm_records(
     }
 }
 
+std::vector<variant::Variant> variants_from_asm(
+    const reference::Contig &contig,
+    const std::vector<AsmRecord> &records,
+    std::uint64_t phasing_seed)
+{
+    if (contig.length != contig.bases.size()
+        || contig.length > std::numeric_limits<std::uint32_t>::max()) {
+        throw AsmProfileError(
+            "ASM variant inference requires one materialized uint32 contig");
+    }
+    validate_asm_records(contig.bases, records);
+    std::vector<const AsmRecord *> links;
+    links.reserve(records.size());
+    for (const AsmRecord &record : records) {links.push_back(&record);}
+    std::sort(
+        links.begin(), links.end(),
+        [](const AsmRecord *left, const AsmRecord *right) {
+            return std::tie(
+                left->linked_variant_position,
+                left->linked_reference_base,
+                left->linked_alternate_base)
+                < std::tie(
+                    right->linked_variant_position,
+                    right->linked_reference_base,
+                    right->linked_alternate_base);
+        });
+
+    const std::uint64_t key = rng::derive_key(
+        phasing_seed, rng::Stage::haplotype, contig.index);
+    std::vector<variant::Variant> variants;
+    variants.reserve(links.size());
+    for (const AsmRecord *record : links) {
+        if (!variants.empty()
+            && variants.back().reference_start
+                == record->linked_variant_position) {
+            if (variants.back().ref_bases.front()
+                    != record->linked_reference_base
+                || variants.back().alt_bases.front()
+                    != record->linked_alternate_base) {
+                throw AsmProfileError(
+                    "ASM rows define conflicting alleles for one linked SNV");
+            }
+            continue;
+        }
+        if (variants.size()
+            >= static_cast<std::size_t>(model::no_variant_index)) {
+            throw AsmProfileError(
+                "ASM inferred variant count exceeds the uint32 catalog");
+        }
+        const model::HaplotypeMask alt_haplotype = rng::bernoulli(
+            key,
+            variants.size(),
+            UINT64_C(1),
+            0.5)
+            ? model::HaplotypeMask::haplotype_1
+            : model::HaplotypeMask::haplotype_2;
+        variants.push_back({
+            contig.index,
+            record->linked_variant_position,
+            record->linked_variant_position + 1U,
+            model::VariantKind::snv,
+            {record->linked_reference_base},
+            {record->linked_alternate_base},
+            alt_haplotype,
+            "asm_" + std::to_string(contig.index) + "_"
+                + std::to_string(record->linked_variant_position + 1U),
+            model::VariantSource::asm_profile,
+        });
+    }
+    return variants;
+}
+
 class AsmProfile::Impl {
 public:
     Impl(
@@ -1424,13 +1723,13 @@ public:
           format_(format)
     {
         try {
-            if (format_ != AsmProfileFormat::htsim
+            if (format_ != AsmProfileFormat::cgmaptools_ass
                 && format_ != AsmProfileFormat::bed) {
                 throw AsmProfileError("unsupported ASM profile format");
             }
             const char *const label = format_ == AsmProfileFormat::bed
                 ? "ASM BED"
-                : "ASM";
+                : "CGmapTools ASS";
             if (reference_catalog_.empty()) {
                 throw AsmProfileError(
                     std::string(label) + " requires a non-empty reference catalog");
@@ -1465,12 +1764,14 @@ public:
             file_sha256_ = snapshot.file_sha256();
             bool have_previous = false;
             std::uint32_t previous_contig = 0U;
-            std::uint32_t previous_position = 0U;
+            std::optional<std::size_t> asm_bed_width;
             snapshot.visit_lines(
                 [&](std::string_view line, std::uint64_t line_number) {
                     if (line.empty() || line.front() == '#'
                         || (format_ == AsmProfileFormat::bed
-                            && asm_bed_header(line))) {
+                            && asm_bed_header(line))
+                        || (format_ == AsmProfileFormat::cgmaptools_ass
+                            && asm_cgmaptools_header(line))) {
                         return;
                     }
                     try {
@@ -1487,6 +1788,11 @@ public:
                         std::uint32_t variant_position = 0U;
                         AsmRecord record;
                         if (format_ == AsmProfileFormat::bed) {
+                            if (asm_bed_width && *asm_bed_width != fields.size()) {
+                                throw AsmProfileError(
+                                    "ASM BED rows must use one consistent width");
+                            }
+                            asm_bed_width = fields.size();
                             const std::uint32_t target_start =
                                 asm_parse_u32(fields[1], "chromStart");
                             const std::uint32_t target_end =
@@ -1539,6 +1845,7 @@ public:
                                     fields[11],
                                     "alternate methylation level",
                                     false);
+                            asm_validate_bed_evidence(fields);
                             target_position = target_start;
                             variant_position = variant_start;
                             record = AsmRecord{
@@ -1552,12 +1859,12 @@ public:
                                 linked_alternate_base,
                             };
                         } else {
-                            const std::uint32_t one_based_target =
-                                asm_parse_positive_u32(
-                                    fields[2], "target position");
                             const std::uint32_t one_based_variant =
                                 asm_parse_positive_u32(
-                                    fields[6], "linked variant position");
+                                    fields[1], "linked variant position");
+                            const std::uint32_t one_based_target =
+                                asm_parse_positive_u32(
+                                    fields[5], "target position");
                             if (one_based_target
                                     > reference_catalog_[contig_index].length
                                 || one_based_variant
@@ -1567,63 +1874,78 @@ public:
                             }
                             target_position = one_based_target - 1U;
                             variant_position = one_based_variant - 1U;
-                            const auto context =
-                                asm_parse_context(fields[1], fields[3]);
-                            const std::uint8_t dinucleotide_second =
-                                asm_parse_dinucleotide(fields[4], context);
-                            (void)asm_parse_probability(
-                                fields[5], "total methylation level", true);
                             const std::uint8_t linked_reference_base =
-                                asm_parse_base(fields[7], "linked REF");
-                            const std::uint8_t linked_alternate_base =
-                                asm_parse_base(fields[8], "linked ALT");
-                            if (linked_reference_base == linked_alternate_base) {
+                                asm_parse_base(fields[2], "Ref");
+                            const std::uint8_t allele_1 =
+                                asm_parse_base(fields[3], "Allele1");
+                            const std::uint8_t allele_2 =
+                                asm_parse_base(fields[4], "Allele2");
+                            if (allele_1 == allele_2
+                                || (allele_1 != linked_reference_base
+                                    && allele_2 != linked_reference_base)) {
                                 throw AsmProfileError(
-                                    "ASM linked REF and ALT bases must differ");
+                                    "CGmapTools ASS alleles must differ and exactly one must equal Ref");
                             }
-                            const float reference_probability =
+                            (void)asm_parse_support(
+                                fields[6], "Allele1_linked_C");
+                            (void)asm_parse_support(
+                                fields[7], "Allele2_linked_C");
+                            const float allele_1_probability =
+                                *asm_parse_probability(
+                                    fields[8],
+                                    "Allele1_linked_C_met",
+                                    false);
+                            const float allele_2_probability =
                                 *asm_parse_probability(
                                     fields[9],
-                                    "reference methylation level",
+                                    "Allele2_linked_C_met",
                                     false);
-                            const float alternate_probability =
-                                *asm_parse_probability(
-                                    fields[10],
-                                    "alternate methylation level",
-                                    false);
-                            asm_validate_optional_finite(
-                                fields[11], "fold change");
                             (void)asm_parse_probability(
-                                fields[12], "p-value", true);
-                            if (fields[13].empty()
-                                || fields[13].find('\0')
-                                    != std::string_view::npos) {
-                                throw AsmProfileError(
-                                    "ASM comment must not be empty");
-                            }
+                                fields[10], "pvalue", false);
+                            (void)asm_parse_probability(
+                                fields[11], "fdr", false);
+                            const bool called =
+                                asm_parse_cgmaptools_call(fields[12]);
+                            const bool allele_1_is_reference =
+                                allele_1 == linked_reference_base;
+                            const std::uint8_t linked_alternate_base =
+                                allele_1_is_reference ? allele_2 : allele_1;
+                            const float reference_probability =
+                                allele_1_is_reference
+                                ? allele_1_probability
+                                : allele_2_probability;
+                            const float alternate_probability =
+                                allele_1_is_reference
+                                ? allele_2_probability
+                                : allele_1_probability;
                             record = AsmRecord{
                                 target_position,
                                 variant_position,
                                 probability_to_u16(reference_probability),
                                 probability_to_u16(alternate_probability),
-                                context,
-                                dinucleotide_second,
+                                static_cast<model::MethylationContext>(0U),
+                                pending_bed_dinucleotide,
                                 linked_reference_base,
                                 linked_alternate_base,
                             };
+                            if (!called) {
+                                if (have_previous && contig_index < previous_contig) {
+                                    throw AsmProfileError(
+                                        "CGmapTools ASS rows must follow FASTA contig order");
+                                }
+                                have_previous = true;
+                                previous_contig = contig_index;
+                                return;
+                            }
                         }
-                        if (have_previous
-                            && (contig_index < previous_contig
-                                || (contig_index == previous_contig
-                                    && target_position <= previous_position))) {
+                        if (have_previous && contig_index < previous_contig) {
                             throw AsmProfileError(
                                 std::string(label)
-                                + " rows must follow FASTA order with unique target positions");
+                                + " rows must follow FASTA contig order");
                         }
                         append(contig_index, record);
                         have_previous = true;
                         previous_contig = contig_index;
-                        previous_position = target_position;
                     } catch (const AsmProfileError &error) {
                         throw AsmProfileError(
                             std::string(label) + " line "
@@ -1632,8 +1954,9 @@ public:
                     }
                 });
             if (row_count_ == 0U) {
-                throw AsmProfileError(
-                    std::string(label) + " contains no data rows");
+                throw AsmProfileError(format_ == AsmProfileFormat::bed
+                    ? "ASM BED contains no data rows"
+                    : "CGmapTools ASS contains no rows called TRUE");
             }
             if (std::fflush(spool_.get()) != 0) {
                 throw AsmProfileError(asm_io_error("flush"));
@@ -1681,7 +2004,7 @@ public:
             if (std::fread(bytes.data(), bytes.size(), 1U, spool_.get()) != 1U) {
                 throw AsmProfileError("ASM spool is truncated or unreadable");
             }
-            result.push_back(asm_decode_record(bytes, format_));
+            result.push_back(asm_decode_record(bytes));
         }
         return result;
     }
@@ -1700,11 +2023,19 @@ public:
                 "ASM validation contig disagrees with the reference catalog");
         }
         std::vector<AsmRecord> result = records(contig.index);
-        if (format_ == AsmProfileFormat::bed) {
-            for (AsmRecord &record : result) {
-                record = normalize_asm_bed_record(contig.bases, record);
-            }
+        for (AsmRecord &record : result) {
+            record = normalize_asm_record(contig.bases, record);
         }
+        std::sort(
+            result.begin(), result.end(),
+            [](const AsmRecord &left, const AsmRecord &right) {
+                return std::tie(
+                    left.target_reference_position,
+                    left.linked_variant_position)
+                    < std::tie(
+                        right.target_reference_position,
+                        right.linked_variant_position);
+            });
         validate_asm_records(contig.bases, result);
         return result;
     }
@@ -1736,7 +2067,7 @@ private:
     std::vector<std::uint64_t> first_record_;
     AsmFilePointer spool_;
     std::uint64_t row_count_ = 0U;
-    AsmProfileFormat format_ = AsmProfileFormat::htsim;
+    AsmProfileFormat format_ = AsmProfileFormat::cgmaptools_ass;
 };
 
 AsmProfile::AsmProfile(
@@ -2202,7 +2533,8 @@ MethylationCatalog::MethylationCatalog(
 
     try {
         if (pool_cgmap && cgmap_records == nullptr) {
-            throw CatalogError("CGmap pooling requires normalized CGmap records");
+            throw CatalogError(
+                "methylation-profile pooling requires normalized records");
         }
         std::unique_ptr<CgmapPool> context_pool;
         if (cgmap_records != nullptr) {
@@ -2313,7 +2645,7 @@ std::size_t pool_index(model::MethylationContext context)
     case model::MethylationContext::chh_g:
         return 2U;
     }
-    throw CgmapPoolError("CGmap pool received an unknown methylation context");
+    throw CgmapPoolError("profile pool received an unknown methylation context");
 }
 
 void validate_record(const CgmapRecord &record)
@@ -2321,7 +2653,7 @@ void validate_record(const CgmapRecord &record)
     (void)pool_index(record.context);
     if (record.dinucleotide_second > 3U
         || (!record.has_probability && record.probability_u16 != 0U)) {
-        throw CgmapPoolError("CGmap pool record is not normalized");
+        throw CgmapPoolError("profile pool record is not normalized");
     }
 }
 
@@ -2335,7 +2667,7 @@ CgmapPool::CgmapPool(const std::vector<CgmapRecord> &records)
         validate_record(record);
         if (!first && record.reference_position <= previous_position) {
             throw CgmapPoolError(
-                "CGmap pool records must have unique increasing positions");
+                "profile pool records must have unique increasing positions");
         }
         first = false;
         previous_position = record.reference_position;
@@ -2381,7 +2713,7 @@ std::optional<ProbabilityU16> CgmapPool::sample(
         throw;
     } catch (const std::exception &error) {
         throw CgmapPoolError(
-            std::string("CGmap pool sampling failed: ") + error.what());
+            std::string("profile pool sampling failed: ") + error.what());
     }
 }
 
@@ -2815,16 +3147,16 @@ const variant::Variant &resolve_asm_snv(
         || found->ref_bases.front() != record.linked_reference_base
         || found->alt_bases.front() != record.linked_alternate_base) {
         throw DiploidCatalogError(
-            "ASM row does not resolve to its exact typed VCF SNV");
+            "ASM row does not resolve to its exact typed linked SNV");
     }
     if (found->alt_haplotypes == model::HaplotypeMask::both) {
         throw DiploidCatalogError(
-            "ASM linked VCF SNV must retain one reference haplotype");
+            "ASM linked SNV must retain one reference haplotype");
     }
     if (found->alt_haplotypes != model::HaplotypeMask::haplotype_1
         && found->alt_haplotypes
             != model::HaplotypeMask::haplotype_2) {
-        throw DiploidCatalogError("ASM linked VCF SNV has an invalid mask");
+        throw DiploidCatalogError("ASM linked SNV has an invalid mask");
     }
     return *found;
 }
@@ -2835,7 +3167,7 @@ std::uint8_t alternate_haplotype(
     if (mask == model::HaplotypeMask::haplotype_1) {return 0U;}
     if (mask == model::HaplotypeMask::haplotype_2) {return 1U;}
     throw DiploidCatalogError(
-        "ASM linked VCF SNV must be heterozygous");
+        "ASM linked SNV must be heterozygous");
 }
 
 void validate_runtime_asm_layer(
@@ -3141,7 +3473,7 @@ DiploidMethylationCatalog::DiploidMethylationCatalog(
         validate_context_shapes(shapes);
         if (pool_cgmap && cgmap_records == nullptr) {
             throw DiploidCatalogError(
-                "CGmap pooling requires normalized CGmap records");
+                "methylation-profile pooling requires normalized records");
         }
         std::unique_ptr<CgmapPool> context_pool;
         if (cgmap_records != nullptr) {
@@ -3445,6 +3777,192 @@ DiploidMethylationCatalog::sites_for_projection(
         }
     }
     return result;
+}
+
+namespace {
+
+struct MethbedExpectedSite {
+    BaseOrigin origin;
+    RuntimeSite *site = nullptr;
+    bool shared = false;
+};
+
+void append_methbed_expected_sites(
+    std::vector<MethbedExpectedSite> &expected,
+    std::vector<RuntimeSite> &sites,
+    bool insertion,
+    bool shared,
+    const std::vector<variant::Variant> &variants)
+{
+    for (RuntimeSite &site : sites) {
+        const std::uint32_t key = runtime_site_key(site);
+        BaseOrigin origin;
+        if (insertion) {
+            const std::uint32_t event_ordinal = key >> 2U;
+            const std::uint8_t insertion_offset =
+                static_cast<std::uint8_t>(key & 3U);
+            if (event_ordinal >= variants.size()
+                || variants[event_ordinal].kind
+                    != model::VariantKind::insertion
+                || insertion_offset
+                    >= variants[event_ordinal].alt_bases.size()) {
+                throw SnapshotError(
+                    "MethBED insertion site does not identify an embedded event base");
+            }
+            origin = BaseOrigin{
+                true,
+                variants[event_ordinal].reference_start,
+                event_ordinal,
+                insertion_offset,
+            };
+        } else {
+            origin = BaseOrigin{false, key, 0U, 0U};
+        }
+        expected.push_back(MethbedExpectedSite{origin, &site, shared});
+    }
+}
+
+void normalize_methbed_haplotype(
+    const reference::Contig &contig,
+    const variant::ContigVariants &variants,
+    DiploidRuntimeArrays &arrays,
+    std::uint8_t haplotype)
+{
+    std::vector<MethbedExpectedSite> expected;
+    expected.reserve(
+        arrays.reference_shared.size()
+        + arrays.insertion_shared.size()
+        + arrays.reference_haplotypes[haplotype].size()
+        + arrays.insertion_haplotypes[haplotype].size());
+    append_methbed_expected_sites(
+        expected,
+        arrays.reference_shared,
+        false,
+        true,
+        variants.variants());
+    append_methbed_expected_sites(
+        expected,
+        arrays.insertion_shared,
+        true,
+        true,
+        variants.variants());
+    append_methbed_expected_sites(
+        expected,
+        arrays.reference_haplotypes[haplotype],
+        false,
+        false,
+        variants.variants());
+    append_methbed_expected_sites(
+        expected,
+        arrays.insertion_haplotypes[haplotype],
+        true,
+        false,
+        variants.variants());
+    std::sort(
+        expected.begin(),
+        expected.end(),
+        [](const MethbedExpectedSite &left, const MethbedExpectedSite &right) {
+            return origin_less(left.origin, right.origin);
+        });
+
+    ClassifiedSiteStream stream(contig, variants, haplotype, true);
+    std::optional<RawSite> observed = stream.next();
+    for (MethbedExpectedSite &entry : expected) {
+        while (observed && origin_less(observed->origin, entry.origin)) {
+            observed = stream.next();
+        }
+        if (!observed || !same_origin(observed->origin, entry.origin)
+            || runtime_site_context(*entry.site) != observed->context) {
+            throw SnapshotError(
+                "MethBED site context or origin disagrees with the resolved haplotype");
+        }
+        const bool previous_equivalence =
+            runtime_site_reference_equivalent(*entry.site);
+        if (entry.shared && haplotype == 1U
+            && previous_equivalence != observed->equals_reference) {
+            throw SnapshotError(
+                "MethBED shared site is not equivalent on both haplotypes");
+        }
+        *entry.site = pack_runtime_site(
+            runtime_site_key(*entry.site),
+            runtime_site_probability(*entry.site),
+            runtime_site_context(*entry.site),
+            runtime_site_source(*entry.site),
+            runtime_site_allele(*entry.site),
+            observed->equals_reference);
+    }
+}
+
+} // namespace
+
+void normalize_methbed_contig(
+    const reference::Contig &reference_contig,
+    SnapshotContig &methbed_contig)
+{
+    try {
+        if (reference_contig.index > std::numeric_limits<std::uint32_t>::max()
+            || reference_contig.length
+                > std::numeric_limits<std::uint32_t>::max()
+            || reference_contig.length != reference_contig.bases.size()
+            || methbed_contig.name != reference_contig.name
+            || methbed_contig.reference_length != reference_contig.length
+            || methbed_contig.reference_sha256
+                != reference_contig.reference_sha256) {
+            throw SnapshotError(
+                "MethBED contig identity disagrees with the reference");
+        }
+        if (!methbed_contig.diploid) {
+            if (!methbed_contig.variants.empty()) {
+                throw SnapshotError(
+                    "reference-mode MethBED contig contains variants");
+            }
+            bool first = true;
+            std::uint32_t previous = 0U;
+            for (const CatalogSite &site : methbed_contig.reference_sites) {
+                const auto observed = classify_context(
+                    reference_contig.bases,
+                    site.reference_position,
+                    true);
+                if ((!first && site.reference_position <= previous)
+                    || !observed || *observed != site.context) {
+                    throw SnapshotError(
+                        "MethBED reference site disagrees with the reference context");
+                }
+                previous = site.reference_position;
+                first = false;
+            }
+            (void)MethylationCatalog(
+                methbed_contig.reference_length,
+                methbed_contig.reference_sites);
+            return;
+        }
+        if (!methbed_contig.reference_sites.empty()) {
+            throw SnapshotError(
+                "diploid MethBED contig contains reference-mode sites");
+        }
+        const variant::ContigVariants variants(
+            reference_contig.bases,
+            methbed_contig.variants,
+            reference_contig.index);
+        normalize_methbed_haplotype(
+            reference_contig,
+            variants,
+            methbed_contig.diploid_sites,
+            0U);
+        normalize_methbed_haplotype(
+            reference_contig,
+            variants,
+            methbed_contig.diploid_sites,
+            1U);
+        (void)DiploidMethylationCatalog(
+            reference_contig.index,
+            methbed_contig.reference_length,
+            methbed_contig.diploid_sites);
+    } catch (const SnapshotError &) {
+        throw;
+    } catch (const std::exception &error) {
+        throw SnapshotError(error.what());
+    }
 }
 
 } // namespace htsim::methdb

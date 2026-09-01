@@ -90,7 +90,9 @@ def _methylation_input_options(
 ) -> None:
     for name, option in (
         ("cgmap", "--cgmap"),
-        ("bed_methyl", "--bed-methyl"),
+        ("bed_methyl", "--bedmethyl"),
+        ("methbg", "--methbg"),
+        ("methbed", "--methbed"),
         ("methdb", "--methdb"),
         ("asm", "--asm"),
         ("asm_bed", "--asm-bed"),
@@ -108,28 +110,18 @@ def _sampling_options(
     kind = _string(coverage, "kind")
     if technology in _WHOLE_GENOME_TECHNOLOGIES:
         if kind == "uniform":
+            _option(argv, "--sampling", "uniform")
             return
         if kind != "profile" or "artifact" not in coverage:
             raise FullCommandError(
                 "whole-genome coverage cannot be represented by the run CLI"
             )
         artifact = _mapping(coverage, "artifact")
+        _option(argv, "--sampling", "gc")
         _option(argv, "--gc-profile", _string(artifact, "path"))
         return
 
     if technology == "RRBS":
-        rrbs = _mapping(config, "rrbs")
-        cut_sites = rrbs.get("cut_sites")
-        if (
-            not isinstance(cut_sites, list)
-            or not cut_sites
-            or any(not isinstance(site, str) for site in cut_sites)
-        ):
-            raise FullCommandError("normalized RRBS cut sites are invalid")
-        for cut_site in cut_sites:
-            _option(argv, "--cut-site", cut_site)
-        if "candidate_bed" in rrbs:
-            _option(argv, "--rrbs-candidates", rrbs["candidate_bed"])
         if kind == "uniform":
             sampling = "uniform"
         elif kind == "profile" and "artifact" not in coverage:
@@ -139,16 +131,20 @@ def _sampling_options(
                 "normalized RRBS coverage cannot be represented by the run CLI"
             )
         _option(argv, "--sampling", sampling)
+        rrbs = _mapping(config, "rrbs")
+        cut_sites = rrbs.get("cut_sites")
+        if (
+            not isinstance(cut_sites, list)
+            or not cut_sites
+            or any(not isinstance(site, str) for site in cut_sites)
+        ):
+            raise FullCommandError("normalized RRBS cut sites are invalid")
+        _option(argv, "--cut-site", ",".join(cut_sites))
+        if "candidate_bed" in rrbs:
+            _option(argv, "--rrbs-candidates", rrbs["candidate_bed"])
         return
 
     if technology in _TARGETED_TECHNOLOGIES:
-        tbs = _mapping(config, "tbs")
-        _option(argv, "--targets", _string(tbs, "bed"))
-        _option(
-            argv,
-            "--fragment-center-stddev",
-            tbs["fragment_center_stddev"],
-        )
         if kind == "uniform":
             sampling = "uniform"
         elif kind == "target-score":
@@ -158,6 +154,13 @@ def _sampling_options(
                 "normalized target coverage cannot be represented by the run CLI"
             )
         _option(argv, "--sampling", sampling)
+        tbs = _mapping(config, "tbs")
+        _option(argv, "--targets", _string(tbs, "bed"))
+        _option(
+            argv,
+            "--center-sd",
+            tbs["center_sd"],
+        )
         return
 
     raise FullCommandError("normalized technology has no sampling projection")
@@ -220,8 +223,8 @@ def _methylation_options(
     if not _boolean(methylation, "collect_non_cpg"):
         argv.append("--cpg-only")
     if _boolean(methylation, "cgmap_pool"):
-        argv.append("--cgmap-pool")
-    _option(argv, "--methylation-model", methylation["state_model"])
+        argv.append("--pool-meth")
+    _option(argv, "--meth-model", methylation["state_model"])
     if not _boolean(methylation, "update_variant_boundaries"):
         argv.append("--no-update-variant-boundaries")
 

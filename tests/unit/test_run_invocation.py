@@ -7,7 +7,7 @@ import unittest
 from bsreadsim.cli import build_parser, build_run_document
 from bsreadsim.run.config import LoadedRunConfig, normalize_run_config
 from bsreadsim.run.invocation import FullCommandError, build_full_run_argv
-from bsreadsim.run.prepare import materialize_master_seed
+from bsreadsim.run.prepare import materialize_run_seeds
 
 
 class FullRunCommandTests(unittest.TestCase):
@@ -27,7 +27,7 @@ class FullRunCommandTests(unittest.TestCase):
         loaded = normalize_run_config(
             build_run_document(arguments, self.directory), self.directory
         )
-        return materialize_master_seed(loaded, entropy=lambda bits: 123456789)
+        return materialize_run_seeds(loaded, entropy=lambda bits: 123456789)
 
     def assert_full_round_trip(self, argv: list[str]) -> list[str]:
         effective = self.effective(argv)
@@ -50,7 +50,7 @@ class FullRunCommandTests(unittest.TestCase):
         cases = {
             "wgbs": [],
             "wgs": [],
-            "rrbs": ["--cut-site", "C|CGG"],
+            "rrbs": [],
             "tbs": ["--targets", "targets.bed"],
             "wes": ["--targets", "targets.bed"],
             "ts": ["--targets", "targets.bed"],
@@ -71,6 +71,7 @@ class FullRunCommandTests(unittest.TestCase):
                     ]
                 )
                 self.assertEqual(full_argv[:3], ["bsreadsim", "run", technology])
+                self.assertIn("--sampling", full_argv)
 
     def test_full_command_expands_advanced_bisulfite_settings(self) -> None:
         argv = [
@@ -119,8 +120,8 @@ class FullRunCommandTests(unittest.TestCase):
             "--beta-chh",
             "6,7",
             "--cpg-only",
-            "--cgmap-pool",
-            "--methylation-model",
+            "--pool-meth",
+            "--meth-model",
             "bilstm",
             "--no-update-variant-boundaries",
             "--conversion-rate",
@@ -154,7 +155,7 @@ class FullRunCommandTests(unittest.TestCase):
             "--single-end",
             "--homozygous-only",
             "--cpg-only",
-            "--cgmap-pool",
+            "--pool-meth",
             "--no-update-variant-boundaries",
             "--undirectional",
             "--quality-model",
@@ -169,6 +170,38 @@ class FullRunCommandTests(unittest.TestCase):
         self.assertNotIn("--save-truth", full_argv)
         self.assertEqual(full_argv[full_argv.index("--core") + 1], "custom-core")
 
+    def test_full_command_uses_canonical_methylation_profile_names(self) -> None:
+        pooled = self.assert_full_round_trip(
+            [
+                "run", "wgbs", "-r", "reference.fa", "-o", "pooled",
+                "-n", "2", "--bedmethyl", "profile.bedmethyl",
+                "--pool-meth",
+            ]
+        )
+        self.assertIn("--bedmethyl", pooled)
+        self.assertIn("--pool-meth", pooled)
+        self.assertNotIn("--pool-methylation-values", pooled)
+        self.assertNotIn("--bed-methyl", pooled)
+        self.assertNotIn("--cgmap-pool", pooled)
+
+        for option, filename in (
+            ("--methbg", "profile.methbg.gz"),
+            ("--methbed", "profile.methbed.gz"),
+        ):
+            with self.subTest(option=option):
+                profile = self.assert_full_round_trip(
+                    [
+                        "run", "wgbs", "-r", "reference.fa", "-o", "profiled",
+                        "-n", "2", option, filename, "--pool-meth",
+                    ]
+                )
+                self.assertIn(option, profile)
+                self.assertIn("--pool-meth", profile)
+                self.assertEqual(
+                    profile[profile.index(option) + 1],
+                    str(self.directory / filename),
+                )
+
     def test_full_command_covers_nonuniform_sampling_modes(self) -> None:
         cases = (
             [
@@ -180,6 +213,8 @@ class FullRunCommandTests(unittest.TestCase):
                 "wgs-output",
                 "-n",
                 "2",
+                "--sampling",
+                "gc",
                 "--gc-profile",
                 str(self.directory / "coverage.tsv"),
             ],
@@ -192,12 +227,12 @@ class FullRunCommandTests(unittest.TestCase):
                 "rrbs-output",
                 "-n",
                 "2",
-                "--cut-site",
-                "C|CGG",
-                "--rrbs-candidates",
-                "candidates.bed",
                 "--sampling",
                 "score",
+                "--cut-site",
+                "C|CGG,G|ANTC",
+                "--rrbs-candidates",
+                "candidates.bed",
             ],
             [
                 "run",
@@ -208,15 +243,30 @@ class FullRunCommandTests(unittest.TestCase):
                 "tbs-output",
                 "-n",
                 "2",
-                "--targets",
-                "targets.bed",
                 "--sampling",
                 "score",
+                "--targets",
+                "targets.bed",
             ],
         )
         for argv in cases:
             with self.subTest(technology=argv[1]):
-                self.assert_full_round_trip(argv)
+                full_argv = self.assert_full_round_trip(argv)
+                first_input = {
+                    "wgs": "--gc-profile",
+                    "rrbs": "--cut-site",
+                    "tbs": "--targets",
+                }[argv[1]]
+                self.assertLess(
+                    full_argv.index("--sampling"),
+                    full_argv.index(first_input),
+                )
+                if argv[1] == "rrbs":
+                    self.assertEqual(full_argv.count("--cut-site"), 1)
+                    self.assertEqual(
+                        full_argv[full_argv.index("--cut-site") + 1],
+                        "C|CGG,G|ANTC",
+                    )
 
     def test_unrepresentable_cli_state_is_rejected(self) -> None:
         effective = self.effective(

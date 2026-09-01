@@ -82,6 +82,33 @@ class LoadedRunConfig:
         normalized["seed"] = str(seed)
         return _freeze_config(normalized)
 
+    def with_resolved_seeds(
+        self, seeds: Mapping[str, int]
+    ) -> "LoadedRunConfig":
+        """Replace unresolved stage seeds without changing explicit values."""
+        normalized = self.normalized
+        normalized_seeds = normalized.get("seeds")
+        if not isinstance(normalized_seeds, dict):
+            raise ConfigValidationError("config stage seeds are missing")
+        expected = {
+            name for name, value in normalized_seeds.items() if value is None
+        }
+        if set(seeds) != expected:
+            raise ConfigValidationError(
+                "resolved stage seeds must match every unresolved seed"
+            )
+        for name, seed in seeds.items():
+            if (
+                isinstance(seed, bool)
+                or not isinstance(seed, int)
+                or not 0 <= seed <= UINT64_MAX
+            ):
+                raise ConfigValidationError(
+                    "resolved stage seed must be an unsigned 64-bit integer"
+                )
+            normalized_seeds[name] = str(seed)
+        return _freeze_config(normalized)
+
 
 def normalize_run_config(
     document: Mapping[str, Any],
@@ -90,7 +117,7 @@ def normalize_run_config(
     """Validate values once, apply defaults, resolve paths, and freeze identity.
 
     Referenced files are not opened here. Preparation hashes them immediately
-    before launch, after an omitted seed has been materialized.
+    before launch, after omitted seeds have been materialized.
     """
     if not isinstance(document, Mapping):
         raise ConfigValidationError("run specification must be a mapping")
@@ -104,6 +131,8 @@ def normalize_run_config(
 
     master_seed = _parse_seed(normalized.get("seed"))
     for name, seed in normalized["seeds"].items():
+        if seed is None:
+            continue
         if int(seed, 10) > UINT64_MAX:
             raise ConfigValidationError(
                 "$.seeds.{}: value exceeds unsigned 64-bit maximum".format(name)
@@ -300,7 +329,15 @@ def _validate_cross_field_rules(config: Mapping[str, Any]) -> None:
                 "inert value true"
             )
     if "methdb" in inputs:
-        conflicts = ("vcf", "cgmap", "bed_methyl", "asm", "asm_bed")
+        conflicts = (
+            "vcf",
+            "cgmap",
+            "bed_methyl",
+            "methbg",
+            "methbed",
+            "asm",
+            "asm_bed",
+        )
         if any(name in inputs for name in conflicts):
             raise ConfigValidationError(
                 "$.inputs.methdb: cannot be combined with VCF or overlays"
@@ -311,8 +348,10 @@ def _validate_cross_field_rules(config: Mapping[str, Any]) -> None:
             )
         if config["methylation"]["cgmap_pool"]:
             raise ConfigValidationError(
-                "$.inputs.methdb: cannot be combined with cgmap_pool=true"
+                "$.inputs.methdb: cannot be combined with methylation value pooling"
             )
+
+
 def _resolve_paths(config: dict[str, Any], base_directory: Path) -> None:
     for path in (
         ("reference",),
@@ -320,6 +359,8 @@ def _resolve_paths(config: dict[str, Any], base_directory: Path) -> None:
         ("inputs", "vcf"),
         ("inputs", "cgmap"),
         ("inputs", "bed_methyl"),
+        ("inputs", "methbg"),
+        ("inputs", "methbed"),
         ("inputs", "methdb"),
         ("inputs", "asm"),
         ("inputs", "asm_bed"),

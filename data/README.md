@@ -4,7 +4,7 @@ This directory is the canonical source for immutable data released with
 BSReadSim: bundled models, supported profiles, and small user-facing examples.
 
 Use `models/` for released pretrained models, `profiles/` for supported
-runtime parameter sets, and `examples/` for small inputs used by user
+runtime parameter sets, and `example/` for inputs used by user
 documentation. Register every bundled resource in `registry.json` with its
 checksum, provenance, and license. The containing BSReadSim release and exact
 SHA-256 identify the resource bytes.

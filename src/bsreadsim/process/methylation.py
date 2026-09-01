@@ -65,7 +65,7 @@ def _sample_methylation_batch_values(
     config: ProcessConfig,
 ) -> tuple[tuple[bool, ...], ...]:
     return tuple(
-        config.methylation_model.sample_fragment(fragment, config)
+        config.meth_model.sample_fragment(fragment, config)
         for fragment in fragments
     )
 
@@ -74,7 +74,7 @@ def _sample_methylation_values(
     fragment: Fragment,
     config: ProcessConfig,
 ) -> tuple[bool, ...]:
-    return config.methylation_model.sample_fragment(fragment, config)
+    return config.meth_model.sample_fragment(fragment, config)
 
 
 def _sample_methylation_values_bernoulli(
@@ -121,7 +121,7 @@ def _sample_site_states(
     batch: ColumnarFragmentBatch,
     config: ProcessConfig,
 ) -> np.ndarray:
-    return config.methylation_model.sample_batch(batch, config)
+    return config.meth_model.sample_batch(batch, config)
 
 
 def _sample_site_states_bernoulli(

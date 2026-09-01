@@ -50,6 +50,14 @@
         "bed_methyl": {
           "$ref": "#/$defs/path"
         },
+        "methbg": {
+          "$ref": "#/$defs/path",
+          "description": "four-column MethBG methylation profile"
+        },
+        "methbed": {
+          "$ref": "#/$defs/path",
+          "description": "BED-compatible MethBED methylation profile"
+        },
         "asm": {
           "$ref": "#/$defs/path"
         },
@@ -63,31 +71,26 @@
       },
       "allOf": [
         {
-          "if": {
+          "not": {
             "anyOf": [
               {
-                "required": [
-                  "asm"
-                ]
+                "required": ["cgmap", "bed_methyl"]
               },
               {
-                "required": [
-                  "asm_bed"
-                ]
+                "required": ["cgmap", "methbg"]
+              },
+              {
+                "required": ["cgmap", "methbed"]
+              },
+              {
+                "required": ["bed_methyl", "methbg"]
+              },
+              {
+                "required": ["bed_methyl", "methbed"]
+              },
+              {
+                "required": ["methbg", "methbed"]
               }
-            ]
-          },
-          "then": {
-            "required": [
-              "vcf"
-            ]
-          }
-        },
-        {
-          "not": {
-            "required": [
-              "cgmap",
-              "bed_methyl"
             ]
           }
         },
@@ -165,7 +168,7 @@
     },
     "fragments": {
       "type": "object",
-      "description": "Runtime validation enforces insert_min <= insert_mean <= insert_max. Whole-genome and targeted technologies with insert_sd=0 use insert_mean as one fixed length; otherwise each read length must fit insert_min.",
+      "description": "Runtime validation enforces insert_min <= insert_mean <= insert_max. Whole-genome and targeted technologies share the bounded insert-length distribution; insert_sd=0 selects insert_mean as one fixed length. Otherwise each read length must fit insert_min.",
       "additionalProperties": false,
       "required": [
         "paired_end",
@@ -291,6 +294,7 @@
     },
     "seeds": {
       "type": "object",
+      "description": "Stage seeds. Null values are derived from the resolved master seed before launch.",
       "additionalProperties": false,
       "required": [
         "mutation",
@@ -299,13 +303,34 @@
       ],
       "properties": {
         "mutation": {
-          "$ref": "#/$defs/seed"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/seed"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "phasing": {
-          "$ref": "#/$defs/seed"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/seed"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "methylation": {
-          "$ref": "#/$defs/seed"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/seed"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },
@@ -400,7 +425,7 @@
         "bed": {
           "$ref": "#/$defs/path"
         },
-        "fragment_center_stddev": {
+        "center_sd": {
           "type": "number",
           "minimum": 0,
           "maximum": 1.7976931348623157e+308,
@@ -625,6 +650,40 @@
         ],
         "properties": {
           "rrbs": false
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "inputs": {
+            "anyOf": [
+              {
+                "required": [
+                  "asm"
+                ]
+              },
+              {
+                "required": [
+                  "asm_bed"
+                ]
+              }
+            ]
+          }
+        },
+        "required": [
+          "inputs"
+        ]
+      },
+      "then": {
+        "properties": {
+          "mutation": {
+            "properties": {
+              "rate": {
+                "const": 0
+              }
+            }
+          }
         }
       }
     }

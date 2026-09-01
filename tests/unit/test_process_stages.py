@@ -707,7 +707,7 @@ class UniformProcessTests(unittest.TestCase):
             conversion_rate=1.0,
             quality=UniformQuality(30),
             error=UniformError(0.0),
-            methylation_model=AllMethylatedModel(),
+            meth_model=AllMethylatedModel(),
         )
 
         result = process_fragment_batch((fragment,), ("chrPlugin",), config)[0]

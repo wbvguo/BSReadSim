@@ -710,7 +710,8 @@ void validate_annotations(
             const std::uint8_t raw_source = details.variant_sources[index];
             if (raw_source < static_cast<std::uint8_t>(VariantSource::vcf)
                 || raw_source
-                    > static_cast<std::uint8_t>(VariantSource::de_novo)) {
+                    > static_cast<std::uint8_t>(
+                        VariantSource::asm_profile)) {
                 throw ProtocolError("variant source is invalid");
             }
             const std::uint32_t id_start = details.variant_id_offsets[index];

@@ -49,7 +49,7 @@ def _arguments(core: Path, reference: Path, vcf: Path) -> list[str]:
         "--indel-extension-probability", "0.3",
         "--homozygous-only", "false",
         "--collect-non-cpg", "true",
-        "--cgmap-pool", "false",
+        "--pool-meth", "false",
         "--update-variant-boundaries", "true",
         "--beta-cg", "2,5",
         "--beta-chg", "3,4",

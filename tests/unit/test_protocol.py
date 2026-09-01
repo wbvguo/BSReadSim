@@ -260,6 +260,27 @@ class ProtocolRoundTripTests(unittest.TestCase):
         self.assertEqual(tuple(batch.site_probabilities), (0.5, 0.25, 0.75, 1.0))
         self.assertTrue(details.variant_indices.raw.readonly)
 
+    def test_asm_variant_source_round_trips(self) -> None:
+        batch = make_full_annotation_batch()
+        details = replace(
+            batch.details,
+            variant_sources=(
+                VariantSourceCode.VCF,
+                VariantSourceCode.VCF,
+                VariantSourceCode.ASM,
+            ),
+        )
+        decoded = read_stream(
+            encode_stream(
+                make_header(details=True),
+                (replace(batch, details=details),),
+            )
+        )
+        self.assertEqual(
+            tuple(decoded.batches[0].details.variant_sources),
+            (1, 1, 3),
+        )
+
     def test_header_only_stream_has_zero_batch_trailer(self) -> None:
         decoded = read_stream(encode_stream(make_header(details=False), ()))
         self.assertEqual(decoded.batches, ())

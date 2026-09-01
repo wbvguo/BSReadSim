@@ -330,7 +330,7 @@ class PipelineTests(unittest.TestCase):
         document.pop("rrbs")
         document["tbs"] = {
             "bed": "targets.bed",
-            "fragment_center_stddev": 0,
+            "center_sd": 0,
         }
         with self.assertRaisesRegex(PipelineError, "cannot resolve"):
             run_prepared(
@@ -341,7 +341,7 @@ class PipelineTests(unittest.TestCase):
 
         self.assertFalse((self.directory / "output").exists())
 
-    def test_variable_wgbs_insert_capability_boundary(self) -> None:
+    def test_variable_insert_capability_boundary(self) -> None:
         document = baseline_config()
         document["fragments"].update(
             {
@@ -418,9 +418,9 @@ class PipelineTests(unittest.TestCase):
         tbs["fragments"].update(document["fragments"])
         tbs["tbs"] = {
             "bed": "targets.bed",
-            "fragment_center_stddev": 0,
+            "center_sd": 0,
         }
-        with self.assertRaisesRegex(PipelineError, "TBS baseline requires --insert-sd 0"):
+        with self.assertRaisesRegex(PipelineError, "cannot resolve"):
             run_prepared(
                 self.prepared(tbs),
                 core_executable=self.directory / "missing-core",
@@ -437,7 +437,7 @@ class PipelineTests(unittest.TestCase):
         document["technology"] = "TBS"
         document["tbs"] = {
             "bed": "targets.bed",
-            "fragment_center_stddev": -1,
+            "center_sd": -1,
         }
         with self.assertRaises(ConfigValidationError):
             self.prepared(document)
@@ -460,7 +460,7 @@ class PipelineTests(unittest.TestCase):
         )
         document["tbs"] = {
             "bed": "targets.bed",
-            "fragment_center_stddev": 1,
+            "center_sd": 1,
         }
         prepared = self.prepared(document)
 
@@ -513,7 +513,7 @@ class PipelineTests(unittest.TestCase):
         document["technology"] = "TBS"
         document["tbs"] = {
             "bed": "targets.bed",
-            "fragment_center_stddev": 0,
+            "center_sd": 0,
         }
         document["coverage"] = {"kind": "target-score"}
         with self.assertRaisesRegex(PipelineError, "cannot resolve"):
@@ -584,7 +584,7 @@ class PipelineTests(unittest.TestCase):
         document["technology"] = "TBS"
         document["tbs"] = {
             "bed": "targets.bed",
-            "fragment_center_stddev": 0,
+            "center_sd": 0,
         }
         with self.assertRaisesRegex(PipelineError, "cannot resolve"):
             run_prepared(
@@ -636,7 +636,7 @@ class PipelineTests(unittest.TestCase):
 
         missing_profile = baseline_config()
         missing_profile["methylation"]["cgmap_pool"] = True
-        with self.assertRaisesRegex(PipelineError, "CGmap or bedMethyl"):
+        with self.assertRaisesRegex(PipelineError, "text methylation profile"):
             run_prepared(
                 self.prepared(missing_profile),
                 core_executable=self.directory / "missing-core",
@@ -645,6 +645,17 @@ class PipelineTests(unittest.TestCase):
 
         document["inputs"] = {
             "vcf": "variants.vcf",
+            "cgmap": "levels.cgmap",
+            "asm": "levels.asm",
+        }
+        with self.assertRaisesRegex(PipelineError, "cannot resolve"):
+            run_prepared(
+                self.prepared(document),
+                core_executable=self.directory / "missing-core",
+                run_id=RUN_ID,
+            )
+
+        document["inputs"] = {
             "cgmap": "levels.cgmap",
             "asm": "levels.asm",
         }

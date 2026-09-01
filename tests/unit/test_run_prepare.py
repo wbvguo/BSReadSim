@@ -10,7 +10,9 @@ from bsreadsim.run.config import normalize_run_config
 from bsreadsim.run.prepare import (
     FileDigest,
     PreparationError,
+    derive_stage_seed,
     materialize_master_seed,
+    materialize_run_seeds,
     prepare_run,
     snapshot_prepared_file,
 )
@@ -85,6 +87,68 @@ class PreparationTests(unittest.TestCase):
         self.assertIs(
             materialize_master_seed(loaded, entropy=forbidden_entropy), loaded
         )
+
+    def test_omitted_stage_seeds_are_derived_from_the_master_seed(self) -> None:
+        document = base_config()
+        document["seeds"] = {
+            "mutation": None,
+            "phasing": None,
+            "methylation": None,
+        }
+
+        effective = materialize_run_seeds(
+            self.normalized(document), entropy=lambda bits: 42
+        )
+
+        self.assertEqual(effective.master_seed, 42)
+        self.assertEqual(
+            effective.normalized["seeds"],
+            {
+                "mutation": "7049704659189676143",
+                "phasing": "15840450471693409671",
+                "methylation": "7747208672942775485",
+            },
+        )
+
+    def test_explicit_stage_seeds_override_derivation(self) -> None:
+        document = base_config()
+        document["seed"] = "42"
+        document["seeds"] = {
+            "mutation": "7",
+            "phasing": None,
+            "methylation": "11",
+        }
+
+        def forbidden_entropy(bits):
+            raise AssertionError("entropy was consumed for an explicit seed")
+
+        effective = materialize_run_seeds(
+            self.normalized(document), entropy=forbidden_entropy
+        )
+
+        self.assertEqual(
+            effective.normalized["seeds"],
+            {
+                "mutation": "7",
+                "phasing": "15840450471693409671",
+                "methylation": "11",
+            },
+        )
+
+    def test_stage_seed_derivation_has_frozen_domain_vectors(self) -> None:
+        self.assertEqual(
+            derive_stage_seed(0, "mutation"), 9839267760111386065
+        )
+        self.assertEqual(
+            derive_stage_seed((1 << 64) - 1, "methylation"),
+            370557882438090985,
+        )
+        self.assertNotEqual(
+            derive_stage_seed(7, "mutation"),
+            derive_stage_seed(7, "phasing"),
+        )
+        with self.assertRaisesRegex(PreparationError, "domain"):
+            derive_stage_seed(7, "reads")
 
     def test_invalid_entropy_result_is_rejected(self) -> None:
         loaded = self.normalized()

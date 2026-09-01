@@ -1,41 +1,43 @@
 # BSReadSim
 
-BSReadSim is a reproducible simulator built for bisulfite sequencing (WGBS,
-RRBS, and TBS), with additional support for standard sequencing (WGS, WES, and
-targeted sequencing). A C++17 core generates biological fragments and a Python
-pipeline applies the selected chemistry, quality, and sequencing-error models,
-then publishes FASTQ or annotated BAM atomically.
+BSReadSim generates reproducible synthetic reads for bisulfite sequencing
+(WGBS, RRBS, and TBS) and non-bisulfite sequencing (WGS, WES, and targeted
+sequencing). It combines configurable variation, methylation, fragment,
+chemistry, quality, and sequencing-error models, then writes FASTQ or
+origin-annotated BAM. Every completed run includes a manifest describing the
+effective settings, inputs, seeds, counts, and output checksums.
 
 ## Highlights
 
 - WGBS, RRBS, TBS, WGS, WES, and TS through one command-line interface
-- CGmap, bedMethyl, MethDB, ASM, diploid VCF, target BED, and scored RRBS inputs
+- CGmap, bedMethyl, MethBED, MethDB, CGmapTools ASS, ASM BED, diploid VCF,
+  target BED, and scored RRBS inputs
 - fixed or variable insert lengths and single- or paired-end reads
-- deterministic counter-based random generation
+- deterministic output across supported thread counts for a fixed configuration
 - manifests containing effective settings, seeds, counts, and SHA-256 identities
 - strict input validation with no parser guessing from filename suffixes
 
 ## Documentation
 
-The user guide is organized as a searchable Material for MkDocs site. After
-GitHub Pages is enabled, the published site is available at
+The searchable user guide is available at
 [wbvguo.github.io/BSReadSim](https://wbvguo.github.io/BSReadSim/).
 
 Repository versions of the main entry points are also available directly:
 
 - [Installation](docs/getting-started/installation.md)
-- [Supported platforms](docs/getting-started/platforms.md)
 - [Quick start](docs/getting-started/quickstart.md)
 - [Simulation](docs/simulation/workflow.md)
 - [Other assays](docs/simulation/other-assays.md)
 - [Outputs](docs/outputs/index.md)
-- [Command-line overview](docs/reference/cli.md)
-- [Input and output formats](docs/reference/formats.md)
+- [CLI parameters and defaults](docs/reference/cli.md)
+- [Input file formats](docs/reference/formats.md)
 
 The complete site starts at [docs/index.md](docs/index.md).
 
-To preview the documentation site locally, run the following commands from the
-repository root:
+<details>
+<summary>Preview the documentation locally</summary>
+
+Run the following commands from the repository root:
 
 ```bash
 python3 -m pip install --upgrade "pip>=25.1"
@@ -43,8 +45,10 @@ python3 -m pip install --group docs
 python3 -m mkdocs serve
 ```
 
-Then open <http://127.0.0.1:8000/> in a browser. MkDocs automatically reloads
+Then open <http://127.0.0.1:8700/> in a browser. MkDocs automatically reloads
 the site when documentation files change; press `Ctrl+C` to stop the server.
+
+</details>
 
 ## Install
 
@@ -69,7 +73,7 @@ has not been published yet. BSReadSim will not be distributed through PyPI.
 bsreadsim run wgbs \
   --reference GRCh38.fa \
   --output runs/example \
-  --fragments 100000 \
+  --reads 100000 \
   --read-length 150 \
   --insert-mean 300 \
   --insert-sd 0 \
@@ -77,20 +81,20 @@ bsreadsim run wgbs \
   --seed 42
 ```
 
-This produces paired FASTQ files and a reproducibility manifest without
-introducing variants. Add `--format bam` to publish an unsorted annotated BAM instead
-of FASTQ.
+This writes 100,000 read records (50,000 paired-end read pairs) and a
+reproducibility manifest without introducing variants. Add `--format bam` to
+write an unsorted, origin-annotated BAM instead of FASTQ.
 
 Use `bsreadsim run wgbs --help` for the installed command reference.
 
-For ordinary whole-genome reads, use the same sampling and sequencing models
+For non-bisulfite whole-genome reads, use the same sampling and sequencing models
 without constructing a methylome or applying bisulfite conversion:
 
 ```bash
 bsreadsim run wgs \
   --reference GRCh38.fa \
   --output runs/wgs \
-  --fragments 100000 \
+  --reads 100000 \
   --mutation-rate 0 \
   --seed 42
 ```

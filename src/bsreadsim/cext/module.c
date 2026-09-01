@@ -24,7 +24,7 @@ PyObject *methylation_site_type;
 PyObject *site_reference_type;
 PyObject *mate_type;
 PyObject *capture_strands[3];
-PyObject *variant_sources[3];
+PyObject *variant_sources[4];
 PyObject *variant_kinds[4];
 PyObject *methylation_contexts[16];
 PyObject *methylation_sources[5];
@@ -555,7 +555,12 @@ initialize_protocol_types(void)
     }
     variant_sources[1] = get_required_attribute(variant_source_type, "VCF");
     variant_sources[2] = get_required_attribute(variant_source_type, "DE_NOVO");
-    if (variant_sources[1] == NULL || variant_sources[2] == NULL) {
+    variant_sources[3] = get_required_attribute(variant_source_type, "ASM");
+    if (
+        variant_sources[1] == NULL
+        || variant_sources[2] == NULL
+        || variant_sources[3] == NULL
+    ) {
         goto fail;
     }
     for (index = 1; index <= 3; ++index) {

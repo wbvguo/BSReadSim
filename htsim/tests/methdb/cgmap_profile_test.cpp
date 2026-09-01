@@ -337,6 +337,98 @@ void test_bed_methyl_fail_closed_boundaries()
         "bedMethyl non-C/G target was accepted");
 }
 
+void verify_methbg(const std::vector<std::uint8_t> &input)
+{
+    TempFile file;
+    write_bytes(file.path(), input);
+    CgmapProfile profile(
+        file.path(), reference_catalog(), MethylationProfileFormat::methbg);
+    require(profile.row_count() == 4U, "MethBG row count changed");
+    require(
+        profile.defined_probability_count() == 4U,
+        "MethBG defined-probability count changed");
+    const auto records = profile.records(
+        make_contig(0U, "chr1", "ACGACAGCAATCG"));
+    require(
+        records.size() == 3U
+            && records[0].context == MethylationContext::cg_c
+            && records[0].probability_u16 == q(0.25F)
+            && records[1].context == MethylationContext::chg_c
+            && records[2].context == MethylationContext::chh_c,
+        "MethBG rows did not normalize from the reference");
+}
+
+void test_methbg_plain_gzip_and_boundaries()
+{
+    const std::string text =
+        "track type=bedGraph name=fixture\n"
+        "chr1\t1\t2\t0.25\n"
+        "chr1\t4\t5\t0.5\n"
+        "chr1\t7\t8\t1\n"
+        "chr2\t2\t3\t0\n";
+    verify_methbg(bytes_of(text));
+    verify_methbg(gzip_bytes(text));
+
+    TempFile invalid;
+    write_bytes(invalid.path(), bytes_of("chr1\t1\t3\t0.5\n"));
+    require_error(
+        [&] {
+            (void)CgmapProfile(
+                invalid.path(),
+                reference_catalog(),
+                MethylationProfileFormat::methbg);
+        },
+        "invalid MethBG interval was accepted");
+}
+
+void verify_methbed(const std::string &text)
+{
+    TempFile file;
+    write_bytes(file.path(), bytes_of(text));
+    CgmapProfile profile(
+        file.path(), reference_catalog(), MethylationProfileFormat::methbed);
+    require(profile.row_count() == 4U, "MethBED row count changed");
+    const auto records = profile.records(
+        make_contig(0U, "chr1", "ACGACAGCAATCG"));
+    require(
+        records.size() == 3U
+            && records[0].context == MethylationContext::cg_c
+            && records[0].probability_u16 == q(0.25F)
+            && records[1].context == MethylationContext::chg_c
+            && records[1].probability_u16 == q(0.5F)
+            && records[2].context == MethylationContext::chh_c
+            && records[2].probability_u16 == q(1.0F),
+        "MethBED rows did not normalize from the reference");
+}
+
+void test_methbed_widths_and_boundaries()
+{
+    verify_methbed(
+        "chr1\t1\t2\t.\t250\t+\n"
+        "chr1\t4\t5\t.\t500\t+\n"
+        "chr1\t7\t8\t.\t1000\t+\n"
+        "chr2\t2\t3\t.\t0\t-\n");
+    verify_methbed(
+        "browser position chr1:1-13\n"
+        "chr1\t1\t2\t.\t250\t+\t1\t4\tC\tCG\n"
+        "chr1\t4\t5\t.\t500\t+\t2\t4\tC\tCHG\n"
+        "chr1\t7\t8\t.\t1000\t+\t4\t4\tC\tCHH\n"
+        "chr2\t2\t3\t.\t0\t-\t0\t10\tG\tCG\n");
+
+    TempFile invalid;
+    write_bytes(
+        invalid.path(),
+        bytes_of("chr1\t1\t2\t.\t250\t+\t1\t4\tC\tCHH\n"));
+    CgmapProfile profile(
+        invalid.path(), reference_catalog(), MethylationProfileFormat::methbed);
+    require_error(
+        [&] {
+            (void)profile.records(
+                make_contig(0U, "chr1", "ACGACAGCAATCG"));
+        },
+        "MethBED context/reference mismatch was accepted");
+}
+
 void require_parse_error(const std::string &text, const std::string &message)
 {
     TempFile file;
@@ -458,6 +550,8 @@ int main()
         test_plain_and_gzip_profile();
         test_bed_methyl_plain_gzip_and_widths();
         test_bed_methyl_fail_closed_boundaries();
+        test_methbg_plain_gzip_and_boundaries();
+        test_methbed_widths_and_boundaries();
         test_strict_text_boundaries();
         test_reference_validation_boundaries();
         return EXIT_SUCCESS;

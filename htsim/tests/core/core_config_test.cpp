@@ -59,7 +59,7 @@ std::vector<std::string> base_arguments()
         "--indel-extension-probability", "0.15",
         "--homozygous-only", "false",
         "--collect-non-cpg", "true",
-        "--cgmap-pool", "false",
+        "--pool-meth", "false",
         "--update-variant-boundaries", "true",
         "--beta-cg", "0.5,0.5",
         "--beta-chg", "0.05,0.10",
@@ -175,19 +175,41 @@ void test_valid_optional_input_projection()
     bed_arguments.insert(
         bed_arguments.end(),
         {"--vcf", "/data/sample.vcf.gz",
-         "--bed-methyl", "/data/sample.bedmethyl.gz",
+         "--bedmethyl", "/data/sample.bedmethyl.gz",
          "--asm-bed", "/data/sample.asm.bed.gz"});
     const auto bed_config = parse_core_config(bed_arguments);
     require(
         bed_config.bed_methyl_path == "/data/sample.bedmethyl.gz"
             && bed_config.asm_bed_path == "/data/sample.asm.bed.gz",
         "bedMethyl/ASM BED path projection was lost");
+
+    auto methbed_arguments = base_arguments();
+    replace_value(methbed_arguments, "--mutation-rate", "0");
+    methbed_arguments.insert(
+        methbed_arguments.end(), {"--methbed", "/data/profile.methbed.gz"});
+    const auto methbed_config = parse_core_config(methbed_arguments);
+    require(methbed_config.methbed_path == "/data/profile.methbed.gz",
+            "MethBED path projection was lost");
+
+    auto methbg_arguments = base_arguments();
+    methbg_arguments.insert(
+        methbg_arguments.end(), {"--methbg", "/data/profile.methbg.gz"});
+    const auto methbg_config = parse_core_config(methbg_arguments);
+    require(methbg_config.methbg_path == "/data/profile.methbg.gz",
+            "MethBG path projection was lost");
+
+    auto duplicate_snapshot_formats = methbed_arguments;
+    duplicate_snapshot_formats.insert(
+        duplicate_snapshot_formats.end(), {"--methdb", "/data/profile.methdb"});
+    require_error(
+        [&] {parse_core_config(duplicate_snapshot_formats);},
+        "MethBED and MethDB were accepted together");
 }
 
-void test_cgmap_pool_requires_its_input()
+void test_methylation_pooling_requires_text_input()
 {
     auto missing = base_arguments();
-    replace_value(missing, "--cgmap-pool", "true");
+    replace_value(missing, "--pool-meth", "true");
     require_error(
         [&] {parse_core_config(missing);},
         "CGmap pooling without a CGmap input was accepted");
@@ -200,13 +222,27 @@ void test_cgmap_pool_requires_its_input()
             "valid CGmap pooling projection was lost");
 
     auto bed = base_arguments();
-    replace_value(bed, "--cgmap-pool", "true");
+    replace_value(bed, "--pool-meth", "true");
     bed.insert(
         bed.end(),
-        {"--bed-methyl", "/data/sample.bedmethyl"});
+        {"--bedmethyl", "/data/sample.bedmethyl"});
     const auto bed_pooled = parse_core_config(bed);
     require(bed_pooled.cgmap_pool && bed_pooled.bed_methyl_path.has_value(),
             "valid bedMethyl pooling projection was lost");
+
+    auto methbg = base_arguments();
+    replace_value(methbg, "--pool-meth", "true");
+    methbg.insert(methbg.end(), {"--methbg", "/data/sample.methbg"});
+    const auto methbg_pooled = parse_core_config(methbg);
+    require(methbg_pooled.cgmap_pool && methbg_pooled.methbg_path.has_value(),
+            "valid MethBG pooling projection was lost");
+
+    auto methbed = base_arguments();
+    replace_value(methbed, "--pool-meth", "true");
+    methbed.insert(methbed.end(), {"--methbed", "/data/sample.methbed"});
+    const auto methbed_pooled = parse_core_config(methbed);
+    require(methbed_pooled.cgmap_pool && methbed_pooled.methbed_path.has_value(),
+            "valid MethBED pooling projection was lost");
 }
 
 void test_valid_rrbs_tbs_and_profile_projection()
@@ -215,9 +251,12 @@ void test_valid_rrbs_tbs_and_profile_projection()
     replace_value(rrbs_arguments, "--technology", "RRBS");
     rrbs_arguments.insert(
         rrbs_arguments.end(),
-        {"--rrbs-cut-site", "C|CGG", "--rrbs-cut-site", "CCTN|AGG"});
+        {"--rrbs-cut-site", "C|CGG,CCTN|AGG"});
     const auto rrbs = parse_core_config(rrbs_arguments);
-    require(rrbs.rrbs_cut_sites.size() == 2, "repeated RRBS cut sites were lost");
+    require(
+        rrbs.rrbs_cut_sites
+            == std::vector<std::string>({"C|CGG", "CCTN|AGG"}),
+        "comma-separated RRBS cut sites were lost");
     rrbs_arguments.insert(
         rrbs_arguments.end(),
         {"--rrbs-candidate-bed", "/data/rrbs-candidates.bed"});
@@ -231,18 +270,17 @@ void test_valid_rrbs_tbs_and_profile_projection()
     auto tbs_arguments = base_arguments();
     replace_value(tbs_arguments, "--technology", "TBS");
     replace_value(tbs_arguments, "--insert-mean", "300");
-    replace_value(tbs_arguments, "--insert-sd", "0");
     tbs_arguments.insert(
         tbs_arguments.end(),
         {"--tbs-bed", "/data/targets.bed",
-         "--tbs-center-stddev", "50"});
+         "--tbs-center-sd", "50"});
     const auto tbs = parse_core_config(tbs_arguments);
     require(tbs.tbs_bed_path == "/data/targets.bed"
-                && tbs.tbs_center_stddev == 50.0
+                && tbs.tbs_center_sd == 50.0
                 && tbs.insert_min == 100U
                 && tbs.insert_mean == 300U
                 && tbs.insert_max == 1000U
-                && tbs.insert_sd == 0.0,
+                && tbs.insert_sd == 25.0,
             "TBS projection was not parsed");
     replace_value(tbs_arguments, "--coverage", "target-score");
     const auto target_score = parse_core_config(tbs_arguments);
@@ -278,13 +316,15 @@ void test_standard_technology_projection()
              std::pair<std::string, Technology>{"TS", Technology::ts}}) {
         auto arguments = base_arguments();
         replace_value(arguments, "--technology", name);
-        replace_value(arguments, "--insert-sd", "0");
         arguments.insert(
             arguments.end(),
             {"--tbs-bed", "/data/targets.bed",
-             "--tbs-center-stddev", "50"});
-        require(parse_core_config(arguments).technology == expected,
+             "--tbs-center-sd", "50"});
+        const auto parsed = parse_core_config(arguments);
+        require(parsed.technology == expected,
                 name + " technology projection was lost");
+        require(parsed.insert_sd == 25.0,
+                name + " rejected the shared variable insert distribution");
     }
 
     auto methylation_input = wgs_arguments;
@@ -399,26 +439,37 @@ void test_cross_field_boundaries()
         "depth and fragments were accepted together");
 
     auto asm_without_vcf = base_arguments();
+    replace_value(asm_without_vcf, "--mutation-rate", "0");
     asm_without_vcf.insert(
         asm_without_vcf.end(),
         {"--asm", "/data/a.asm"});
-    require_error(
-        [&] {parse_core_config(asm_without_vcf);},
-        "ASM without VCF was accepted");
+    require(
+        parse_core_config(asm_without_vcf).asm_path == "/data/a.asm",
+        "ASM without VCF was rejected");
 
     auto asm_bed_without_vcf = base_arguments();
+    replace_value(asm_bed_without_vcf, "--mutation-rate", "0");
     asm_bed_without_vcf.insert(
         asm_bed_without_vcf.end(),
         {"--asm-bed", "/data/a.asm.bed"});
+    require(
+        parse_core_config(asm_bed_without_vcf).asm_bed_path
+            == "/data/a.asm.bed",
+        "ASM BED without VCF was rejected");
+
+    auto asm_with_mutations = base_arguments();
+    asm_with_mutations.insert(
+        asm_with_mutations.end(),
+        {"--asm", "/data/a.asm"});
     require_error(
-        [&] {parse_core_config(asm_bed_without_vcf);},
-        "ASM BED without VCF was accepted");
+        [&] {parse_core_config(asm_with_mutations);},
+        "ASM and de novo mutations were accepted together");
 
     auto duplicate_methylation_formats = base_arguments();
     duplicate_methylation_formats.insert(
         duplicate_methylation_formats.end(),
         {"--cgmap", "/data/a.cgmap",
-         "--bed-methyl", "/data/a.bedmethyl"});
+         "--bedmethyl", "/data/a.bedmethyl"});
     require_error(
         [&] {parse_core_config(duplicate_methylation_formats);},
         "CGmap and bedMethyl were accepted together");
@@ -477,7 +528,7 @@ void test_cross_field_boundaries()
     target_score_with_artifact.insert(
         target_score_with_artifact.end(),
         {"--tbs-bed", "/data/targets.bed",
-         "--tbs-center-stddev", "50",
+         "--tbs-center-sd", "50",
          "--coverage-profile", "/data/coverage.tsv"});
     require_error(
         [&] {parse_core_config(target_score_with_artifact);},
@@ -485,7 +536,8 @@ void test_cross_field_boundaries()
 
     for (const std::string retired_digest_option : {
              "--reference-sha256", "--vcf-sha256", "--cgmap-sha256",
-             "--bed-methyl-sha256", "--methdb-sha256", "--asm-sha256",
+             "--bed-methyl-sha256", "--methbed-sha256", "--methdb-sha256",
+             "--asm-sha256",
              "--asm-bed-sha256", "--coverage-profile-sha256",
              "--tbs-bed-sha256"}) {
         auto retired = base_arguments();
@@ -509,7 +561,7 @@ void test_cross_field_boundaries()
         tbs_without_center.end(), {"--tbs-bed", "/data/targets.bed"});
     require_error(
         [&] {parse_core_config(tbs_without_center);},
-        "TBS BED path without center standard deviation was accepted");
+        "TBS BED path without center SD was accepted");
 
     auto invalid_rrbs_site = base_arguments();
     replace_value(invalid_rrbs_site, "--technology", "RRBS");
@@ -523,7 +575,7 @@ void test_cross_field_boundaries()
     replace_value(duplicate_rrbs_site, "--technology", "RRBS");
     duplicate_rrbs_site.insert(
         duplicate_rrbs_site.end(),
-        {"--rrbs-cut-site", "C|CGG", "--rrbs-cut-site", "C|CGG"});
+        {"--rrbs-cut-site", "C|CGG,C|CGG"});
     require_error(
         [&] {parse_core_config(duplicate_rrbs_site);},
         "duplicate RRBS cut site was accepted");
@@ -554,9 +606,11 @@ void test_programmatic_config_uses_the_same_validator()
     validate_core_config(config);
     config.vcf_path.reset();
     config.asm_path = "/data/sample.asm";
+    validate_core_config(config);
+    config.mutation_rate = 0.001;
     require_error(
         [&] {validate_core_config(config);},
-        "programmatic configuration bypassed ASM/VCF validation");
+        "programmatic configuration bypassed ASM/mutation validation");
 }
 
 } // namespace
@@ -567,7 +621,7 @@ int main()
         test_valid_wgbs_projection();
         test_output_controls();
         test_valid_optional_input_projection();
-        test_cgmap_pool_requires_its_input();
+        test_methylation_pooling_requires_text_input();
         test_valid_rrbs_tbs_and_profile_projection();
         test_standard_technology_projection();
         test_unknown_duplicate_and_missing_options_fail();

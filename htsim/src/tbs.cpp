@@ -243,22 +243,56 @@ CandidateCatalog::CandidateCatalog(
     const model::Bases &contig_bases,
     const std::vector<Target> &targets,
     std::uint32_t contig_index,
-    double center_stddev,
+    double center_sd,
     std::uint32_t insert_length,
     std::uint32_t read_length,
     bool paired_end,
     double max_ambiguous_fraction,
     SamplingMode sampling_mode)
+    : CandidateCatalog(
+          contig_bases,
+          targets,
+          contig_index,
+          center_sd,
+          {insert_length, insert_length, insert_length, 0.0},
+          read_length,
+          paired_end,
+          max_ambiguous_fraction,
+          sampling_mode)
+{}
+
+CandidateCatalog::CandidateCatalog(
+    const model::Bases &contig_bases,
+    const std::vector<Target> &targets,
+    std::uint32_t contig_index,
+    double center_sd,
+    const insert_length::Parameters &insert_parameters,
+    std::uint32_t read_length,
+    bool paired_end,
+    double max_ambiguous_fraction,
+    SamplingMode sampling_mode)
+    : insert_parameters_(insert_parameters)
 {
     if (contig_bases.size() > std::numeric_limits<std::uint32_t>::max()) {
         throw TbsCatalogError("contig length exceeds uint32");
     }
-    if (!std::isfinite(center_stddev) || center_stddev < 0.0) {
-        throw TbsCatalogError("TBS center standard deviation is invalid");
+    if (!std::isfinite(center_sd) || center_sd < 0.0) {
+        throw TbsCatalogError("TBS center SD is invalid");
     }
-    if (insert_length == 0U || read_length == 0U
-        || read_length > insert_length) {
-        throw TbsCatalogError("TBS fixed insert/read lengths are invalid");
+    if (insert_parameters_.minimum == 0U
+        || insert_parameters_.mean < insert_parameters_.minimum
+        || insert_parameters_.maximum < insert_parameters_.mean
+        || !std::isfinite(insert_parameters_.standard_deviation)
+        || insert_parameters_.standard_deviation < 0.0) {
+        throw TbsCatalogError("TBS insert-length parameters are invalid");
+    }
+    variable_insert_ = insert_parameters_.standard_deviation != 0.0
+        && insert_parameters_.minimum != insert_parameters_.maximum;
+    const std::uint32_t read_boundary = variable_insert_
+        ? insert_parameters_.minimum
+        : insert_parameters_.mean;
+    if (read_length == 0U || read_length > read_boundary) {
+        throw TbsCatalogError("TBS insert/read lengths are invalid");
     }
     for (const std::uint8_t base : contig_bases) {
         if (base > 4U) {
@@ -270,9 +304,8 @@ CandidateCatalog::CandidateCatalog(
         && sampling_mode != SamplingMode::output_weight) {
         throw TbsCatalogError("TBS sampling mode is invalid");
     }
-    center_stddev_ = center_stddev;
+    center_sd_ = center_sd;
     sampling_mode_ = sampling_mode;
-    insert_length_ = insert_length;
     read_length_ = read_length;
     paired_end_ = paired_end;
     maximum_ambiguous_count_ = maximum_ambiguous_count(
@@ -298,10 +331,14 @@ CandidateCatalog::CandidateCatalog(
     }
 
     bool has_sequenceable_start = false;
-    if (center_stddev_ > 0.0 && insert_length_ <= contig_length_) {
-        const std::uint32_t last = contig_length_ - insert_length_;
+    const std::uint32_t calibration_insert = insert_parameters_.mean;
+    if (center_sd_ > 0.0 && calibration_insert <= contig_length_) {
+        const std::uint32_t last = contig_length_ - calibration_insert;
         for (std::uint32_t start = 0;; ++start) {
-            if (sequenceable(start, start + insert_length_)) {
+            if (sequenceable(
+                    start,
+                    start + calibration_insert,
+                    calibration_insert)) {
                 has_sequenceable_start = true;
                 break;
             }
@@ -353,10 +390,14 @@ CandidateCatalog::CandidateCatalog(
             target.score,
             target.capture_strand,
         };
-        if (center_stddev_ == 0.0) {
+        if (center_sd_ == 0.0) {
             Candidate candidate;
-            if (!project(choice, 0, candidate)) {continue;}
-            fixed_candidates_.push_back(candidate);
+            if (!project(choice, 0, calibration_insert, candidate)) {continue;}
+            if (variable_insert_) {
+                target_choices_.push_back(std::move(choice));
+            } else {
+                fixed_candidates_.push_back(candidate);
+            }
             if (sampling_mode_ == SamplingMode::output_weight) {
                 choice_weights.push_back(output_weight);
             }
@@ -387,7 +428,7 @@ CandidateCatalog::CandidateCatalog(
 std::uint32_t CandidateCatalog::choice_count() const noexcept
 {
     return static_cast<std::uint32_t>(
-        center_stddev_ == 0.0
+        center_sd_ == 0.0 && !variable_insert_
             ? fixed_candidates_.size()
             : target_choices_.size());
 }
@@ -421,8 +462,15 @@ std::uint32_t CandidateCatalog::ambiguous_count(
 
 bool CandidateCatalog::sequenceable(
     std::uint32_t fragment_start,
-    std::uint32_t fragment_end) const
+    std::uint32_t fragment_end,
+    std::uint32_t insert_length) const
 {
+    if (fragment_start > fragment_end
+        || fragment_end > contig_length_
+        || fragment_end - fragment_start != insert_length
+        || insert_length < read_length_) {
+        return false;
+    }
     if (ambiguous_count(
             fragment_start, fragment_start + read_length_)
         > maximum_ambiguous_count_) {
@@ -436,6 +484,7 @@ bool CandidateCatalog::sequenceable(
 bool CandidateCatalog::project(
     const TargetChoice &target,
     std::int64_t center_displacement,
+    std::uint32_t insert_length,
     Candidate &candidate) const
 {
     const std::uint32_t base_center = target.target_start
@@ -448,18 +497,18 @@ bool CandidateCatalog::project(
     const std::int64_t center = static_cast<std::int64_t>(base_center)
         + center_displacement;
     const std::int64_t fragment_start = center
-        - static_cast<std::int64_t>(insert_length_ / 2U);
+        - static_cast<std::int64_t>(insert_length / 2U);
     if (fragment_start < 0) {return false;}
     const std::uint64_t start = static_cast<std::uint64_t>(fragment_start);
-    const std::uint64_t end = start + insert_length_;
+    const std::uint64_t end = start + insert_length;
     if (end > contig_length_) {return false;}
     const auto start_u32 = static_cast<std::uint32_t>(start);
     const auto end_u32 = static_cast<std::uint32_t>(end);
-    if (!sequenceable(start_u32, end_u32)) {return false;}
+    if (!sequenceable(start_u32, end_u32, insert_length)) {return false;}
     candidate = {
         start_u32,
         end_u32,
-        insert_length_,
+        insert_length,
         target.target_start,
         target.target_end,
         target.target_ordinal,
@@ -484,6 +533,8 @@ SampleBatch CandidateCatalog::sample(
     }
     const std::uint64_t key = rng::derive_key(
         master_seed, rng::Stage::fragment, contig_index);
+    const insert_length::Sampler insert_sampler(
+        master_seed, contig_index, insert_parameters_);
     SampleBatch result;
     result.candidates.reserve(output_count);
     if (static_cast<std::uint64_t>(output_count) - 1U
@@ -518,31 +569,50 @@ SampleBatch CandidateCatalog::sample(
                 found - cumulative_weights_.begin());
         }
         Candidate candidate;
-        if (center_stddev_ == 0.0) {
+        if (center_sd_ == 0.0 && !variable_insert_) {
             candidate = fixed_candidates_.at(
                 static_cast<std::size_t>(selected));
         } else {
+            const TargetChoice &target = target_choices_.at(
+                static_cast<std::size_t>(selected));
             bool accepted = false;
             for (std::uint32_t attempt = 0;
                  attempt < maximum_attempts_per_fragment;
                  ++attempt) {
-                const double normal = normal_sampler::standard_normal(
-                    key, ordinal, UINT64_C(2) + attempt);
-                const double displacement = center_stddev_ * normal;
-                const long double extended_displacement = displacement;
-                if (!std::isfinite(displacement)
-                    || extended_displacement
-                        < static_cast<long double>(INT64_MIN)
-                    || extended_displacement
-                        > static_cast<long double>(INT64_MAX)) {
-                    throw TbsCatalogError(
-                        "TBS center displacement exceeds int64");
+                std::uint32_t insert_length = insert_parameters_.mean;
+                if (variable_insert_) {
+                    const std::uint64_t length_local = center_sd_ == 0.0
+                        ? UINT64_C(2) + attempt
+                        : UINT64_C(2) + UINT64_C(2) * attempt;
+                    insert_length = insert_sampler.sample(
+                        ordinal, length_local);
                 }
-                // Truncate the continuous normal displacement toward zero
-                // before applying it to the BED center.
+                std::int64_t center_displacement = 0;
+                if (center_sd_ > 0.0) {
+                    const std::uint64_t center_local = variable_insert_
+                        ? UINT64_C(3) + UINT64_C(2) * attempt
+                        : UINT64_C(2) + attempt;
+                    const double normal = normal_sampler::standard_normal(
+                        key, ordinal, center_local);
+                    const double displacement = center_sd_ * normal;
+                    const long double extended_displacement = displacement;
+                    if (!std::isfinite(displacement)
+                        || extended_displacement
+                            < static_cast<long double>(INT64_MIN)
+                        || extended_displacement
+                            > static_cast<long double>(INT64_MAX)) {
+                        throw TbsCatalogError(
+                            "TBS center displacement exceeds int64");
+                    }
+                    // Truncate the continuous normal displacement toward zero
+                    // before applying it to the BED center.
+                    center_displacement = static_cast<std::int64_t>(
+                        displacement);
+                }
                 if (project(
-                        target_choices_.at(static_cast<std::size_t>(selected)),
-                        static_cast<std::int64_t>(displacement),
+                        target,
+                        center_displacement,
+                        insert_length,
                         candidate)) {
                     accepted = true;
                     break;
@@ -555,7 +625,7 @@ SampleBatch CandidateCatalog::sample(
             }
             if (!accepted) {
                 throw TbsCatalogError(
-                    "TBS center sampler exhausted its attempt cap");
+                    "TBS fragment sampler exhausted its attempt cap");
             }
         }
         result.candidates.push_back(candidate);
@@ -567,26 +637,59 @@ DiploidCandidateCatalog::DiploidCandidateCatalog(
     const reference::Contig &contig,
     const variant::ContigVariants &variants,
     const std::vector<Target> &targets,
-    double center_stddev,
+    double center_sd,
     std::uint32_t insert_length,
     std::uint32_t read_length,
     bool paired_end,
     double max_ambiguous_fraction,
     SamplingMode sampling_mode)
-    : center_stddev_(center_stddev),
-      insert_length_(insert_length),
+    : DiploidCandidateCatalog(
+          contig,
+          variants,
+          targets,
+          center_sd,
+          {insert_length, insert_length, insert_length, 0.0},
+          read_length,
+          paired_end,
+          max_ambiguous_fraction,
+          sampling_mode)
+{}
+
+DiploidCandidateCatalog::DiploidCandidateCatalog(
+    const reference::Contig &contig,
+    const variant::ContigVariants &variants,
+    const std::vector<Target> &targets,
+    double center_sd,
+    const insert_length::Parameters &insert_parameters,
+    std::uint32_t read_length,
+    bool paired_end,
+    double max_ambiguous_fraction,
+    SamplingMode sampling_mode)
+    : insert_parameters_(insert_parameters),
+      center_sd_(center_sd),
       read_length_(read_length),
       maximum_ambiguous_count_(maximum_ambiguous_count(
           read_length, max_ambiguous_fraction)),
       paired_end_(paired_end),
+      variable_insert_(insert_parameters.standard_deviation != 0.0
+          && insert_parameters.minimum != insert_parameters.maximum),
       sampling_mode_(sampling_mode)
 {
-    if (!std::isfinite(center_stddev_) || center_stddev_ < 0.0) {
-        throw TbsCatalogError("TBS center standard deviation is invalid");
+    if (!std::isfinite(center_sd_) || center_sd_ < 0.0) {
+        throw TbsCatalogError("TBS center SD is invalid");
     }
-    if (insert_length_ == 0U || read_length_ == 0U
-        || read_length_ > insert_length_) {
-        throw TbsCatalogError("TBS fixed insert/read lengths are invalid");
+    if (insert_parameters_.minimum == 0U
+        || insert_parameters_.mean < insert_parameters_.minimum
+        || insert_parameters_.maximum < insert_parameters_.mean
+        || !std::isfinite(insert_parameters_.standard_deviation)
+        || insert_parameters_.standard_deviation < 0.0) {
+        throw TbsCatalogError("TBS insert-length parameters are invalid");
+    }
+    const std::uint32_t read_boundary = variable_insert_
+        ? insert_parameters_.minimum
+        : insert_parameters_.mean;
+    if (read_length_ == 0U || read_length_ > read_boundary) {
+        throw TbsCatalogError("TBS insert/read lengths are invalid");
     }
     if (sampling_mode_ != SamplingMode::uniform
         && sampling_mode_ != SamplingMode::output_weight) {
@@ -601,17 +704,22 @@ DiploidCandidateCatalog::DiploidCandidateCatalog(
     }
 
     std::array<bool, 2> has_sequenceable_start = {false, false};
-    if (center_stddev_ > 0.0) {
+    const std::uint32_t calibration_insert = insert_parameters_.mean;
+    if (center_sd_ > 0.0) {
         for (std::uint8_t haplotype_index = 0U;
              haplotype_index < 2U;
-             ++haplotype_index) {
+            ++haplotype_index) {
             const auto &layout = *layouts_[haplotype_index];
-            if (insert_length_ > layout.length()) {continue;}
-            const std::uint32_t last = layout.length() - insert_length_;
+            if (calibration_insert > layout.length()) {continue;}
+            const std::uint32_t last = layout.length() - calibration_insert;
             for (std::uint32_t start = 0U;; ++start) {
-                if (sequenceable(layout, start, start + insert_length_)
+                if (sequenceable(
+                        layout,
+                        start,
+                        start + calibration_insert,
+                        calibration_insert)
                     && layout.boundary(start)
-                    && layout.boundary(start + insert_length_)) {
+                    && layout.boundary(start + calibration_insert)) {
                     has_sequenceable_start[haplotype_index] = true;
                     break;
                 }
@@ -678,9 +786,14 @@ DiploidCandidateCatalog::DiploidCandidateCatalog(
             if (!center) {continue;}
             choice.haplotype_centers[haplotype_index] = *center;
             bool accepted = false;
-            if (center_stddev_ == 0.0) {
+            if (center_sd_ == 0.0) {
                 Candidate candidate;
-                if (project(choice, haplotype_index, 0, candidate)) {
+                if (project(
+                        choice,
+                        haplotype_index,
+                        0,
+                        calibration_insert,
+                        candidate)) {
                     accepted = true;
                 }
             } else if (has_sequenceable_start[haplotype_index]) {
@@ -740,11 +853,13 @@ std::uint32_t DiploidCandidateCatalog::allocation_weight() const noexcept
 bool DiploidCandidateCatalog::sequenceable(
     const haplotype::HaplotypeLayout &layout,
     std::uint32_t fragment_start,
-    std::uint32_t fragment_end) const
+    std::uint32_t fragment_end,
+    std::uint32_t insert_length) const
 {
     if (fragment_start > fragment_end
         || fragment_end > layout.length()
-        || fragment_end - fragment_start != insert_length_) {
+        || fragment_end - fragment_start != insert_length
+        || insert_length < read_length_) {
         return false;
     }
     if (layout.ambiguous_count(
@@ -761,6 +876,7 @@ bool DiploidCandidateCatalog::project(
     const TargetChoice &target,
     std::uint8_t haplotype,
     std::int64_t center_displacement,
+    std::uint32_t insert_length,
     Candidate &candidate) const
 {
     if (haplotype > 1U
@@ -782,14 +898,16 @@ bool DiploidCandidateCatalog::project(
         static_cast<std::int64_t>(haplotype_center)
         + center_displacement;
     const std::int64_t fragment_start = center
-        - static_cast<std::int64_t>(insert_length_ / 2U);
+        - static_cast<std::int64_t>(insert_length / 2U);
     if (fragment_start < 0) {return false;}
     const std::uint64_t start = static_cast<std::uint64_t>(fragment_start);
-    const std::uint64_t end = start + insert_length_;
+    const std::uint64_t end = start + insert_length;
     if (end > layout.length()) {return false;}
     const auto start_u32 = static_cast<std::uint32_t>(start);
     const auto end_u32 = static_cast<std::uint32_t>(end);
-    if (!sequenceable(layout, start_u32, end_u32)) {return false;}
+    if (!sequenceable(layout, start_u32, end_u32, insert_length)) {
+        return false;
+    }
     const auto left = layout.boundary(start_u32);
     const auto right = layout.boundary(end_u32);
     if (!left || !right
@@ -799,7 +917,7 @@ bool DiploidCandidateCatalog::project(
     candidate = {
         left->right_reference_start,
         right->left_reference_end,
-        insert_length_,
+        insert_length,
         target.target_start,
         target.target_end,
         target.target_ordinal,
@@ -837,6 +955,8 @@ SampleBatch DiploidCandidateCatalog::sample(
     }
     const std::uint64_t fragment_key = rng::derive_key(
         master_seed, rng::Stage::fragment, contig_index);
+    const insert_length::Sampler insert_sampler(
+        master_seed, contig_index, insert_parameters_);
     const std::uint64_t haplotype_key = rng::derive_key(
         master_seed, rng::Stage::haplotype, contig_index);
     SampleBatch result;
@@ -895,8 +1015,13 @@ SampleBatch DiploidCandidateCatalog::sample(
         }
 
         Candidate candidate;
-        if (center_stddev_ == 0.0) {
-            if (!project(target, selected_haplotype, 0, candidate)) {
+        if (center_sd_ == 0.0 && !variable_insert_) {
+            if (!project(
+                    target,
+                    selected_haplotype,
+                    0,
+                    insert_parameters_.mean,
+                    candidate)) {
                 throw TbsCatalogError(
                     "fixed diploid TBS target changed eligibility");
             }
@@ -905,22 +1030,39 @@ SampleBatch DiploidCandidateCatalog::sample(
             for (std::uint32_t attempt = 0U;
                  attempt < maximum_attempts_per_fragment;
                  ++attempt) {
-                const double normal = normal_sampler::standard_normal(
-                    fragment_key, ordinal, UINT64_C(2) + attempt);
-                const double displacement = center_stddev_ * normal;
-                const long double extended_displacement = displacement;
-                if (!std::isfinite(displacement)
-                    || extended_displacement
-                        < static_cast<long double>(INT64_MIN)
-                    || extended_displacement
-                        > static_cast<long double>(INT64_MAX)) {
-                    throw TbsCatalogError(
-                        "TBS center displacement exceeds int64");
+                std::uint32_t insert_length = insert_parameters_.mean;
+                if (variable_insert_) {
+                    const std::uint64_t length_local = center_sd_ == 0.0
+                        ? UINT64_C(2) + attempt
+                        : UINT64_C(2) + UINT64_C(2) * attempt;
+                    insert_length = insert_sampler.sample(
+                        ordinal, length_local);
+                }
+                std::int64_t center_displacement = 0;
+                if (center_sd_ > 0.0) {
+                    const std::uint64_t center_local = variable_insert_
+                        ? UINT64_C(3) + UINT64_C(2) * attempt
+                        : UINT64_C(2) + attempt;
+                    const double normal = normal_sampler::standard_normal(
+                        fragment_key, ordinal, center_local);
+                    const double displacement = center_sd_ * normal;
+                    const long double extended_displacement = displacement;
+                    if (!std::isfinite(displacement)
+                        || extended_displacement
+                            < static_cast<long double>(INT64_MIN)
+                        || extended_displacement
+                            > static_cast<long double>(INT64_MAX)) {
+                        throw TbsCatalogError(
+                            "TBS center displacement exceeds int64");
+                    }
+                    center_displacement = static_cast<std::int64_t>(
+                        displacement);
                 }
                 if (project(
                         target,
                         selected_haplotype,
-                        static_cast<std::int64_t>(displacement),
+                        center_displacement,
+                        insert_length,
                         candidate)) {
                     accepted = true;
                     break;
@@ -933,7 +1075,7 @@ SampleBatch DiploidCandidateCatalog::sample(
             }
             if (!accepted) {
                 throw TbsCatalogError(
-                    "TBS center sampler exhausted its attempt cap");
+                    "TBS fragment sampler exhausted its attempt cap");
             }
         }
         result.candidates.push_back(candidate);

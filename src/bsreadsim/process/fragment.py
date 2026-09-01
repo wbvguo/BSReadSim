@@ -533,7 +533,7 @@ def supports_common_processing(config: ProcessConfig) -> bool:
     """Whether common columns support the uniform vectorized process path."""
 
     return (
-        isinstance(config.methylation_model, BernoulliStateModel)
+        isinstance(config.meth_model, BernoulliStateModel)
         and isinstance(config.quality, UniformQuality)
         and isinstance(config.error, UniformError)
     )

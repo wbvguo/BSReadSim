@@ -60,7 +60,7 @@ def base_config(technology="WGBS"):
     elif technology in ("TBS", "WES", "TS"):
         config["tbs"] = {
             "bed": "targets.bed",
-            "fragment_center_stddev": 12.5,
+            "center_sd": 12.5,
         }
     if technology in ("WGS", "WES", "TS"):
         config["sequencing"]["conversion_rate"] = 0.0
@@ -153,7 +153,7 @@ class CoreArgvTests(unittest.TestCase):
             "false",
             "--collect-non-cpg",
             "true",
-            "--cgmap-pool",
+            "--pool-meth",
             "false",
             "--update-variant-boundaries",
             "true",
@@ -307,6 +307,7 @@ class CoreArgvTests(unittest.TestCase):
             "cgmap": "sample.cgmap",
             "asm": "sample.asm",
         }
+        document["mutation"]["rate"] = 0
         coverage_artifact = self.artifact("coverage.tsv")
         quality_artifact = self.artifact("quality.json")
         error_artifact = self.artifact("error.json")
@@ -337,7 +338,7 @@ class CoreArgvTests(unittest.TestCase):
             self.assertEqual(option_value(argv, "--" + name), str(role.path))
         tbs = prepared.file_for_role("input.tbs-bed")
         self.assertEqual(option_value(argv, "--tbs-bed"), str(tbs.path))
-        self.assertEqual(option_value(argv, "--tbs-center-stddev"), "12.5")
+        self.assertEqual(option_value(argv, "--tbs-center-sd"), "12.5")
         profile = prepared.file_for_role("model.coverage")
         self.assertEqual(option_value(argv, "--coverage-profile"), str(profile.path))
         self.assertNotIn("--coverage-profile-format", argv)
@@ -382,22 +383,42 @@ class CoreArgvTests(unittest.TestCase):
 
         for name in ("vcf", "bed_methyl", "asm_bed"):
             role = prepared.file_for_role("input." + name)
-            option = "--" + name.replace("_", "-")
+            option = (
+                "--bedmethyl"
+                if name == "bed_methyl"
+                else "--" + name.replace("_", "-")
+            )
             self.assertEqual(option_value(argv, option), str(role.path))
         self.assertNotIn("--cgmap", argv)
         self.assertNotIn("--asm", argv)
 
-    def test_rrbs_cut_sites_repeat_in_normalized_order(self):
+    def test_methbg_and_methbed_project_distinct_core_paths(self):
+        for input_name, filename in (
+            ("methbg", "levels.methbg"),
+            ("methbed", "levels.methbed"),
+        ):
+            with self.subTest(input_name=input_name):
+                (self.directory / filename).write_text("fixture\n", encoding="utf-8")
+                document = base_config()
+                document["inputs"] = {input_name: filename}
+                prepared = self.prepared(document)
+
+                argv = build_core_argv(prepared, RUN_ID, "htsim-core")
+
+                role = prepared.file_for_role("input." + input_name)
+                self.assertEqual(
+                    option_value(argv, "--" + input_name), str(role.path)
+                )
+
+    def test_rrbs_cut_sites_use_one_comma_separated_core_option(self):
         prepared = self.prepared(base_config("RRBS"))
 
         argv = build_core_argv(prepared, RUN_ID, "htsim-core")
 
-        sites = [
-            argv[index + 1]
-            for index, argument in enumerate(argv[:-1])
-            if argument == "--rrbs-cut-site"
-        ]
-        self.assertEqual(sites, ["C|CGG", "CCTN|AGG"])
+        self.assertEqual(argv.count("--rrbs-cut-site"), 1)
+        self.assertEqual(
+            option_value(argv, "--rrbs-cut-site"), "C|CGG,CCTN|AGG"
+        )
         self.assertNotIn("--tbs-bed", argv)
 
     def test_rrbs_candidate_profile_projects_path_without_hash_option(self):

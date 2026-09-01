@@ -84,6 +84,9 @@ public:
         const Parameters &parameters);
 
     std::uint32_t sample(std::uint64_t candidate_ordinal) const;
+    std::uint32_t sample(
+        std::uint64_t candidate_ordinal,
+        std::uint64_t local_index) const;
 
 private:
     std::uint64_t key_ = 0;

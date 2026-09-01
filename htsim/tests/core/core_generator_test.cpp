@@ -171,7 +171,7 @@ void test_standard_technologies_emit_no_methylation_sites()
         CoreConfig targeted = baseline_config(reference);
         targeted.technology = technology;
         targeted.tbs_bed_path = targets.path();
-        targeted.tbs_center_stddev = 0.0;
+        targeted.tbs_center_sd = 0.0;
         std::ostringstream stream(std::ios::binary);
         const auto trailer =
             htsim::core::generate_core_stream(targeted, stream);
@@ -273,12 +273,15 @@ void test_variable_wgbs_generation_and_capability_gate()
             "chunk size changed variable WGBS VCF output");
 
     const std::string variable_asm =
-        "chrVariable\tC\t18\tCG\tCG\t0.5\t2\tC\tT\t0.2\t0.8\t4\t0.01\tfixture\n"
-        "chrVariable\tC\t26\tCG\tCG\t0.5\t2\tC\tT\t0.2\t0.8\t4\t0.01\tfixture\n"
-        "chrVariable\tC\t34\tCG\tCG\t0.5\t2\tC\tT\t0.2\t0.8\t4\t0.01\tfixture\n"
-        "chrVariable\tC\t58\tCG\tCG\t0.5\t2\tC\tT\t0.2\t0.8\t4\t0.01\tfixture\n"
-        "chrVariable\tC\t66\tCG\tCG\t0.5\t2\tC\tT\t0.2\t0.8\t4\t0.01\tfixture\n"
-        "chrVariable\tC\t74\tCG\tCG\t0.5\t2\tC\tT\t0.2\t0.8\t4\t0.01\tfixture\n";
+        "Chr\tSNP_Pos\tRef\tAllele1\tAllele2\tC_Pos\t"
+        "Allele1_linked_C\tAllele2_linked_C\tAllele1_linked_C_met\t"
+        "Allele2_linked_C_met\tpvalue\tfdr\tASM\n"
+        "chrVariable\t2\tC\tT\tC\t18\t8-2\t2-8\t0.8\t0.2\t0.001\t0.005\tTRUE\n"
+        "chrVariable\t2\tC\tT\tC\t26\t8-2\t2-8\t0.8\t0.2\t0.001\t0.005\tTRUE\n"
+        "chrVariable\t2\tC\tT\tC\t34\t8-2\t2-8\t0.8\t0.2\t0.001\t0.005\tTRUE\n"
+        "chrVariable\t2\tC\tT\tC\t58\t8-2\t2-8\t0.8\t0.2\t0.001\t0.005\tTRUE\n"
+        "chrVariable\t2\tC\tT\tC\t66\t8-2\t2-8\t0.8\t0.2\t0.001\t0.005\tTRUE\n"
+        "chrVariable\t2\tC\tT\tC\t74\t8-2\t2-8\t0.8\t0.2\t0.001\t0.005\tTRUE\n";
     TempFile asm_file;
     write_text(asm_file.path(), variable_asm);
     CoreConfig with_asm = with_vcf;
@@ -391,7 +394,7 @@ void test_wgbs_depth_conversion_and_preflight_rejections()
     config.technology = htsim::core::Technology::tbs;
     config.rrbs_cut_sites.clear();
     config.tbs_bed_path = targets.path();
-    config.tbs_center_stddev = 0.0;
+    config.tbs_center_sd = 0.0;
     std::ostringstream tbs_depth(std::ios::binary);
     const auto tbs_depth_trailer =
         htsim::core::generate_core_stream(config, tbs_depth);
@@ -649,7 +652,7 @@ void test_de_novo_mutation_generation_and_preflight_rejections()
     tbs_mutations.indel_fraction = 0.65;
     tbs_mutations.indel_extension_probability = 0.6;
     tbs_mutations.tbs_bed_path = tbs_targets.path();
-    tbs_mutations.tbs_center_stddev = 0.0;
+    tbs_mutations.tbs_center_sd = 0.0;
     std::ostringstream tbs_mutation_stream(std::ios::binary);
     const auto tbs_mutation_trailer =
         htsim::core::generate_core_stream(
@@ -725,6 +728,56 @@ void test_valid_cgmap_generation_and_preflight_rejections()
         bed_stream.str() == first.str(),
         "bedMethyl did not preserve the equivalent CGmap MethDB overlay");
 
+    const std::string methbg =
+        "chr1\t2\t3\t1\n"
+        "chr1\t7\t8\t0\n"
+        "chr1\t8\t9\t0.25\n";
+    TempFile methbg_profile;
+    write_text(methbg_profile.path(), methbg);
+    CoreConfig methbg_config = config;
+    methbg_config.chunk_size = 5U;
+    methbg_config.cgmap_path.reset();
+    methbg_config.methbg_path = methbg_profile.path();
+    std::ostringstream methbg_stream(std::ios::binary);
+    (void)htsim::core::generate_core_stream(methbg_config, methbg_stream);
+    require(
+        methbg_stream.str() == first.str(),
+        "MethBG did not preserve the equivalent CGmap MethDB overlay");
+
+    const std::string methbed =
+        "chr1\t2\t3\t.\t1000\t+\n"
+        "chr1\t7\t8\t.\t0\t+\n"
+        "chr1\t8\t9\t.\t250\t-\n";
+    TempFile methbed_profile;
+    write_text(methbed_profile.path(), methbed);
+    CoreConfig methbed_config = config;
+    methbed_config.chunk_size = 5U;
+    methbed_config.cgmap_path.reset();
+    methbed_config.methbed_path = methbed_profile.path();
+    std::ostringstream methbed_stream(std::ios::binary);
+    (void)htsim::core::generate_core_stream(methbed_config, methbed_stream);
+    require(
+        methbed_stream.str() == first.str(),
+        "MethBED did not preserve the equivalent CGmap MethDB overlay");
+
+    config.cgmap_pool = true;
+    bed_config.cgmap_pool = true;
+    methbg_config.cgmap_pool = true;
+    methbed_config.cgmap_pool = true;
+    std::ostringstream cgmap_pool_stream(std::ios::binary);
+    std::ostringstream bed_pool_stream(std::ios::binary);
+    std::ostringstream methbg_pool_stream(std::ios::binary);
+    std::ostringstream methbed_pool_stream(std::ios::binary);
+    (void)htsim::core::generate_core_stream(config, cgmap_pool_stream);
+    (void)htsim::core::generate_core_stream(bed_config, bed_pool_stream);
+    (void)htsim::core::generate_core_stream(methbg_config, methbg_pool_stream);
+    (void)htsim::core::generate_core_stream(methbed_config, methbed_pool_stream);
+    require(
+        bed_pool_stream.str() == cgmap_pool_stream.str()
+            && methbg_pool_stream.str() == cgmap_pool_stream.str()
+            && methbed_pool_stream.str() == cgmap_pool_stream.str(),
+        "text methylation formats produced different pooled catalogs");
+
     config.asm_path = profile.path();
     require_empty_failure(
         [&](std::ostringstream &sink) {
@@ -748,11 +801,14 @@ void test_valid_asm_generation_and_preflight_rejections()
 {
     const std::string fasta = ">chr1\nACGTA\n";
     const std::string vcf = vcf_header()
-        + "chr1\t5\t.\tA\tC\t.\tPASS\t.\tGT\t1|0\n";
+        + "chr1\t5\t.\tA\tC\t.\tPASS\t.\tGT\t0/1\n";
     const std::string cgmap =
         "chr1\tC\t2\tCG\tCG\t0.5\t4\t8\n";
     const std::string asm_profile =
-        "chr1\tC\t2\tCG\tCG\t0.5\t5\tA\tC\t0.2\t0.8\t4\t0.01\tfixture\n";
+        "Chr\tSNP_Pos\tRef\tAllele1\tAllele2\tC_Pos\t"
+        "Allele1_linked_C\tAllele2_linked_C\tAllele1_linked_C_met\t"
+        "Allele2_linked_C_met\tpvalue\tfdr\tASM\n"
+        "chr1\t5\tA\tC\tA\t2\t4-1\t1-4\t0.8\t0.2\t0.01\t0.02\tTRUE\n";
     TempFile reference;
     TempFile variants;
     TempFile cgmap_file;
@@ -781,6 +837,42 @@ void test_valid_asm_generation_and_preflight_rejections()
         rechunked.str() == first.str(),
         "chunk size changed the ASM protocol stream");
 
+    CoreConfig inferred_config = config;
+    inferred_config.vcf_path.reset();
+    inferred_config.mutation_rate = 0.0;
+    inferred_config.chunk_size = config.chunk_size;
+    std::ostringstream inferred_stream(std::ios::binary);
+    (void)htsim::core::generate_core_stream(
+        inferred_config, inferred_stream);
+
+    CoreConfig vcf_without_details = config;
+    CoreConfig inferred_without_details = inferred_config;
+    vcf_without_details.emit_details = false;
+    inferred_without_details.emit_details = false;
+    std::ostringstream vcf_biological_stream(std::ios::binary);
+    std::ostringstream inferred_biological_stream(std::ios::binary);
+    (void)htsim::core::generate_core_stream(
+        vcf_without_details, vcf_biological_stream);
+    (void)htsim::core::generate_core_stream(
+        inferred_without_details, inferred_biological_stream);
+    require(
+        inferred_biological_stream.str() == vcf_biological_stream.str(),
+        "ASM-only inferred SNV did not match the equivalent unphased VCF");
+    std::ostringstream inferred_vcf;
+    htsim::core::generate_variant_catalog_vcf(
+        inferred_config, inferred_vcf);
+    require(
+        inferred_vcf.str().find(
+            "chr1\t5\tasm_0_5\tA\tC\t.\tPASS\t.\tGT\t")
+            != std::string::npos,
+        "ASM-only inferred SNV was absent from truth VCF output");
+    std::ostringstream inferred_methdb(std::ios::binary);
+    htsim::core::build_methdb_snapshot(
+        inferred_config, inferred_methdb);
+    require(
+        !inferred_methdb.str().empty(),
+        "ASM-only inferred SNV was absent from MethDB output");
+
     CoreConfig cgmap_only = config;
     cgmap_only.asm_path.reset();
     std::ostringstream cgmap_stream(std::ios::binary);
@@ -790,7 +882,7 @@ void test_valid_asm_generation_and_preflight_rejections()
         "ASM did not override the CGmap probability");
 
     const std::string asm_bed =
-        "chr1\t1\t2\tfixture\t0\t+\t4\t5\tA\tC\t0.2\t0.8\n";
+        "chr1\t1\t2\tfixture\t600\t+\t4\t5\tA\tC\t0.2\t0.8\t1-4\t4-1\t0.01\t0.02\n";
     TempFile asm_bed_file;
     write_text(asm_bed_file.path(), asm_bed);
     CoreConfig bed_config = config;
@@ -803,7 +895,7 @@ void test_valid_asm_generation_and_preflight_rejections()
         "ASM BED did not preserve the equivalent typed ASM overlay");
 
     const std::string unresolved_asm =
-        "chr1\tC\t2\tCG\tCG\t0.5\t4\tT\tC\t0.2\t0.8\t4\t0.01\tfixture\n";
+        "chr1\t4\tT\tT\tC\t2\t4-1\t1-4\t0.2\t0.8\t0.01\t0.02\tTRUE\n";
     write_text(asm_file.path(), unresolved_asm);
     require_empty_failure(
         [&](std::ostringstream &sink) {
@@ -812,12 +904,14 @@ void test_valid_asm_generation_and_preflight_rejections()
         "ASM row without its exact linked VCF SNV");
 
     config = baseline_config(reference);
+    config.mutation_rate = 0.0;
     config.asm_path = asm_file.path();
-    require_empty_failure(
-        [&](std::ostringstream &sink) {
-            (void)htsim::core::generate_core_stream(config, sink);
-        },
-        "ASM without VCF");
+    std::ostringstream inferred_from_mismatch(std::ios::binary);
+    (void)htsim::core::generate_core_stream(
+        config, inferred_from_mismatch);
+    require(
+        !inferred_from_mismatch.str().empty(),
+        "ASM-only input did not establish its own linked SNV authority");
 }
 
 void test_valid_rrbs_generation_and_chunk_independence()
@@ -913,7 +1007,7 @@ void test_rrbs_and_tbs_vcf_haplotype_fragmentation()
     CoreConfig tbs = baseline_config(reference);
     tbs.technology = htsim::core::Technology::tbs;
     tbs.tbs_bed_path = targets.path();
-    tbs.tbs_center_stddev = 0.0;
+    tbs.tbs_center_sd = 0.0;
     tbs.vcf_path = tbs_variants.path();
     std::ostringstream tbs_stream(std::ios::binary);
     const auto tbs_trailer =
@@ -943,7 +1037,7 @@ void test_valid_tbs_generation_and_chunk_independence()
     CoreConfig config = baseline_config(reference);
     config.technology = htsim::core::Technology::tbs;
     config.tbs_bed_path = targets.path();
-    config.tbs_center_stddev = 0.0;
+    config.tbs_center_sd = 0.0;
     config.insert_min = 3U;
     config.insert_mean = 5U;
     config.insert_max = 8U;
@@ -956,6 +1050,15 @@ void test_valid_tbs_generation_and_chunk_independence()
                 && first_trailer.mate_count == 14
                 && first_trailer.per_contig_fragment_counts.size() == 2,
             "TBS generation returned wrong trailer counts");
+
+    CoreConfig fixed_with_wide_bounds = config;
+    fixed_with_wide_bounds.insert_min = 1U;
+    fixed_with_wide_bounds.insert_max = 8U;
+    std::ostringstream fixed_with_wide_bounds_stream(std::ios::binary);
+    (void)htsim::core::generate_core_stream(
+        fixed_with_wide_bounds, fixed_with_wide_bounds_stream);
+    require(fixed_with_wide_bounds_stream.str() == first.str(),
+            "fixed TBS insert incorrectly used inactive length bounds");
 
     config.chunk_size = 5;
     std::ostringstream rechunked(std::ios::binary);
@@ -984,7 +1087,7 @@ void test_valid_tbs_generation_and_chunk_independence()
                     == weighted_trailer.stream_sha256,
             "chunk size changed target-score TBS protocol output");
 
-    config.tbs_center_stddev = 4.0;
+    config.tbs_center_sd = 4.0;
     config.chunk_size = 2;
     std::ostringstream displaced(std::ios::binary);
     const auto displaced_trailer =
@@ -1001,11 +1104,32 @@ void test_valid_tbs_generation_and_chunk_independence()
                     == displaced_trailer.skipped_fragment_count,
             "chunk size changed displaced TBS protocol output");
 
+    config.coverage = htsim::core::CoverageMode::uniform;
+    config.tbs_center_sd = 0.0;
+    config.insert_sd = 1.5;
+    config.chunk_size = 2U;
+    std::ostringstream variable(std::ios::binary);
+    const auto variable_trailer =
+        htsim::core::generate_core_stream(config, variable);
+    require(variable_trailer.fragment_count == 7U
+                && variable_trailer.mate_count == 14U
+                && variable.str() != first.str(),
+            "variable TBS inserts did not change fixed-length output");
+    config.chunk_size = 5U;
+    std::ostringstream variable_rechunked(std::ios::binary);
+    const auto variable_rechunked_trailer =
+        htsim::core::generate_core_stream(config, variable_rechunked);
+    require(variable_rechunked.str() == variable.str()
+                && variable_rechunked_trailer.stream_sha256
+                    == variable_trailer.stream_sha256,
+            "chunk size changed variable-insert TBS protocol output");
+
     const std::string all_zero =
         "chr1\t4\t5\tforward\t0\t+\n"
         "chr2\t5\t6\tunknown\t0\t.\n";
     write_text(targets.path(), all_zero);
-    config.tbs_center_stddev = 0.0;
+    config.coverage = htsim::core::CoverageMode::target_score;
+    config.tbs_center_sd = 0.0;
     require_empty_failure(
         [&](std::ostringstream &sink) {
             (void)htsim::core::generate_core_stream(config, sink);

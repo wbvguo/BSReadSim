@@ -38,7 +38,7 @@ namespace {
 
 using Values = std::unordered_map<std::string, std::vector<std::string>>;
 
-constexpr std::array<std::string_view, 48> known_options = {{
+constexpr std::array<std::string_view, 50> known_options = {{
     "--emit-details",
     "--protocol-batch-fragments",
     "--run-id",
@@ -50,7 +50,9 @@ constexpr std::array<std::string_view, 48> known_options = {{
     "--reference",
     "--vcf",
     "--cgmap",
-    "--bed-methyl",
+    "--bedmethyl",
+    "--methbg",
+    "--methbed",
     "--methdb",
     "--methdb-output",
     "--asm",
@@ -74,7 +76,7 @@ constexpr std::array<std::string_view, 48> known_options = {{
     "--indel-extension-probability",
     "--homozygous-only",
     "--collect-non-cpg",
-    "--cgmap-pool",
+    "--pool-meth",
     "--update-variant-boundaries",
     "--beta-cg",
     "--beta-chg",
@@ -84,7 +86,7 @@ constexpr std::array<std::string_view, 48> known_options = {{
     "--rrbs-cut-site",
     "--rrbs-candidate-bed",
     "--tbs-bed",
-    "--tbs-center-stddev",
+    "--tbs-center-sd",
 }};
 
 bool is_known_option(std::string_view option)
@@ -107,7 +109,7 @@ Values collect_values(const std::vector<std::string> &arguments)
             throw CoreConfigError("missing value for core option: " + option);
         }
         const std::string &value = arguments[index + 1];
-        if (option != "--rrbs-cut-site" && values.find(option) != values.end()) {
+        if (values.find(option) != values.end()) {
             throw CoreConfigError("duplicate core option: " + option);
         }
         values[option].push_back(value);
@@ -274,6 +276,26 @@ bool valid_rrbs_cut_site(std::string_view value)
     return true;
 }
 
+std::vector<std::string> parse_rrbs_cut_site_list(std::string_view text)
+{
+    std::vector<std::string> cut_sites;
+    std::size_t begin = 0;
+    while (begin <= text.size()) {
+        const std::size_t end = text.find(',', begin);
+        const std::size_t length = end == std::string_view::npos
+            ? text.size() - begin
+            : end - begin;
+        if (length == 0) {
+            throw CoreConfigError(
+                "--rrbs-cut-site contains an empty comma-separated value");
+        }
+        cut_sites.emplace_back(text.substr(begin, length));
+        if (end == std::string_view::npos) {break;}
+        begin = end + 1;
+    }
+    return cut_sites;
+}
+
 BetaShape parse_beta_shape(std::string_view text, std::string_view name)
 {
     const std::size_t separator = text.find(',');
@@ -357,6 +379,8 @@ void validate_core_config(const CoreConfig &config)
     require_nonempty(config.vcf_path, "VCF path");
     require_nonempty(config.cgmap_path, "CGmap path");
     require_nonempty(config.bed_methyl_path, "bedMethyl path");
+    require_nonempty(config.methbg_path, "MethBG path");
+    require_nonempty(config.methbed_path, "MethBED path");
     require_nonempty(config.methdb_path, "MethDB path");
     require_nonempty(config.methdb_output_path, "MethDB output path");
     require_nonempty(config.asm_path, "ASM path");
@@ -368,16 +392,23 @@ void validate_core_config(const CoreConfig &config)
     const bool has_vcf = config.vcf_path.has_value();
     const bool has_cgmap = config.cgmap_path.has_value();
     const bool has_bed_methyl = config.bed_methyl_path.has_value();
+    const bool has_methbg = config.methbg_path.has_value();
+    const bool has_methbed = config.methbed_path.has_value();
     const bool has_methdb = config.methdb_path.has_value();
     const bool writes_methdb = config.methdb_output_path.has_value();
     const bool has_asm = config.asm_path.has_value();
     const bool has_asm_bed = config.asm_bed_path.has_value();
-    if (has_cgmap && has_bed_methyl) {
+    const unsigned profile_count = static_cast<unsigned>(has_cgmap)
+        + static_cast<unsigned>(has_bed_methyl)
+        + static_cast<unsigned>(has_methbg)
+        + static_cast<unsigned>(has_methbed);
+    if (profile_count > 1U) {
         throw CoreConfigError(
-            "CGmap and bedMethyl inputs are mutually exclusive");
+            "methylation profile inputs are mutually exclusive");
     }
     if (has_methdb
-        && (has_cgmap || has_bed_methyl || has_asm || has_asm_bed)) {
+        && (profile_count != 0U
+            || has_asm || has_asm_bed)) {
         throw CoreConfigError(
             "MethDB and methylation overlays are mutually exclusive");
     }
@@ -393,15 +424,12 @@ void validate_core_config(const CoreConfig &config)
         throw CoreConfigError(
             "ASM and ASM BED inputs are mutually exclusive");
     }
-    if ((has_asm || has_asm_bed) && !has_vcf) {
-        throw CoreConfigError("ASM generation requires a VCF input");
-    }
-    if (config.cgmap_pool && !has_cgmap && !has_bed_methyl) {
-        throw CoreConfigError(
-            "cgmap_pool=true requires a CGmap or bedMethyl input");
-    }
     if (config.cgmap_pool && has_methdb) {
-        throw CoreConfigError("MethDB forbids cgmap_pool=true");
+        throw CoreConfigError("MethDB forbids methylation value pooling");
+    }
+    if (config.cgmap_pool && profile_count == 0U) {
+        throw CoreConfigError(
+            "methylation value pooling requires a text methylation profile");
     }
 
     if (config.read_length_1 == 0 || config.insert_min == 0
@@ -476,12 +504,17 @@ void validate_core_config(const CoreConfig &config)
         throw CoreConfigError(
             "VCF and de novo mutation generation are mutually exclusive");
     }
+    if ((has_asm || has_asm_bed) && config.mutation_rate > 0.0) {
+        throw CoreConfigError(
+            "ASM and de novo mutation generation are mutually exclusive");
+    }
     if (has_methdb && config.mutation_rate > 0.0) {
         throw CoreConfigError(
             "MethDB embeds its variant authority and forbids de novo mutations");
     }
     if (bisulfite_technology(config.technology)
-        && (has_vcf || config.mutation_rate > 0.0)
+        && (has_vcf || has_asm || has_asm_bed
+            || config.mutation_rate > 0.0)
         && !config.update_variant_boundaries) {
         throw CoreConfigError(
             "variant generation requires update_variant_boundaries=true");
@@ -501,7 +534,7 @@ void validate_core_config(const CoreConfig &config)
         if (config.rrbs_cut_sites.empty()) {
             throw CoreConfigError("RRBS requires at least one cut site");
         }
-        if (config.tbs_bed_path || config.tbs_center_stddev) {
+        if (config.tbs_bed_path || config.tbs_center_sd) {
             throw CoreConfigError("RRBS forbids TBS inputs");
         }
     } else if (targeted_technology(config.technology)) {
@@ -512,18 +545,14 @@ void validate_core_config(const CoreConfig &config)
             throw CoreConfigError(
                 "targeted technologies forbid an RRBS candidate BED");
         }
-        if (!config.tbs_bed_path || !config.tbs_center_stddev) {
+        if (!config.tbs_bed_path || !config.tbs_center_sd) {
             throw CoreConfigError(
-                "targeted technologies require a BED path and center standard deviation");
+                "targeted technologies require a BED path and center SD");
         }
-        if (!std::isfinite(*config.tbs_center_stddev)
-            || *config.tbs_center_stddev < 0.0) {
+        if (!std::isfinite(*config.tbs_center_sd)
+            || *config.tbs_center_sd < 0.0) {
             throw CoreConfigError(
-                "TBS center standard deviation must be finite and non-negative");
-        }
-        if (config.insert_sd != 0.0) {
-            throw CoreConfigError(
-                "targeted technologies require --insert-sd 0");
+                "TBS center SD must be finite and non-negative");
         }
     } else if (whole_genome_technology(config.technology)) {
         if (!config.rrbs_cut_sites.empty()) {
@@ -534,7 +563,7 @@ void validate_core_config(const CoreConfig &config)
             throw CoreConfigError(
                 "whole-genome technologies forbid an RRBS candidate BED");
         }
-        if (config.tbs_bed_path || config.tbs_center_stddev) {
+        if (config.tbs_bed_path || config.tbs_center_sd) {
             throw CoreConfigError(
                 "whole-genome technologies forbid targeted inputs");
         }
@@ -542,7 +571,8 @@ void validate_core_config(const CoreConfig &config)
         throw CoreConfigError("technology is outside the core contract");
     }
     if (!bisulfite_technology(config.technology)
-        && (has_cgmap || has_bed_methyl || has_methdb || writes_methdb
+        && (has_cgmap || has_bed_methyl || has_methbg || has_methbed || has_methdb
+            || writes_methdb
             || has_asm || has_asm_bed || config.cgmap_pool)) {
         throw CoreConfigError(
             "standard sequencing forbids methylation inputs and pooling");
@@ -559,7 +589,8 @@ void validate_core_config(const CoreConfig &config)
                     "whole-genome profile coverage requires a profile path");
             }
             if (config.insert_sd != 0.0
-                && (has_vcf || config.mutation_rate != 0.0)) {
+                && (has_vcf || has_asm || has_asm_bed
+                    || config.mutation_rate != 0.0)) {
                 throw CoreConfigError(
                     "variable-insert target GC does not yet support variants");
             }
@@ -624,7 +655,9 @@ CoreConfig parse_core_config(const std::vector<std::string> &arguments)
     config.reference_path = required(values, "--reference");
     config.vcf_path = optional_text(values, "--vcf");
     config.cgmap_path = optional_text(values, "--cgmap");
-    config.bed_methyl_path = optional_text(values, "--bed-methyl");
+    config.bed_methyl_path = optional_text(values, "--bedmethyl");
+    config.methbg_path = optional_text(values, "--methbg");
+    config.methbed_path = optional_text(values, "--methbed");
     config.methdb_path = optional_text(values, "--methdb");
     config.methdb_output_path = optional_text(values, "--methdb-output");
     config.asm_path = optional_text(values, "--asm");
@@ -678,7 +711,7 @@ CoreConfig parse_core_config(const std::vector<std::string> &arguments)
     config.collect_non_cpg = parse_boolean(
         required(values, "--collect-non-cpg"), "--collect-non-cpg");
     config.cgmap_pool = parse_boolean(
-        required(values, "--cgmap-pool"), "--cgmap-pool");
+        required(values, "--pool-meth"), "--pool-meth");
     config.update_variant_boundaries = parse_boolean(
         required(values, "--update-variant-boundaries"),
         "--update-variant-boundaries");
@@ -693,17 +726,15 @@ CoreConfig parse_core_config(const std::vector<std::string> &arguments)
     config.coverage_profile_path = optional_text(values, "--coverage-profile");
     const auto rrbs = values.find("--rrbs-cut-site");
     if (rrbs != values.end()) {
-        for (const std::string &site : rrbs->second) {
-            config.rrbs_cut_sites.push_back(site);
-        }
+        config.rrbs_cut_sites = parse_rrbs_cut_site_list(rrbs->second.front());
     }
     config.rrbs_candidate_bed_path = optional_text(
         values, "--rrbs-candidate-bed");
     config.tbs_bed_path = optional_text(values, "--tbs-bed");
-    if (values.find("--tbs-center-stddev") != values.end()) {
-        config.tbs_center_stddev = parse_number(
-            required(values, "--tbs-center-stddev"),
-            "--tbs-center-stddev");
+    if (values.find("--tbs-center-sd") != values.end()) {
+        config.tbs_center_sd = parse_number(
+            required(values, "--tbs-center-sd"),
+            "--tbs-center-sd");
     }
 
     validate_core_config(config);
@@ -1250,14 +1281,25 @@ void build_methdb_snapshot(
             config.homozygous_only,
         };
         std::unique_ptr<methdb::CgmapProfile> cgmap_profile;
-        if (config.cgmap_path || config.bed_methyl_path) {
-            const bool bed_methyl = config.bed_methyl_path.has_value();
+        const std::string *profile_path = nullptr;
+        auto profile_format = methdb::MethylationProfileFormat::cgmap;
+        if (config.cgmap_path) {
+            profile_path = &*config.cgmap_path;
+        } else if (config.bed_methyl_path) {
+            profile_path = &*config.bed_methyl_path;
+            profile_format = methdb::MethylationProfileFormat::bed_methyl;
+        } else if (config.methbg_path) {
+            profile_path = &*config.methbg_path;
+            profile_format = methdb::MethylationProfileFormat::methbg;
+        } else if (config.methbed_path) {
+            profile_path = &*config.methbed_path;
+            profile_format = methdb::MethylationProfileFormat::methbed;
+        }
+        if (profile_path != nullptr) {
             cgmap_profile = std::make_unique<methdb::CgmapProfile>(
-                bed_methyl ? *config.bed_methyl_path : *config.cgmap_path,
+                *profile_path,
                 catalog,
-                bed_methyl
-                    ? methdb::MethylationProfileFormat::bed_methyl
-                    : methdb::MethylationProfileFormat::cgmap);
+                profile_format);
             if (config.cgmap_pool
                 && cgmap_profile->defined_probability_count() == 0U) {
                 throw CoreGeneratorError(
@@ -1272,7 +1314,7 @@ void build_methdb_snapshot(
                 catalog,
                 asm_bed
                     ? methdb::AsmProfileFormat::bed
-                    : methdb::AsmProfileFormat::htsim);
+                    : methdb::AsmProfileFormat::cgmaptools_ass);
         }
         const methdb::ContextShapes shapes = methylation_shapes(config);
         methdb::SnapshotWriter writer(
@@ -1295,6 +1337,10 @@ void build_methdb_snapshot(
             const std::vector<variant::Variant> *variant_records = nullptr;
             if (variant_file) {
                 variant_records = &variant_file->variants(contig.index);
+            } else if (asm_profile) {
+                generated_variants = methdb::variants_from_asm(
+                    contig, asm_records, config.phasing_seed);
+                variant_records = &generated_variants;
             } else if (generate_mutations) {
                 generated_variants = variant::generate_de_novo_events(
                     contig, config.mutation_seed, mutation_parameters);
@@ -1359,6 +1405,16 @@ void generate_variant_catalog_vcf(
             variant_file = std::make_unique<variant::VariantFile>(
                 *config.vcf_path, catalog, config.phasing_seed);
         }
+        std::unique_ptr<methdb::AsmProfile> asm_profile;
+        if (config.asm_path || config.asm_bed_path) {
+            const bool asm_bed = config.asm_bed_path.has_value();
+            asm_profile = std::make_unique<methdb::AsmProfile>(
+                asm_bed ? *config.asm_bed_path : *config.asm_path,
+                catalog,
+                asm_bed
+                    ? methdb::AsmProfileFormat::bed
+                    : methdb::AsmProfileFormat::cgmaptools_ass);
+        }
         const variant::MutationParameters mutation_parameters{
             config.mutation_rate,
             config.indel_fraction,
@@ -1368,15 +1424,31 @@ void generate_variant_catalog_vcf(
 
         variant::write_vcf_header(sink);
         snapshot.visit_contigs([&](const reference::Contig &contig) {
+            std::vector<methdb::AsmRecord> asm_records;
+            if (asm_profile) {asm_records = asm_profile->records(contig);}
+            std::vector<variant::Variant> generated_events;
+            const std::vector<variant::Variant> *events = nullptr;
             if (variant_file) {
-                variant::write_vcf_contig(
-                    sink, contig, variant_file->variants(contig.index));
+                events = &variant_file->variants(contig.index);
+            } else if (asm_profile) {
+                generated_events = methdb::variants_from_asm(
+                    contig, asm_records, config.phasing_seed);
+                events = &generated_events;
             } else {
-                const std::vector<variant::Variant> events =
-                    variant::generate_de_novo_events(
-                        contig, config.mutation_seed, mutation_parameters);
-                variant::write_vcf_contig(sink, contig, events);
+                generated_events = variant::generate_de_novo_events(
+                    contig, config.mutation_seed, mutation_parameters);
+                events = &generated_events;
             }
+            if (asm_profile) {
+                const variant::ContigVariants checked(
+                    contig.bases, *events, contig.index);
+                methdb::validate_asm_targets(
+                    contig,
+                    checked,
+                    config.collect_non_cpg,
+                    asm_records);
+            }
+            variant::write_vcf_contig(sink, contig, *events);
         });
         if (!sink) {
             throw CoreGeneratorError("failed while flushing the variant VCF");
@@ -1419,14 +1491,25 @@ protocol::Trailer generate_core_stream(
             config.homozygous_only,
         };
         std::unique_ptr<methdb::CgmapProfile> cgmap_profile;
-        if (config.cgmap_path || config.bed_methyl_path) {
-            const bool bed_methyl = config.bed_methyl_path.has_value();
+        const std::string *profile_path = nullptr;
+        auto profile_format = methdb::MethylationProfileFormat::cgmap;
+        if (config.cgmap_path) {
+            profile_path = &*config.cgmap_path;
+        } else if (config.bed_methyl_path) {
+            profile_path = &*config.bed_methyl_path;
+            profile_format = methdb::MethylationProfileFormat::bed_methyl;
+        } else if (config.methbg_path) {
+            profile_path = &*config.methbg_path;
+            profile_format = methdb::MethylationProfileFormat::methbg;
+        } else if (config.methbed_path) {
+            profile_path = &*config.methbed_path;
+            profile_format = methdb::MethylationProfileFormat::methbed;
+        }
+        if (profile_path != nullptr) {
             cgmap_profile = std::make_unique<methdb::CgmapProfile>(
-                bed_methyl ? *config.bed_methyl_path : *config.cgmap_path,
+                *profile_path,
                 catalog,
-                bed_methyl
-                    ? methdb::MethylationProfileFormat::bed_methyl
-                    : methdb::MethylationProfileFormat::cgmap);
+                profile_format);
             if (config.cgmap_pool
                 && cgmap_profile->defined_probability_count() == 0U) {
                 throw CoreGeneratorError(
@@ -1441,7 +1524,7 @@ protocol::Trailer generate_core_stream(
                 catalog,
                 asm_bed
                     ? methdb::AsmProfileFormat::bed
-                    : methdb::AsmProfileFormat::htsim);
+                    : methdb::AsmProfileFormat::cgmaptools_ass);
         }
         const methdb::ContextShapes context_shapes =
             methylation_shapes(config);
@@ -1507,7 +1590,7 @@ protocol::Trailer generate_core_stream(
                 static_cast<std::uint32_t>(catalog.size()));
         }
         const bool haplotype_gc_profile = coverage_profile
-            && (variant_file || generate_mutations
+            && (variant_file || asm_profile || generate_mutations
                 || (fixed_methdb
                     && fixed_methdb->has_diploid_contigs()));
         std::vector<std::uint32_t> candidate_weights(catalog.size(), 0);
@@ -1522,9 +1605,8 @@ protocol::Trailer generate_core_stream(
             if (cgmap_profile) {
                 cgmap_profile->validate_contig(contig);
             }
-            if (asm_profile) {
-                asm_profile->validate_contig(contig);
-            }
+            std::vector<methdb::AsmRecord> asm_records;
+            if (asm_profile) {asm_records = asm_profile->records(contig);}
             std::vector<variant::Variant> generated_events;
             std::vector<variant::Variant> saved_events;
             const std::vector<variant::Variant> *variants = nullptr;
@@ -1534,6 +1616,10 @@ protocol::Trailer generate_core_stream(
                 variants = &saved_events;
             } else if (!fixed_methdb && variant_file) {
                 variants = &variant_file->variants(contig.index);
+            } else if (!fixed_methdb && asm_profile) {
+                generated_events = methdb::variants_from_asm(
+                    contig, asm_records, config.phasing_seed);
+                variants = &generated_events;
             } else if (!fixed_methdb && generate_mutations) {
                 generated_events = variant::generate_de_novo_events(
                     contig, config.mutation_seed, mutation_parameters);
@@ -1566,12 +1652,10 @@ protocol::Trailer generate_core_stream(
                 }
             }
             if (asm_profile) {
-                const std::vector<methdb::AsmRecord> asm_records =
-                    asm_profile->records(contig);
                 if (!asm_records.empty()) {
                     if (!planned_variants) {
                         throw CoreGeneratorError(
-                            "ASM preflight lost its required VCF variant set");
+                            "ASM preflight lost its linked variant set");
                     }
                     methdb::validate_asm_targets(
                         contig,
@@ -1725,8 +1809,8 @@ protocol::Trailer generate_core_stream(
                           contig,
                           *planned_variants,
                           tbs_targets->targets(contig.index),
-                          *config.tbs_center_stddev,
-                          config.insert_mean,
+                          *config.tbs_center_sd,
+                          insert_parameters,
                           config.read_length_1,
                           config.paired_end,
                           config.max_ambiguous_fraction,
@@ -1735,8 +1819,8 @@ protocol::Trailer generate_core_stream(
                           contig.bases,
                           tbs_targets->targets(contig.index),
                           contig.index,
-                          *config.tbs_center_stddev,
-                          config.insert_mean,
+                          *config.tbs_center_sd,
+                          insert_parameters,
                           config.read_length_1,
                           config.paired_end,
                           config.max_ambiguous_fraction,
@@ -1832,6 +1916,10 @@ protocol::Trailer generate_core_stream(
                 variants = &saved_methdb_contig->variants;
             } else if (!saved_methdb_contig && variant_file) {
                 variants = &variant_file->variants(contig.index);
+            } else if (!saved_methdb_contig && asm_profile) {
+                generated_events = methdb::variants_from_asm(
+                    contig, asm_records, config.phasing_seed);
+                variants = &generated_events;
             } else if (!saved_methdb_contig && generate_mutations) {
                 generated_events = variant::generate_de_novo_events(
                     contig, config.mutation_seed, mutation_parameters);
@@ -2440,8 +2528,8 @@ protocol::Trailer generate_core_stream(
                             contig,
                             *contig_variants,
                             tbs_targets->targets(contig.index),
-                            *config.tbs_center_stddev,
-                            config.insert_mean,
+                            *config.tbs_center_sd,
+                            insert_parameters,
                             config.read_length_1,
                             config.paired_end,
                             config.max_ambiguous_fraction,
@@ -2451,8 +2539,8 @@ protocol::Trailer generate_core_stream(
                         contig.bases,
                         tbs_targets->targets(contig.index),
                         contig.index,
-                        *config.tbs_center_stddev,
-                        config.insert_mean,
+                        *config.tbs_center_sd,
+                        insert_parameters,
                         config.read_length_1,
                         config.paired_end,
                         config.max_ambiguous_fraction,

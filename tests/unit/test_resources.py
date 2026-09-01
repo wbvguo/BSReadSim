@@ -33,7 +33,7 @@ class BundledResourceTests(unittest.TestCase):
         self.assertEqual(metadata.format, "fasta")
         self.assertEqual(len(payload), metadata.size_bytes)
         self.assertEqual(hashlib.sha256(payload).hexdigest(), metadata.sha256)
-        self.assertEqual(len(sequence), 1024)
+        self.assertEqual(len(sequence), 1_961_600)
         self.assertIn(b"CG", sequence)
 
     def test_copy_is_exact_and_refuses_to_overwrite(self) -> None:

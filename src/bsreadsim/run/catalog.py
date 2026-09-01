@@ -163,7 +163,7 @@ def export_methdb_bed(
     compressed: bool = True,
     core_executable: PathLike | None = None,
 ) -> Path:
-    """Decode one MethDB snapshot into a new human-readable extended BED."""
+    """Decode one MethDB snapshot into a human-readable extended BED."""
 
     try:
         executable = resolve_core_executable(core_executable)

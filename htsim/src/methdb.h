@@ -134,12 +134,15 @@ public:
     using std::runtime_error::runtime_error;
 };
 
-// Both formats normalize to the same position-specific MethDB overlay.  The
+// All supported text formats normalize to the same position-specific MethDB
+// overlay. The
 // explicit selector is part of the launch contract; paths and suffixes never
 // influence parsing.
 enum class MethylationProfileFormat : std::uint8_t {
     cgmap = 0,
     bed_methyl = 1,
+    methbg = 2,
+    methbed = 3,
 };
 
 struct CgmapRecord {
@@ -161,7 +164,7 @@ void validate_cgmap_records(
     const model::Bases &contig_bases,
     const std::vector<CgmapRecord> &records);
 
-// Verified CGmap or bedMethyl input with a bounded-RAM per-contig access
+// Verified text methylation input with a bounded-RAM per-contig access
 // boundary. Parsed rows are normalized into an unlinked fixed-record spool;
 // records() only materializes and reference-validates the requested contig.
 // Instances are single-owner and not thread-safe because the internal spool
@@ -203,13 +206,13 @@ public:
 };
 
 enum class AsmProfileFormat : std::uint8_t {
-    htsim = 0,
+    cgmaptools_ass = 0,
     bed = 1,
 };
 
-// One normalized htsim ASM profile row. Both positions are zero-based
-// contig-local coordinates. The linked variant is an SNV whose typed VCF
-// HaplotypeMask later determines which haplotype receives each probability.
+// One normalized allele-specific methylation row. Both positions are zero-based
+// contig-local coordinates. The linked variant is an SNV whose HaplotypeMask
+// later determines which haplotype receives each probability.
 struct AsmRecord {
     std::uint32_t target_reference_position = 0;
     std::uint32_t linked_variant_position = 0;
@@ -231,16 +234,26 @@ void validate_asm_records(
     const model::Bases &contig_bases,
     const std::vector<AsmRecord> &records);
 
-// Verified plain/gzip htsim ASM or ASM BED snapshot. Parsing writes
+// Build the minimal heterozygous SNV authority implied by an ASM profile when
+// no VCF is supplied. Repeated links to one identical SNV collapse to one
+// event; conflicting allele definitions fail. Phase is deterministic under
+// phasing_seed and stable reference order.
+std::vector<variant::Variant> variants_from_asm(
+    const reference::Contig &contig,
+    const std::vector<AsmRecord> &records,
+    std::uint64_t phasing_seed);
+
+// Verified plain/gzip CGmapTools ASS or BSReadSim ASM BED snapshot. Parsing writes
 // fixed-width records to an unlinked temporary spool and materializes only one
-// reference-validated contig at a time. Calls are intentionally not concurrent
-// because the spool has one seek cursor.
+// reference-validated contig at a time. Native ASS rows are normalized from
+// SNP order into target order at that boundary. Calls are intentionally not
+// concurrent because the spool has one seek cursor.
 class AsmProfile {
 public:
     AsmProfile(
         const std::string &path,
         const std::vector<reference::ContigMetadata> &reference_catalog,
-        AsmProfileFormat format = AsmProfileFormat::htsim);
+        AsmProfileFormat format = AsmProfileFormat::cgmaptools_ass);
     ~AsmProfile();
 
     AsmProfile(const AsmProfile &) = delete;
@@ -488,7 +501,7 @@ public:
 };
 
 // One-contig, three-class empirical methylation-level pool. The constructor
-// accepts normalized CGmap rows and retains only defined q16 values.
+// accepts normalized profile rows and retains only defined q16 values.
 // C/G-oriented protocol contexts share a class through an explicit enum
 // mapping.
 class CgmapPool {
@@ -520,7 +533,7 @@ public:
     using std::runtime_error::runtime_error;
 };
 
-// Fail-closed ASM preflight before protocol output. This validates exact VCF
+// Fail-closed ASM preflight before protocol output. This validates exact SNV
 // linkage and streams both haplotypes only far enough to prove that each ASM
 // target is one shared reference-equivalent context. It does not sample
 // probabilities or materialize a methylation catalog.
@@ -591,6 +604,7 @@ namespace htsim::methdb {
 inline constexpr char methdb_magic[] = "methdb";
 inline constexpr std::uint8_t methdb_version = 2U;
 inline constexpr std::string_view methdb_bed_format = "methdb-bed-v2";
+inline constexpr std::string_view legacy_methbed_snapshot_format = "methbed-v1";
 
 class SnapshotError : public std::runtime_error {
 public:
@@ -665,6 +679,40 @@ private:
     crypto::Sha256Digest file_sha256_ = {};
     crypto::Sha256Digest content_sha256_ = {};
 };
+
+// Legacy internal reader for the rich MethDB extended-BED inspection export.
+// It is not selected by the public --methbed option, which reads a
+// methylation-only profile through MethylationProfileFormat::methbed.
+class MethbedSnapshot {
+public:
+    MethbedSnapshot(
+        const std::string &path,
+        const crypto::Sha256Digest &expected_binding,
+        const std::vector<reference::ContigMetadata> &reference_catalog);
+    ~MethbedSnapshot();
+
+    MethbedSnapshot(const MethbedSnapshot &) = delete;
+    MethbedSnapshot &operator=(const MethbedSnapshot &) = delete;
+    MethbedSnapshot(MethbedSnapshot &&) = delete;
+    MethbedSnapshot &operator=(MethbedSnapshot &&) = delete;
+
+    SnapshotContig contig(const reference::Contig &contig) const;
+    std::vector<variant::Variant> variants(
+        std::uint32_t contig_index) const;
+    bool contig_is_diploid(std::uint32_t contig_index) const;
+    bool has_diploid_contigs() const noexcept;
+    const crypto::Sha256Digest &file_sha256() const noexcept;
+
+private:
+    class Impl;
+    std::shared_ptr<Impl> impl_;
+};
+
+// Validate legacy MethDB extended-BED rows against the reference and embedded
+// variants, then restore derived runtime state.
+void normalize_methbed_contig(
+    const reference::Contig &reference_contig,
+    SnapshotContig &methbed_contig);
 
 // Decode every stored row without requiring the original run configuration.
 // Reference-backed origins receive half-open coordinates. Insertion origins

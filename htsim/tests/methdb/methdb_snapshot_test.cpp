@@ -16,12 +16,15 @@ namespace {
 
 using htsim::methdb::AsmRecord;
 using htsim::methdb::CatalogSite;
+using htsim::methdb::ContextShapes;
 using htsim::methdb::DiploidMethylationCatalog;
 using htsim::methdb::DiploidRuntimeArrays;
 using htsim::methdb::MethylationCatalog;
+using htsim::methdb::MethbedSnapshot;
 using htsim::methdb::RuntimeSite;
 using htsim::methdb::Snapshot;
 using htsim::methdb::SnapshotWriter;
+using htsim::variant::ContigVariants;
 using htsim::model::HaplotypeMask;
 using htsim::model::MethylationAllele;
 using htsim::model::MethylationContext;
@@ -207,7 +210,7 @@ void test_v2_is_canonical_compact_and_lazy()
     linked.alt_bases = {0U};
     linked.alt_haplotypes = HaplotypeMask::haplotype_1;
     linked.id = "linked";
-    linked.source = VariantSource::vcf;
+    linked.source = VariantSource::asm_profile;
     variants.push_back(linked);
     htsim::variant::Variant insertion;
     insertion.contig_index = 1U;
@@ -361,11 +364,13 @@ void test_v2_is_canonical_compact_and_lazy()
             "MethDB BED lost diploid contig metadata");
     require(exported.find(
                 "#variant\tchrDiploid\t0\t50\t51\tSNV\tT\tA\t1\t"
-                "linked\tvcf\n") != std::string::npos,
+                "linked\tasm\n") != std::string::npos,
             "MethDB BED lost embedded variant authority");
     require(exported.find("#insertion\tchrDiploid\tshared\t")
                 != std::string::npos,
             "MethDB BED lost insertion identity");
+    require(exported.find("\tinput\t") != std::string::npos,
+            "MethBED did not use its format-neutral input source label");
 
     const std::vector<std::size_t> payloads = first_section_payloads(first);
     require(payloads.size() == 2U,
@@ -427,12 +432,175 @@ void test_v2_is_canonical_compact_and_lazy()
     }
 }
 
+void test_methbed_round_trip()
+{
+    const auto binding = htsim::crypto::sha256(bytes_of("methbed-binding"));
+    const std::string sequence = "ACGTCAGTCCG";
+    htsim::model::Bases bases;
+    for (const char base : sequence) {
+        bases.push_back(base == 'A' ? 0U
+            : base == 'C' ? 1U
+            : base == 'G' ? 2U
+            : 3U);
+    }
+    const auto sequence_digest = htsim::crypto::sha256(bytes_of(sequence));
+    const std::vector<htsim::reference::ContigMetadata> metadata = {
+        {"chr1", bases.size(), sequence_digest},
+    };
+    std::vector<CatalogSite> sites;
+    for (std::uint32_t position = 0U; position < bases.size(); ++position) {
+        const auto context = htsim::methdb::classify_context(
+            bases, position, true);
+        if (!context) {continue;}
+        sites.push_back(CatalogSite{
+            position,
+            static_cast<std::uint16_t>(position * 4096U),
+            *context,
+            MethylationSource::beta,
+        });
+    }
+    const MethylationCatalog catalog(
+        static_cast<std::uint32_t>(bases.size()), sites);
+    TempFile binary;
+    {
+        std::ofstream output(binary.path(), std::ios::binary | std::ios::trunc);
+        SnapshotWriter writer(output, binding, 1U);
+        writer.write_reference(metadata[0], catalog);
+        writer.finish();
+    }
+    std::ostringstream exported;
+    htsim::methdb::export_snapshot_bed(binary.path(), exported);
+    require(exported.str().find("#format\tmethdb-bed-v2\n") == 0U,
+            "MethDB BED export marker changed");
+
+    TempFile text;
+    write_bytes(text.path(), exported.str());
+    const MethbedSnapshot snapshot(text.path(), binding, metadata);
+    const htsim::reference::Contig contig{
+        0U,
+        "chr1",
+        bases,
+        bases.size(),
+        sequence_digest,
+    };
+    const auto loaded = snapshot.contig(contig);
+    require(!loaded.diploid && loaded.reference_sites.size() == sites.size(),
+            "MethBED reference sites did not round-trip");
+    for (std::size_t index = 0U; index < sites.size(); ++index) {
+        require(
+            loaded.reference_sites[index].reference_position
+                    == sites[index].reference_position
+                && loaded.reference_sites[index].probability_u16
+                    == sites[index].probability_u16
+                && loaded.reference_sites[index].context
+                    == sites[index].context,
+            "MethBED reference site changed during reload");
+    }
+
+    std::string legacy = exported.str();
+    legacy.replace(
+        legacy.find("methdb-bed-v2"),
+        std::string("methdb-bed-v2").size(),
+        "methbed-v1");
+    std::size_t name = 0U;
+    while ((name = legacy.find("methdb:", name)) != std::string::npos) {
+        legacy.replace(name, std::string("methdb:").size(), "methbed:");
+        name += std::string("methbed:").size();
+    }
+    const std::size_t source = legacy.find("\tinput\t");
+    if (source != std::string::npos) {
+        legacy.replace(source, std::string("\tinput\t").size(), "\tcgmap\t");
+    }
+    write_bytes(text.path(), legacy);
+    require(MethbedSnapshot(text.path(), binding, metadata)
+                    .contig(contig)
+                    .reference_sites.size()
+                == sites.size(),
+            "legacy MethBED snapshot alias was not accepted");
+
+    const std::string diploid_sequence = "ACGACAGCAATCGTTGAA";
+    htsim::model::Bases diploid_bases;
+    for (const char base : diploid_sequence) {
+        diploid_bases.push_back(base == 'A' ? 0U
+            : base == 'C' ? 1U
+            : base == 'G' ? 2U
+            : 3U);
+    }
+    const auto diploid_digest = htsim::crypto::sha256(
+        bytes_of(diploid_sequence));
+    const htsim::reference::Contig diploid_contig{
+        0U,
+        "chrDiploid",
+        diploid_bases,
+        diploid_bases.size(),
+        diploid_digest,
+    };
+    std::vector<htsim::variant::Variant> variants = {
+        {0U, 3U, 4U, VariantKind::snv, {0U}, {3U},
+         HaplotypeMask::haplotype_1, "snv", VariantSource::vcf},
+        {0U, 6U, 6U, VariantKind::insertion, {}, {1U, 2U},
+         HaplotypeMask::both, "ins", VariantSource::de_novo},
+        {0U, 7U, 9U, VariantKind::deletion, {1U, 0U}, {},
+         HaplotypeMask::haplotype_2, "del", VariantSource::vcf},
+    };
+    const ContigVariants resolved_variants(
+        diploid_contig.bases, variants, diploid_contig.index);
+    const ContextShapes configured = {
+        {2.0, 5.0}, {3.0, 4.0}, {5.0, 2.0},
+    };
+    const MethylationCatalog diploid_baseline(
+        diploid_contig.bases,
+        diploid_contig.index,
+        41U,
+        true,
+        configured);
+    const DiploidMethylationCatalog diploid_catalog(
+        diploid_contig,
+        resolved_variants,
+        41U,
+        true,
+        configured);
+    const DiploidRuntimeArrays expected_arrays =
+        diploid_catalog.runtime_arrays();
+    const std::vector<htsim::reference::ContigMetadata> diploid_metadata = {
+        {"chrDiploid", diploid_bases.size(), diploid_digest},
+    };
+    const auto diploid_binding = htsim::crypto::sha256(
+        bytes_of("methbed-diploid-binding"));
+    TempFile diploid_binary;
+    {
+        std::ofstream output(
+            diploid_binary.path(), std::ios::binary | std::ios::trunc);
+        SnapshotWriter writer(output, diploid_binding, 1U);
+        writer.write_diploid(
+            diploid_metadata[0],
+            diploid_baseline,
+            diploid_catalog,
+            variants);
+        writer.finish();
+    }
+    std::ostringstream diploid_export;
+    htsim::methdb::export_snapshot_bed(
+        diploid_binary.path(), diploid_export);
+    TempFile diploid_text;
+    write_bytes(diploid_text.path(), diploid_export.str());
+    const auto loaded_diploid = MethbedSnapshot(
+        diploid_text.path(), diploid_binding, diploid_metadata)
+        .contig(diploid_contig);
+    require(loaded_diploid.diploid
+                && loaded_diploid.variants.size() == variants.size()
+                && same_arrays(
+                    loaded_diploid.diploid_sites, expected_arrays),
+            "diploid MethBED did not preserve variants and runtime sites");
+}
+
 } // namespace
 
 int main()
 {
     try {
         test_v2_is_canonical_compact_and_lazy();
+        test_methbed_round_trip();
     } catch (const std::exception &error) {
         std::cerr << "methdb_snapshot_test: " << error.what() << '\n';
         return EXIT_FAILURE;

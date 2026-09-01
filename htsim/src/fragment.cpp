@@ -249,13 +249,20 @@ Sampler::Sampler(
 
 std::uint32_t Sampler::sample(std::uint64_t candidate_ordinal) const
 {
+    return sample(candidate_ordinal, UINT64_C(0));
+}
+
+std::uint32_t Sampler::sample(
+    std::uint64_t candidate_ordinal,
+    std::uint64_t local_index) const
+{
     if (parameters_.standard_deviation == 0.0
         || parameters_.minimum == parameters_.maximum) {
         return parameters_.mean;
     }
 
     const double normal = normal_sampler::standard_normal(
-        key_, candidate_ordinal, UINT64_C(0));
+        key_, candidate_ordinal, local_index);
     if (normal == 0.0) {return parameters_.mean;}
 
     const std::int64_t lower_delta =

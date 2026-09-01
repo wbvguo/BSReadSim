@@ -13,7 +13,7 @@ extern PyObject *methylation_site_type;
 extern PyObject *site_reference_type;
 extern PyObject *mate_type;
 extern PyObject *capture_strands[3];
-extern PyObject *variant_sources[3];
+extern PyObject *variant_sources[4];
 extern PyObject *variant_kinds[4];
 extern PyObject *methylation_contexts[16];
 extern PyObject *methylation_sources[5];

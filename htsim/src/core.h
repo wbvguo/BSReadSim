@@ -54,6 +54,8 @@ struct CoreConfig {
     std::optional<std::string> vcf_path;
     std::optional<std::string> cgmap_path;
     std::optional<std::string> bed_methyl_path;
+    std::optional<std::string> methbg_path;
+    std::optional<std::string> methbed_path;
     std::optional<std::string> methdb_path;
     // Internal sidecar destination used by the Python transaction when a run
     // requests --save-methdb. It is not scientific configuration.
@@ -95,7 +97,7 @@ struct CoreConfig {
     // matching.
     std::optional<std::string> rrbs_candidate_bed_path;
     std::optional<std::string> tbs_bed_path;
-    std::optional<double> tbs_center_stddev;
+    std::optional<double> tbs_center_sd;
 };
 
 // One semantic boundary is shared by argv parsing and direct generator calls.

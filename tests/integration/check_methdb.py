@@ -136,7 +136,7 @@ def main() -> int:
             raise SystemExit("MethDB BED export lost its column contract")
         data_rows = [line.split("\t") for line in bed_text.splitlines() if line and not line.startswith("#")]
         if not data_rows or any(len(row) != 16 for row in data_rows):
-            raise SystemExit("MethDB BED export emitted invalid extended BED rows")
+            raise SystemExit("MethDB BED export emitted invalid rows")
         if any(int(row[2]) != int(row[1]) + 1 for row in data_rows):
             raise SystemExit("MethDB BED export did not emit one-base intervals")
 
@@ -156,14 +156,14 @@ def main() -> int:
         if plain_bed.read_bytes() != bed_bytes:
             raise SystemExit("plain and compressed MethDB BED contents disagree")
 
-        wrong_suffix = root / "wrong.bed"
+        wrong_suffix = root / "wrong.methbed.gz"
         rejected_export = _export(root, core, snapshot, wrong_suffix)
         if (
             rejected_export.returncode == 0
             or "must end in .bed.gz" not in rejected_export.stderr
             or wrong_suffix.exists()
         ):
-            raise SystemExit("compressed MethDB export accepted a .bed output path")
+            raise SystemExit("compressed MethDB export accepted a MethBED path")
 
         loaded = _run(
             root,
@@ -172,7 +172,7 @@ def main() -> int:
             "-o", "loaded",
             "--seed", "999",
             "--methdb", str(snapshot),
-            "--methylation-model", "bilstm",
+            "--meth-model", "bilstm",
         )
         if "falling back to BernoulliStateModel" not in loaded.stderr:
             raise SystemExit("BiLSTM request omitted its explicit fallback warning")
@@ -239,7 +239,7 @@ def main() -> int:
         variant_snapshot = (
             root / "variant-exported" / "truth" / "sim.methdb"
         )
-        variant_bed = root / "variant.methdb.bed"
+        variant_bed = root / "variant.bed"
         variant_decoded = _export(
             root,
             core,

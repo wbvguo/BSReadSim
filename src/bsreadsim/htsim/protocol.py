@@ -114,6 +114,7 @@ class VariantKind(IntEnum):
 class VariantSourceCode(IntEnum):
     VCF = 1
     DE_NOVO = 2
+    ASM = 3
 
 
 class MethylationContext(IntEnum):
