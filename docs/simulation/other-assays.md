@@ -1,52 +1,36 @@
 # Other assays
 
-BSReadSim focuses on bisulfite sequencing, but the same genome, fragment, and
-sequencing models can also generate standard sequencing reads. This page
-covers the three standard assays available alongside the bisulfite workflows:
-Whole Genome Sequencing (WGS), Whole Exome Sequencing (WES), and Targeted
-Sequencing (TS).
+Besides bisulfite sequencing, BSReadSim simulates whole-genome sequencing
+(WGS), whole-exome sequencing (WES), and targeted sequencing (TS).
 
-“Other assays” is a documentation grouping, not a fourth command. Choose
-`wgs`, `wes`, or `ts` explicitly so the selected technology is preserved in
-the run manifest and annotated BAM.
+## Non-bisulfite workflow { #how-standard-sequencing-is-simulated }
 
-## How standard sequencing is simulated
-
-All three assays retain the parts of the BSReadSim workflow that do not depend
-on bisulfite chemistry:
+The non-bisulfite workflow shares the genome, fragment, read, output, and seed
+controls without methylation modeling or bisulfite conversion.
 
 ```text
 reference FASTA
-  -> reference-only, de novo, or VCF-derived diploid genome
-  -> WGS whole-genome sampling or WES/TS BED-targeted capture
-  -> single- or paired-end read extraction
-  -> base quality and sequencing error
-  -> FASTQ or annotated BAM + run manifest
+  -> prepared diploid genome
+  -> fragment generation and sampling
+  -> read extraction, base quality, and substitution errors
+  -> FASTQ or annotated BAM + manifest
 ```
 
-Unlike WGBS, RRBS, and TBS, these assays do not construct a methylome, realize
-cytosine methylation, or apply bisulfite conversion. They omit those stages
-entirely rather than approximating standard sequencing with a zero conversion
-rate. Consequently, methylation profiles, MethDB, ASM, and bisulfite-specific
-controls are not accepted by `wgs`, `wes`, or `ts`.
+- **WGS:** Samples fragments from eligible positions across the genome and
+  requires no target file.
+- **WES:** Samples fragments around exome intervals supplied with `--targets`.
+- **TS:** Samples fragments around custom panel intervals supplied with
+  `--targets`.
 
-| Assay | Fragment domain | Assay input | Related bisulfite mode |
-| --- | --- | --- | --- |
-| **WGS** | eligible starts across the genome | reference FASTA; optional target-GC profile | WGBS uses the same whole-genome sampler |
-| **WES** | exon or other exome intervals | strand-aware BED6 target file | TBS uses the same capture sampler with bisulfite chemistry |
-| **TS** | intervals in a general capture panel | strand-aware BED6 target file | TBS uses the same capture sampler with bisulfite chemistry |
+WES, TS, and TBS use the same
+[target-centered fragment model](customize.md#tbs).
 
 ## Choose an assay
 
 ### WGS { #wgs }
 
-Use WGS when reads should originate across the eligible genome without
-bisulfite chemistry. Fragment starts are sampled uniformly by default. An
-optional `--gc-profile` requests a target fragment-GC distribution, and WGS
-supports either fixed or clamped-normal variable insert lengths.
-When a GC profile is combined with variable inserts, the run must currently be
-reference-only; fixed-insert GC-profile runs also support VCF and de novo
-variants.
+Use `wgs` for whole-genome sampling. This example uses the default uniform
+sampling.
 
 ```bash
 bsreadsim run wgs \
@@ -57,13 +41,14 @@ bsreadsim run wgs \
   -s 42
 ```
 
+See [Generate fragments](customize.md#generate-fragments) and
+[Sample fragments](customize.md#sample-fragments) for whole-genome fragment
+geometry and sampling controls.
+
 ### WES { #wes }
 
-Use WES for exome capture. Supply exon or other exome intervals as a
-strand-aware BED6 file. The simulator selects an eligible target and places a
-fixed-length fragment around its center; `--fragment-center-stddev` controls
-the placement spread. Uniform sampling gives every eligible BED row equal
-mass, while `--sampling score` uses BED column 5 as a relative capture weight.
+Use `wes` with exome intervals in a strand-aware BED6 file. This example uses
+the default uniform target sampling.
 
 ```bash
 bsreadsim run wes \
@@ -71,70 +56,73 @@ bsreadsim run wes \
   -o runs/wes \
   -n 100000 \
   --targets exome.bed \
-  --sampling uniform \
   --insert-mean 300 \
-  --insert-sd 0 \
+  --center-sd 50 \
   --mutation-rate 0 \
   -s 42
 ```
 
 ### TS { #ts }
 
-Use TS for a general targeted panel, such as a disease, validation, or custom
-capture panel. It uses the same target eligibility, scoring, and placement
-model as WES. The separate `ts` command records the experiment as Targeted
-Sequencing rather than Whole Exome Sequencing.
+Use `ts` with a custom target panel in a strand-aware BED6 file. This example
+weights targets by the scores in BED column 5.
 
 ```bash
 bsreadsim run ts \
   -r reference.fa \
   -o runs/ts \
   -n 100000 \
-  --targets panel.bed \
   --sampling score \
+  --targets panel.bed \
   --insert-mean 300 \
-  --insert-sd 0 \
-  --fragment-center-stddev 50 \
+  --center-sd 50 \
   --mutation-rate 0 \
   -s 42
 ```
 
-With score-based sampling, BED scores are relative weights and do not need to
-sum to one.
-
 ## Shared simulation controls
 
-WGS, WES, and TS share the standard parts of the simulation model. This makes
-them useful as non-bisulfite controls and for benchmarking tools that operate
-on ordinary sequencing reads.
+The following controls also apply to non-bisulfite assays:
 
-| Layer | Available choices |
+| Control | Use in non-bisulfite assays |
 | --- | --- |
-| Genetic background | unchanged reference, de novo SNVs and indels, or a one-sample diploid VCF |
-| Dataset size | exact total read count with `--reads`, or assay-aware mean depth with `--depth` |
-| Read layout | single-end or paired-end reads with a configurable read length |
-| Sequencing | fixed or empirical base quality and uniform or model-based substitution errors |
-| Reproducibility | independent variant, phasing, and master seeds plus an automatic run manifest |
+| [Genome](customize.md#genetic-variation) | Keep the reference unchanged, generate de novo variants, or load a diploid VCF |
+| [Fragment generation](customize.md#generate-fragments) | Use whole-genome geometry for WGS and target-centered geometry for WES and TS |
+| [Fragment length](customize.md#fragment-geometry) | Set the minimum, mean, maximum, and standard deviation |
+| [Fragment sampling](customize.md#sample-fragments) | Use `uniform` by default, `gc` for WGS, or `score` for WES and TS |
+| [Read count](customize.md#dataset-size) | Set an exact read count or assay-aware depth |
+| [Read layout](customize.md#read-layout) | Choose single- or paired-end reads and set the read length |
+| [Quality and errors](customize.md#quality-and-error) | Use fixed values or data-derived models for Phred scores and substitutions |
+| [Output and truth](customize.md#reproducibility) | Write FASTQ or annotated BAM, a manifest, and optional variant truth |
+| [Random seeds](customize.md#random-seeds) | Control genome preparation and fragment and read generation; the methylation seed is unused |
 
-For WGS, depth is calculated over contigs with eligible whole-genome fragment
-starts. For WES and TS, it is calculated over the union of eligible target
-intervals. Use `--reads` when the exact output record count is more important
-than assay-aware depth.
+??? info "How depth is calculated"
 
-## Outputs and ground truth
+    WGS depth uses eligible whole-genome sequence. WES and TS depth use the
+    union of eligible target intervals. Use `--reads` instead when an exact
+    output record count is required.
 
-Every run emits either FASTQ or annotated BAM plus a manifest. Annotated BAM
-preserves fragment origin, variants, and sequencing-error truth where
-applicable, but it contains no methylation or conversion events for these
-assays. `--save-truth` publishes the prepared variant set as a normalized,
-phased VCF truth artifact; it does not create a methylation profile or MethDB.
+## Outputs and simulation truth
 
-See [Customize](customize.md) for all shared controls, the
-[target BED contract](../reference/formats/tbs-catalog.md) for WES and TS input rules,
-and [Outputs](../outputs/index.md) for the published file contracts.
+Each run writes FASTQ or an origin-annotated BAM, together with a manifest.
+With the default prefix `sim`, a paired-end FASTQ run using `--save-truth` has
+the following structure:
 
-<div class="next-step" markdown>
+```text { .no-copy }
+OUTPUT/
+├── sim.R1.fastq.gz
+├── sim.R2.fastq.gz
+├── sim.manifest.json
+└── truth/
+    └── sim.variants.vcf.gz
+```
 
-**Next:** [Customize the genome, fragmentation, sequencing, and output stages](customize.md).
+Single-end FASTQ omits `sim.R2.fastq.gz`. BAM output replaces the FASTQ files
+with `sim.bam` and omits methylation and conversion annotations. For
+non-bisulfite assays, `--save-truth` exports only the prepared, phased variant
+set as VCF.
 
-</div>
+See [Choose read output](customize.md#output-format),
+[Save simulation truth](customize.md#truth-artifacts), and
+[Outputs](../outputs/index.md) for the available representations, artifact
+names, and completion rules.

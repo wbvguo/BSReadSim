@@ -2,13 +2,11 @@
 
 ## 1. Prepare a reference genome
 
-For this demo, use the toy reference bundled with BSReadSim:
-
-```bash
-bsreadsim export test-fasta -o test.fa
-```
-
-For real applications, prepare a reference genome FASTA for the species and assembly used by your study; genome sequences are available from [Ensembl](https://www.ensembl.org/info/data/ftp/index.html?redirect=no) and [GENCODE](https://www.gencodegenes.org/).
+Obtain a reference genome in FASTA format. This demo uses the repository's
+bundled [test.fa](https://github.com/wbvguo/BSReadSim/blob/main/data/example/test.fa).
+For real analyses, prepare or download a reference genome from
+[Ensembl](https://www.ensembl.org/info/data/ftp/index.html?redirect=no) or
+[GENCODE](https://www.gencodegenes.org/) that matches the species and build in your study.
 
 ## 2. Run a WGBS simulation
 
@@ -16,18 +14,21 @@ For real applications, prepare a reference genome FASTA for the species and asse
 bsreadsim run wgbs -r test.fa -o test/ -n 1000 -s 42
 ```
 
-- `run wgbs` simulates Whole Genome Bisulfite Sequencing reads.
-- `-r` specifies the reference genome in FASTA format.
-- `-o` specifies the output directory for the simulated dataset.
-- `-n` specifies the total number of read records to emit; paired-end runs
-  divide that even count into complete R1/R2 pairs.
-- `-s` fixes the master seed for fragment selection and read realization.
+??? info "Command options"
+    `run wgbs` simulates WGBS reads. In this command:
 
-All unspecified fragment, read, sequencing, and output options use the WGBS defaults.
+    - `-r` specifies the reference FASTA;
+    - `-o` specifies the output directory;
+    - `-n` specifies the total number of reads to generate (n/2 read pairs);
+    - `-s` specifies the master seed;
+
+    All other parameters use the WGBS defaults. See
+    [Customize](../simulation/customize.md) for more configuration options.
 
 ## 3. Inspect the output
 
-The output directory contains paired FASTQ files and a run manifest:
+This command uses the default paired-end mode and `fastq.gz` format, so the
+output directory contains two FASTQ files and a run manifest:
 
 ```text
 test/
@@ -36,13 +37,13 @@ test/
 └── sim.manifest.json
 ```
 
-Each FASTQ record contains a read name, simulated sequence, and quality scores. Preview the first R1 record:
+Preview the first R1 record:
 
 ```bash
 zcat test/sim.R1.fastq.gz | head -n 4
 ```
 
-The manifest records the effective configuration, seeds, inputs, counts, and checksums. Preview its first 40 lines:
+The manifest records the effective configuration, provenance, and run summary:
 
 ```bash
 head -n 40 test/sim.manifest.json
@@ -50,15 +51,11 @@ head -n 40 test/sim.manifest.json
 
 ## Continue with customized simulation
 
-Choose the technology that matches your experiment:
+Choose [WGBS](../simulation/customize.md#wgbs),
+[RRBS](../simulation/customize.md#rrbs),
+[TBS](../simulation/customize.md#tbs), or a
+[non-bisulfite assay](../simulation/other-assays.md). Then check the following
 
-- [Whole Genome Bisulfite Sequencing (WGBS)](../simulation/customize.md#wgbs): genome-wide methylation profiling
-- [Reduced Representation Bisulfite Sequencing (RRBS)](../simulation/customize.md#rrbs): restriction-enzyme enrichment of CpG-rich fragments
-- [Targeted Bisulfite Sequencing (TBS)](../simulation/customize.md#tbs): probe-based enrichment of selected regions
-- [Other genomic assays](../simulation/other-assays.md): ordinary whole-genome, whole-exome, or panel-enriched targeted sequencing
-
-Open [Customize](../simulation/customize.md) to control genetic variation, methylation, fragment sampling, sequencing behavior, and output format.
-See [Tutorials](../simulation/tutorials.md) for bisulfite simulation recipes.
-See [Outputs](../outputs/index.md) for descriptions of the generated files.
-See [CLI parameters and defaults](../reference/cli.md) for every option,
-accepted value, default, and compatibility rule.
+- [Tutorials](../simulation/tutorials.md) for complete task-oriented commands;
+- [Customize](../simulation/customize.md) to choose models and parameters;
+- [CLI parameters](../reference/cli.md) for default and optional configurations.

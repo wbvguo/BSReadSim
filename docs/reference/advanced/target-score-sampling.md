@@ -1,21 +1,30 @@
-# TBS target-score sampling
+# Target-score sampling for targeted assays
 
-TBS normally gives every eligible target equal sampling mass. Select
-`--sampling score` when column 5 of the BED6 input should instead define each
-target's relative expected output.
+Targeted bisulfite sequencing (TBS), whole-exome sequencing (WES), and targeted
+sequencing (TS) sample eligible targets uniformly by default. Select
+`--sampling score` to use BED column 5 as each target's relative expected
+output. This example uses TBS:
 
 ```bash
 bsreadsim run tbs \
   --reference reference.fa \
   --output runs/tbs-weighted \
   --reads 100000 \
-  --targets targets.bed \
   --sampling score \
+  --targets targets.bed \
   --insert-mean 300 \
-  --insert-sd 0 \
+  --center-sd 50 \
   --mutation-rate 0 \
   --seed 42
 ```
+
+## Generation
+
+The BED6 file defines eligible targets. Target selection happens before the
+actual fragment length and center displacement are drawn, so those generation
+controls do not change a BED row's relative score mass.
+
+## Sampling
 
 In this mode every score must be an exact integer from `0` through
 `4,294,967,295`. Decimal forms such as `1.0` and `1e3` are accepted when they
@@ -27,8 +36,10 @@ Scores are relative and need not sum to one. Multiplying all positive scores
 by the same constant leaves the distribution unchanged. At least one eligible
 target must have a positive score.
 
+## Interpretation
+
 The score represents aggregate output weight, which may include capture,
 library, amplification, bisulfite, and mapping effects. It should not be
 interpreted automatically as a pure molecular capture probability. Target
-coordinates and eligibility still follow the [TBS target
-format](../formats/tbs-catalog.md).
+coordinates and eligibility still follow the
+[capture target BED contract](../formats.md#capture-target-bed).
