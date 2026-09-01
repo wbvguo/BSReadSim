@@ -1,3 +1,5 @@
+<img src="docs/img/BSReadSim.png" alt="BSReadSim logo" width="180" align="right">
+
 # BSReadSim
 
 BSReadSim generates reproducible synthetic reads for bisulfite sequencing
