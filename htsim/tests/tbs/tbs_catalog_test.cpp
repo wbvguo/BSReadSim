@@ -296,6 +296,69 @@ void test_sampling_is_chunk_independent()
         "overflowing TBS ordinal range was accepted");
 }
 
+void test_variable_insert_sampling_is_chunk_independent()
+{
+    const std::vector<Target> targets = {
+        {0, 20, 21, "a", 0.0,
+         htsim::model::CaptureStrand::forward},
+        {0, 40, 41, "b", 0.0,
+         htsim::model::CaptureStrand::reverse},
+    };
+    const htsim::insert_length::Parameters inserts{4U, 6U, 8U, 1.5};
+    const CandidateCatalog catalog(
+        encode(std::string(64U, 'A')),
+        targets,
+        0U,
+        0.0,
+        inserts,
+        2U,
+        true,
+        0.0);
+    require(catalog.choice_count() == 2U,
+            "variable inserts changed the mean-calibrated target domain");
+
+    constexpr std::uint64_t seed = 73U;
+    constexpr std::uint32_t count = 128U;
+    const auto all = catalog.sample(0U, seed, 0U, count);
+    bool saw_non_mean = false;
+    for (const auto &candidate : all.candidates) {
+        require(candidate.template_length >= inserts.minimum
+                    && candidate.template_length <= inserts.maximum
+                    && candidate.reference_end - candidate.reference_start
+                        == candidate.template_length,
+                "variable TBS insert left its configured bounds");
+        const std::uint32_t target_center = candidate.target_start
+            + (candidate.target_end - candidate.target_start) / 2U;
+        require(candidate.reference_start
+                    == target_center - candidate.template_length / 2U,
+                "variable TBS insert was not centered on its target");
+        saw_non_mean = saw_non_mean
+            || candidate.template_length != inserts.mean;
+    }
+    require(saw_non_mean,
+            "non-zero TBS insert SD produced only the mean length");
+
+    auto joined = catalog.sample(0U, seed, 0U, 37U);
+    const auto tail = catalog.sample(0U, seed, 37U, count - 37U);
+    joined.candidates.insert(
+        joined.candidates.end(),
+        tail.candidates.begin(),
+        tail.candidates.end());
+    joined.skipped_count += tail.skipped_count;
+    require(joined.skipped_count == all.skipped_count
+                && joined.candidates.size() == all.candidates.size(),
+            "variable TBS sampling counts changed across chunks");
+    for (std::size_t index = 0U; index < all.candidates.size(); ++index) {
+        const auto &left = all.candidates[index];
+        const auto &right = joined.candidates[index];
+        require(left.reference_start == right.reference_start
+                    && left.reference_end == right.reference_end
+                    && left.template_length == right.template_length
+                    && left.target_ordinal == right.target_ordinal,
+                "variable TBS sampling changed across chunks");
+    }
+}
+
 void test_target_score_sampling_is_exact_and_chunk_independent()
 {
     const std::vector<Target> targets = {
@@ -476,7 +539,7 @@ void test_normal_center_sampling_is_chunk_independent()
                 true,
                 0.0);
         },
-        "non-finite center standard deviation was accepted");
+        "non-finite center SD was accepted");
     require_error(
         [&] {
             (void)CandidateCatalog(
@@ -489,7 +552,7 @@ void test_normal_center_sampling_is_chunk_independent()
                 true,
                 0.0);
         },
-        "negative center standard deviation was accepted");
+        "negative center SD was accepted");
 
     const CandidateCatalog no_sequenceable_start(
         encode("NNNNNNNNNNNN"), targets, 0, 4.0, 5, 2, true, 0.0);
@@ -552,6 +615,28 @@ void test_diploid_tbs_centers_on_constructed_haplotypes()
                 && haplotype_1->reference_end == 9U
                 && haplotype_1->template_length == 5U,
             "TBS reference haplotype center moved beside an insertion");
+
+    const htsim::insert_length::Parameters inserts{3U, 5U, 7U, 1.5};
+    const DiploidCandidateCatalog variable(
+        contig,
+        variants,
+        targets,
+        0.0,
+        inserts,
+        2U,
+        true,
+        0.0);
+    const auto variable_batch = variable.sample(0U, 41U, 0U, 0U, 128U);
+    bool saw_non_mean = false;
+    for (const auto &candidate : variable_batch.candidates) {
+        require(candidate.template_length >= inserts.minimum
+                    && candidate.template_length <= inserts.maximum,
+                "diploid variable TBS insert left its configured bounds");
+        saw_non_mean = saw_non_mean
+            || candidate.template_length != inserts.mean;
+    }
+    require(saw_non_mean,
+            "diploid non-zero TBS insert SD produced only the mean length");
 }
 
 void test_deleted_tbs_center_removes_only_its_haplotype_bit()
@@ -751,6 +836,7 @@ int main()
         test_bed_rejections();
         test_fixed_center_candidates_and_ambiguity();
         test_sampling_is_chunk_independent();
+        test_variable_insert_sampling_is_chunk_independent();
         test_target_score_sampling_is_exact_and_chunk_independent();
         test_target_score_boundaries_fail_closed();
         test_normal_center_sampling_is_chunk_independent();

@@ -27,13 +27,13 @@ def base_config(technology="WGBS"):
         "technology": technology,
         "mutation": {},
         "seeds": {"mutation": "11", "phasing": "12", "methylation": "13"},
+        "reads": {"count": 2},
         "fragments": {
             "paired_end": False,
             "read_length_1": 4,
             "insert_min": 4,
             "insert_mean": 6,
             "insert_max": 10,
-            "count": 2,
         },
         "methylation": {
             "beta": {
@@ -60,7 +60,7 @@ def base_config(technology="WGBS"):
     elif technology in ("TBS", "WES", "TS"):
         config["tbs"] = {
             "bed": "targets.bed",
-            "fragment_center_stddev": 12.5,
+            "center_sd": 12.5,
         }
     if technology in ("WGS", "WES", "TS"):
         config["sequencing"]["conversion_rate"] = 0.0
@@ -114,11 +114,13 @@ class CoreArgvTests(unittest.TestCase):
             "--seed-meth",
             "13",
             "--protocol-batch-fragments",
-            "64",
+            "1024",
             "--reference",
             str((self.directory / "reference.fa").resolve()),
             "--technology",
             "WGBS",
+            "--directional",
+            "true",
             "--paired-end",
             "false",
             "--read-length-1",
@@ -136,7 +138,7 @@ class CoreArgvTests(unittest.TestCase):
             "--max-ambiguous-fraction",
             "0.05",
             "--chunk-size",
-            "10000",
+            "8192",
             "--core-workers",
             "1",
             "--coverage",
@@ -151,7 +153,7 @@ class CoreArgvTests(unittest.TestCase):
             "false",
             "--collect-non-cpg",
             "true",
-            "--cgmap-pool",
+            "--pool-meth",
             "false",
             "--update-variant-boundaries",
             "true",
@@ -170,6 +172,19 @@ class CoreArgvTests(unittest.TestCase):
         self.assertNotIn("--tbs-bed", observed)
         self.assertNotIn("--coverage-profile", observed)
 
+    def test_total_read_count_is_converted_to_internal_fragments(self):
+        paired_document = base_config()
+        paired_document["reads"] = {"count": 10}
+        paired_document["fragments"]["paired_end"] = True
+        paired_document["fragments"]["read_length_2"] = 4
+
+        argv = build_core_argv(
+            self.prepared(paired_document), RUN_ID, "htsim-core"
+        )
+
+        self.assertEqual(option_value(argv, "--fragments"), "5")
+        self.assertNotIn("--reads", argv)
+
     def test_details_policy_and_batch_size_are_runtime_options(self):
         prepared = self.prepared()
 
@@ -182,7 +197,7 @@ class CoreArgvTests(unittest.TestCase):
 
         self.assertNotIn("--protocol-major", argv)
         self.assertEqual(option_value(argv, "--emit-details"), "false")
-        self.assertEqual(option_value(argv, "--protocol-batch-fragments"), "64")
+        self.assertEqual(option_value(argv, "--protocol-batch-fragments"), "1024")
         self.assertNotIn("protocol", prepared.config.normalized)
 
         bounded = build_core_argv(
@@ -202,7 +217,7 @@ class CoreArgvTests(unittest.TestCase):
                         "htsim-core",
                         emit_details=emit_details,
                     )
-        for batch_fragments in (0, 65, True, "7"):
+        for batch_fragments in (0, 4097, True, "7"):
             with self.subTest(protocol_batch_fragments=batch_fragments):
                 with self.assertRaisesRegex(
                     CoreArgvError, "protocol_batch_fragments"
@@ -212,6 +227,30 @@ class CoreArgvTests(unittest.TestCase):
                         RUN_ID,
                         "htsim-core",
                         protocol_batch_fragments=batch_fragments,
+                    )
+
+    def test_methdb_sidecar_is_an_internal_runtime_option(self):
+        prepared = self.prepared()
+        argv = build_core_argv(
+            prepared,
+            RUN_ID,
+            "htsim-core",
+            methdb_output_path=Path("/tmp/truth.methdb"),
+        )
+        self.assertEqual(
+            option_value(argv, "--methdb-output"),
+            "/tmp/truth.methdb",
+        )
+        self.assertNotIn("methdb_output", prepared.config.normalized)
+
+        for invalid in ("", b"truth.methdb"):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(CoreArgvError, "methdb_output_path"):
+                    build_core_argv(
+                        prepared,
+                        RUN_ID,
+                        "htsim-core",
+                        methdb_output_path=invalid,
                     )
 
     def test_standard_technology_identity_reaches_the_core(self):
@@ -232,16 +271,17 @@ class CoreArgvTests(unittest.TestCase):
                     technology in ("WES", "TS"),
                 )
 
-    def test_core_worker_count_crosses_only_the_core_boundary(self):
+    def test_internal_core_worker_count_crosses_only_the_core_boundary(self):
         document = base_config()
-        document["execution"]["core_workers"] = 4
-        document["execution"]["workers"] = 12
+        document["execution"]["threads"] = 12
         prepared = self.prepared(document)
 
-        argv = build_core_argv(prepared, RUN_ID, "htsim-core")
+        argv = build_core_argv(
+            prepared, RUN_ID, "htsim-core", core_workers=4
+        )
 
         self.assertEqual(option_value(argv, "--core-workers"), "4")
-        self.assertNotIn("--workers", argv)
+        self.assertNotIn("--threads", argv)
 
     def test_tbs_profile_projects_all_core_inputs_and_hides_python_models(self):
         document = base_config("TBS")
@@ -253,8 +293,8 @@ class CoreArgvTests(unittest.TestCase):
             "insert_mean": 6,
             "insert_max": 10,
             "insert_sd": 2.5,
-            "depth": 3.25,
         }
+        document["reads"] = {"depth": 3.25}
         for filename in (
             "targets.bed",
             "sample; literal.vcf",
@@ -267,6 +307,7 @@ class CoreArgvTests(unittest.TestCase):
             "cgmap": "sample.cgmap",
             "asm": "sample.asm",
         }
+        document["mutation"]["rate"] = 0
         coverage_artifact = self.artifact("coverage.tsv")
         quality_artifact = self.artifact("quality.json")
         error_artifact = self.artifact("error.json")
@@ -287,6 +328,7 @@ class CoreArgvTests(unittest.TestCase):
         argv = build_core_argv(prepared, RUN_ID, "htsim-core")
 
         self.assertEqual(option_value(argv, "--technology"), "TBS")
+        self.assertEqual(option_value(argv, "--directional"), "true")
         self.assertEqual(option_value(argv, "--paired-end"), "true")
         self.assertEqual(option_value(argv, "--read-length-2"), "4")
         self.assertEqual(option_value(argv, "--depth"), "3.25")
@@ -296,7 +338,7 @@ class CoreArgvTests(unittest.TestCase):
             self.assertEqual(option_value(argv, "--" + name), str(role.path))
         tbs = prepared.file_for_role("input.tbs-bed")
         self.assertEqual(option_value(argv, "--tbs-bed"), str(tbs.path))
-        self.assertEqual(option_value(argv, "--tbs-center-stddev"), "12.5")
+        self.assertEqual(option_value(argv, "--tbs-center-sd"), "12.5")
         profile = prepared.file_for_role("model.coverage")
         self.assertEqual(option_value(argv, "--coverage-profile"), str(profile.path))
         self.assertNotIn("--coverage-profile-format", argv)
@@ -311,11 +353,9 @@ class CoreArgvTests(unittest.TestCase):
 
         python_only_options = {
             "--conversion-rate",
-            "--directional",
             "--quality",
             "--error",
-            "--workers",
-            "--max-in-flight-fragments",
+            "--threads",
             "--output",
             "--format",
         }
@@ -343,22 +383,42 @@ class CoreArgvTests(unittest.TestCase):
 
         for name in ("vcf", "bed_methyl", "asm_bed"):
             role = prepared.file_for_role("input." + name)
-            option = "--" + name.replace("_", "-")
+            option = (
+                "--bedmethyl"
+                if name == "bed_methyl"
+                else "--" + name.replace("_", "-")
+            )
             self.assertEqual(option_value(argv, option), str(role.path))
         self.assertNotIn("--cgmap", argv)
         self.assertNotIn("--asm", argv)
 
-    def test_rrbs_cut_sites_repeat_in_normalized_order(self):
+    def test_methbg_and_methbed_project_distinct_core_paths(self):
+        for input_name, filename in (
+            ("methbg", "levels.methbg"),
+            ("methbed", "levels.methbed"),
+        ):
+            with self.subTest(input_name=input_name):
+                (self.directory / filename).write_text("fixture\n", encoding="utf-8")
+                document = base_config()
+                document["inputs"] = {input_name: filename}
+                prepared = self.prepared(document)
+
+                argv = build_core_argv(prepared, RUN_ID, "htsim-core")
+
+                role = prepared.file_for_role("input." + input_name)
+                self.assertEqual(
+                    option_value(argv, "--" + input_name), str(role.path)
+                )
+
+    def test_rrbs_cut_sites_use_one_comma_separated_core_option(self):
         prepared = self.prepared(base_config("RRBS"))
 
         argv = build_core_argv(prepared, RUN_ID, "htsim-core")
 
-        sites = [
-            argv[index + 1]
-            for index, argument in enumerate(argv[:-1])
-            if argument == "--rrbs-cut-site"
-        ]
-        self.assertEqual(sites, ["C|CGG", "CCTN|AGG"])
+        self.assertEqual(argv.count("--rrbs-cut-site"), 1)
+        self.assertEqual(
+            option_value(argv, "--rrbs-cut-site"), "C|CGG,CCTN|AGG"
+        )
         self.assertNotIn("--tbs-bed", argv)
 
     def test_rrbs_candidate_profile_projects_path_without_hash_option(self):
@@ -406,8 +466,7 @@ class CoreArgvTests(unittest.TestCase):
 
     def test_json_number_and_boolean_spellings_are_stable(self):
         document = base_config()
-        document["fragments"].pop("count")
-        document["fragments"]["depth"] = 2.5
+        document["reads"] = {"depth": 2.5}
         document["fragments"]["insert_sd"] = -0.0
         document["mutation"]["rate"] = 1e-7
         document["mutation"]["indel_fraction"] = 1.0

@@ -61,7 +61,7 @@ bsreadsim = [
   "run-config.schema.json",
   "_licenses/*.txt",
   "data/registry.json",
-  "data/examples/*",
+  "data/example/*",
   "data/models/**/*",
   "data/profiles/**/*",
   "data/licenses/**/*",

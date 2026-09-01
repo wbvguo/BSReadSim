@@ -29,7 +29,7 @@ class ProcessConfig:
     conversion_rate: float
     quality: QualityPolicy
     error: ErrorPolicy
-    methylation_model: MethylationStateModel = field(
+    meth_model: MethylationStateModel = field(
         default_factory=BernoulliStateModel
     )
     bisulfite: bool = True
@@ -45,7 +45,7 @@ class ProcessConfig:
             raise ProcessError("quality policy is outside the released contract")
         if not isinstance(self.error, (UniformError, QualityConfusionModel)):
             raise ProcessError("error policy is outside the released contract")
-        if not isinstance(self.methylation_model, MethylationStateModel):
+        if not isinstance(self.meth_model, MethylationStateModel):
             raise ProcessError("methylation model is outside the released contract")
 
 

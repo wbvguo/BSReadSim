@@ -16,13 +16,20 @@ from .. import __version__
 from ..output.bam import (
     ANNOTATION_FRAGMENT_REALIZATION_SCHEMA,
     ANNOTATION_FRAGMENT_SUMMARY_SCHEMA,
+    ANNOTATION_GENOME_CONVERSION_SCHEMA,
+    ANNOTATION_LIBRARY_STRAND_SCHEMA,
+    ANNOTATION_READ_CONVERSION_SCHEMA,
     ANNOTATION_READ_SUMMARY_SCHEMA,
     ANNOTATION_STATE_SCHEMA,
     BAM_CONTRACT,
     BAM_MAPQ,
 )
 from ..output import OutputFileSummary, OutputSummary
-from .prepare import FileDigest, PreparedRun
+from .prepare import (
+    FileDigest,
+    PreparedRun,
+    SEED_DERIVATION_CONTRACT,
+)
 from ..htsim.protocol import (
     AmbiguityPolicy,
     BaseEncoding,
@@ -39,7 +46,7 @@ from .invocation import FullCommandError, build_full_run_argv
 MANIFEST_VERSION = 2
 COORDINATE_CONVENTION = "0-based-half-open"
 METHDB_MAGIC = b"methdb"
-METHDB_VERSION = 1
+METHDB_VERSION = 2
 
 
 class ManifestError(ValueError):
@@ -95,6 +102,18 @@ def build_complete_manifest(
             "requested": "disabled",
         }
     )
+    library_orientation_model = (
+        {
+            "effective": (
+                "directional-ot-ob-equal"
+                if normalized["sequencing"]["directional"]
+                else "nondirectional-ot-ob-ctot-ctob-equal"
+            ),
+            "rng_stage": "library-orientation",
+        }
+        if bisulfite
+        else {"effective": "disabled"}
+    )
     fragments = normalized["fragments"]
     read_base_count = trailer.fragment_count * (
         fragments["read_length_1"]
@@ -116,8 +135,12 @@ def build_complete_manifest(
         "contracts": {
             "read_name": READ_NAME_CONTRACT,
             "rng": RNG_CONTRACT,
+            "seed_derivation": SEED_DERIVATION_CONTRACT,
         },
-        "models": {"methylation_state": methylation_state_model},
+        "models": {
+            "library_orientation": library_orientation_model,
+            "methylation_state": methylation_state_model,
+        },
         "protocol_version": PROTOCOL_VERSION,
         "randomness": {
             "master_seed": str(config.master_seed),
@@ -130,7 +153,7 @@ def build_complete_manifest(
             "numerical_tolerance_exceptions": [],
             "scope": (
                 "same released core/Python versions, effective config, "
-                "input/model digests, and master seed"
+                "input/model digests, and resolved seeds"
             ),
         },
         "software_versions": {
@@ -177,6 +200,11 @@ def build_complete_manifest(
     if normalized["output"]["format"] == "bam":
         fragment_summary = bool(normalized["output"]["fragment_summary"])
         fragment_realization = bool(normalized["output"]["fragment_realization"])
+        bisulfite_tags = header.technology in (
+            Technology.WGBS,
+            Technology.RRBS,
+            Technology.TBS,
+        )
         details["alignment"] = {
             "coordinate_convention": COORDINATE_CONVENTION,
             "format": "BAM",
@@ -187,6 +215,24 @@ def build_complete_manifest(
             "fastq_sidecars": False,
             "fastq_recovery": "samtools fastq",
             "tags": {
+                "XG": {
+                    "required": bisulfite_tags,
+                    "schema": ANNOTATION_GENOME_CONVERSION_SCHEMA,
+                    "scope": "bisulfite-genome-conversion",
+                    "values": ["CT", "GA"],
+                },
+                "XR": {
+                    "required": bisulfite_tags,
+                    "schema": ANNOTATION_READ_CONVERSION_SCHEMA,
+                    "scope": "bisulfite-read-conversion",
+                    "values": ["CT", "GA"],
+                },
+                "YS": {
+                    "required": bisulfite_tags,
+                    "schema": ANNOTATION_LIBRARY_STRAND_SCHEMA,
+                    "scope": "bisulfite-library-strand",
+                    "values": ["OT", "OB", "CTOT", "CTOB"],
+                },
                 "zx": {
                     "required": fragment_realization,
                     "schema": ANNOTATION_FRAGMENT_REALIZATION_SCHEMA,
@@ -667,6 +713,8 @@ def _input_format(role: str) -> str:
         "input.vcf": "vcf",
         "input.cgmap": "cgmap",
         "input.bed_methyl": "bedMethyl",
+        "input.methbg": "MethBG",
+        "input.methbed": "MethBED",
         "input.asm": "asm",
         "input.asm_bed": "asm-bed",
         "input.tbs-bed": "bed",

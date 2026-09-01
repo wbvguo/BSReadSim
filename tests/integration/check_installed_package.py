@@ -23,7 +23,7 @@ def _baseline_arguments(output_directory: str) -> list[str]:
         "-o",
         output_directory,
         "-n",
-        "4",
+        "8",
         "--seed",
         "17",
         "--mutation-rate",
@@ -48,13 +48,11 @@ def _baseline_arguments(output_directory: str) -> list[str]:
         "37",
         "--error-rate",
         "0.01",
+        "--sampling",
+        "gc",
         "--gc-profile",
         "coverage.tsv",
-        "--workers",
-        "2",
-        "--chunk-size",
-        "2",
-        "--max-in-flight-fragments",
+        "--threads",
         "2",
         "--prefix",
         "sample",
@@ -142,7 +140,7 @@ def main() -> int:
             raise SystemExit("installed resource copy failed: {!r}".format(copied.stderr))
         if Path(copied.stdout.strip()) != bundled_reference:
             raise SystemExit("installed resource copy reported the wrong path")
-        if not bundled_reference.read_bytes().startswith(b">bsreadsim_test\n"):
+        if not bundled_reference.read_bytes().startswith(b">chr10\n"):
             raise SystemExit("installed wheel lost the bundled test FASTA")
 
         (directory / "tiny.fa").write_bytes(b">chr1\nACGTCGTAA\n")

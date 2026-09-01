@@ -615,7 +615,7 @@ validate_details(
             PyErr_SetString(PyExc_ValueError, "variant ID must not be empty");
             goto done;
         }
-        if (source < 1 || source > 2) {
+        if (source < 1 || source > 3) {
             PyErr_SetString(PyExc_ValueError, "variant source is invalid");
             goto done;
         }

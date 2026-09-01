@@ -44,7 +44,7 @@ def _run(core: Path, root: Path, name: str, technology_arguments):
         "-o",
         str(output),
         "-n",
-        "12",
+        "512",
         "--seed",
         "20260813",
         "--read-length",
@@ -57,11 +57,7 @@ def _run(core: Path, root: Path, name: str, technology_arguments):
         "35",
         "--error-rate",
         "0",
-        "--workers",
-        "2",
-        "--chunk-size",
-        "5",
-        "--max-in-flight-fragments",
+        "--threads",
         "4",
         "--prefix",
         "sample",
@@ -95,7 +91,7 @@ def _run(core: Path, root: Path, name: str, technology_arguments):
     if {item["role"] for item in manifest["outputs"]} != {"bam"}:
         raise SystemExit("{} emitted the wrong artifact roles".format(name))
     _, _, records, _ = _parse_bam(output / "sample.bam")
-    if len(records) != 24:
+    if len(records) != 512:
         raise SystemExit("{} emitted the wrong BAM record count".format(name))
     return manifest, records
 
@@ -115,7 +111,12 @@ def _validate_standard(
         raise SystemExit("{} manifest enabled methylation".format(name))
     if effective["sequencing"]["conversion_rate"] != 0:
         raise SystemExit("{} retained bisulfite chemistry".format(name))
+    tag_policy = manifest["details"]["alignment"]["tags"]
+    if any(tag_policy[tag]["required"] for tag in ("XG", "XR", "YS")):
+        raise SystemExit("{} required bisulfite-only BAM tags".format(name))
     for record in records:
+        if any(tag in record["aux"] for tag in ("XG", "XR", "YS")):
+            raise SystemExit("{} emitted bisulfite-only BAM tags".format(name))
         summary = record["aux"]["zf"][1]
         if ((summary[0] >> 4) & 0x7) != 2 or any(summary[1:9]):
             raise SystemExit("{} emitted bisulfite annotations".format(name))
@@ -163,12 +164,18 @@ def main(argv) -> int:
                 "0",
             ),
         )
+        rrbs_modes = set()
         for record in rrbs[::2]:
             contig, left, right, _ = _qname_envelope(record["query_name"])
             if contig != "chrMock" or right - left + 1 != 8:
                 raise SystemExit("RRBS emitted a non-MspI fragment envelope")
-            if (record["aux"]["zf"][1][0] >> 4) & 0x7:
-                raise SystemExit("RRBS changed its directional conversion mode")
+            rrbs_modes.add((record["aux"]["zf"][1][0] >> 4) & 0x7)
+        if rrbs_modes != {0, 1}:
+            raise SystemExit(
+                "directional RRBS omitted Watson or Crick fragments: {!r}".format(
+                    rrbs_modes
+                )
+            )
 
         _, tbs = _run(
             core,
@@ -176,11 +183,11 @@ def main(argv) -> int:
             "tbs",
             (
                 "tbs",
-                "--targets",
-                str(root / "mock-targets.bed"),
                 "--sampling",
                 "score",
-                "--fragment-center-stddev",
+                "--targets",
+                str(root / "mock-targets.bed"),
+                "--center-sd",
                 "0",
                 "--insert-mean",
                 "12",
@@ -222,7 +229,7 @@ def main(argv) -> int:
                 "wes",
                 "--targets",
                 str(root / "mock-targets.bed"),
-                "--fragment-center-stddev",
+                "--center-sd",
                 "0",
                 "--insert-mean",
                 "12",
@@ -233,7 +240,7 @@ def main(argv) -> int:
                 "ts",
                 "--targets",
                 str(root / "mock-targets.bed"),
-                "--fragment-center-stddev",
+                "--center-sd",
                 "0",
                 "--insert-mean",
                 "12",

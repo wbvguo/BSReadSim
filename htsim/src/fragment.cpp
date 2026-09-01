@@ -198,26 +198,26 @@ std::uint32_t fragments(
         throw DepthCountError("depth conversion requires positive read length");
     }
 
-    const std::uint64_t sequenced_bases_per_fragment =
-        static_cast<std::uint64_t>(read_length)
-        * (paired_end ? UINT64_C(2) : UINT64_C(1));
+    const std::uint64_t reads_per_fragment =
+        paired_end ? UINT64_C(2) : UINT64_C(1);
     const double numerator =
         static_cast<double>(effective_reference_bases) * depth;
-    const double raw_count = numerator
-        / static_cast<double>(sequenced_bases_per_fragment);
-    if (!std::isfinite(raw_count)) {
-        throw DepthCountError("depth-derived read-pair count is not finite");
+    const double raw_reads = numerator / static_cast<double>(read_length);
+    if (!std::isfinite(raw_reads)) {
+        throw DepthCountError("depth-derived read count is not finite");
     }
-    const double floored = std::ceil(raw_count);
-    if (floored < 1.0) {
+    const double raw_fragments =
+        raw_reads / static_cast<double>(reads_per_fragment);
+    const double resolved_fragments = std::ceil(raw_fragments);
+    if (resolved_fragments < 1.0) {
         throw DepthCountError(
-            "depth derives zero read pairs for the effective reference");
+            "depth derives zero fragments for the effective reference");
     }
-    if (floored
+    if (resolved_fragments
         > static_cast<double>(std::numeric_limits<std::uint32_t>::max())) {
-        throw DepthCountError("depth-derived read-pair count exceeds uint32");
+        throw DepthCountError("depth-derived fragment count exceeds uint32");
     }
-    return static_cast<std::uint32_t>(floored);
+    return static_cast<std::uint32_t>(resolved_fragments);
 }
 
 } // namespace htsim::depth_count
@@ -249,13 +249,20 @@ Sampler::Sampler(
 
 std::uint32_t Sampler::sample(std::uint64_t candidate_ordinal) const
 {
+    return sample(candidate_ordinal, UINT64_C(0));
+}
+
+std::uint32_t Sampler::sample(
+    std::uint64_t candidate_ordinal,
+    std::uint64_t local_index) const
+{
     if (parameters_.standard_deviation == 0.0
         || parameters_.minimum == parameters_.maximum) {
         return parameters_.mean;
     }
 
     const double normal = normal_sampler::standard_normal(
-        key_, candidate_ordinal, UINT64_C(0));
+        key_, candidate_ordinal, local_index);
     if (normal == 0.0) {return parameters_.mean;}
 
     const std::int64_t lower_delta =
@@ -679,7 +686,8 @@ model::Fragment build_fragment(
     std::uint8_t haplotype,
     model::CaptureStrand capture_strand,
     const ReadLayout &layout,
-    FragmentDetail detail)
+    FragmentDetail detail,
+    bool reverse_molecule)
 {
     validate_layout(layout);
     require_payload_fits_protocol(layout);
@@ -732,7 +740,7 @@ model::Fragment build_fragment(
             site->context,
             site->methylation_source,
             model::MethylationAllele::shared,
-            site->methylation_probability,
+            methdb::probability_from_u16(site->probability_u16),
         });
     }
 
@@ -753,11 +761,19 @@ model::Fragment build_fragment(
                   template_start,
                   template_end));
     };
-    append_mate(0U, false, 0U, layout.read_length);
-    if (layout.paired_end) {
-        const std::uint32_t second_start =
-            layout.insert_length - layout.read_length;
-        append_mate(1U, true, second_start, layout.insert_length);
+    const std::uint32_t template_length = static_cast<std::uint32_t>(
+        fragment.template_bases.size());
+    const std::uint32_t reverse_start = template_length - layout.read_length;
+    if (reverse_molecule) {
+        append_mate(0U, true, reverse_start, template_length);
+        if (layout.paired_end) {
+            append_mate(1U, false, 0U, layout.read_length);
+        }
+    } else {
+        append_mate(0U, false, 0U, layout.read_length);
+        if (layout.paired_end) {
+            append_mate(1U, true, reverse_start, template_length);
+        }
     }
     return fragment;
 }
@@ -769,7 +785,8 @@ model::Fragment build_fragment(
     std::uint64_t fragment_ordinal,
     model::CaptureStrand capture_strand,
     const ReadLayout &layout,
-    FragmentDetail detail)
+    FragmentDetail detail,
+    bool reverse_molecule)
 {
     validate_capture_strand(capture_strand);
     require_payload_fits_protocol(projection, layout);
@@ -809,13 +826,17 @@ model::Fragment build_fragment(
                   template_start,
                   template_end));
     };
-    append_mate(0U, false, 0U, layout.read_length);
-    if (layout.paired_end) {
-        append_mate(
-            1U,
-            true,
-            template_length - layout.read_length,
-            template_length);
+    const std::uint32_t reverse_start = template_length - layout.read_length;
+    if (reverse_molecule) {
+        append_mate(0U, true, reverse_start, template_length);
+        if (layout.paired_end) {
+            append_mate(1U, false, 0U, layout.read_length);
+        }
+    } else {
+        append_mate(0U, false, 0U, layout.read_length);
+        if (layout.paired_end) {
+            append_mate(1U, true, reverse_start, template_length);
+        }
     }
     return fragment;
 }

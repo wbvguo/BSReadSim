@@ -43,7 +43,7 @@ struct BetaShape {
 struct CoreConfig {
     // Transport details are execution metadata, not scientific configuration.
     bool emit_details = false;
-    std::uint32_t protocol_batch_fragments = 64;
+    std::uint32_t protocol_batch_fragments = 1024;
     std::string run_id;
     crypto::Sha256Digest normalized_config_sha256 = {};
     std::uint64_t master_seed = 0;
@@ -54,11 +54,17 @@ struct CoreConfig {
     std::optional<std::string> vcf_path;
     std::optional<std::string> cgmap_path;
     std::optional<std::string> bed_methyl_path;
+    std::optional<std::string> methbg_path;
+    std::optional<std::string> methbed_path;
     std::optional<std::string> methdb_path;
+    // Internal sidecar destination used by the Python transaction when a run
+    // requests --save-methdb. It is not scientific configuration.
+    std::optional<std::string> methdb_output_path;
     std::optional<std::string> asm_path;
     std::optional<std::string> asm_bed_path;
 
     Technology technology = Technology::wgbs;
+    bool directional = true;
     bool paired_end = false;
     std::uint32_t read_length_1 = 0;
     std::optional<std::uint32_t> read_length_2;
@@ -91,7 +97,7 @@ struct CoreConfig {
     // matching.
     std::optional<std::string> rrbs_candidate_bed_path;
     std::optional<std::string> tbs_bed_path;
-    std::optional<double> tbs_center_stddev;
+    std::optional<double> tbs_center_sd;
 };
 
 // One semantic boundary is shared by argv parsing and direct generator calls.
@@ -133,7 +139,7 @@ void generate_rrbs_candidate_bed(
 
 // Serialize the exact normalized methylation probability catalog. The
 // snapshot is independent of fragment/state/conversion/sequencing draws.
-void generate_methdb_catalog(
+void build_methdb_snapshot(
     const CoreConfig &config,
     std::ostream &sink);
 

@@ -134,14 +134,14 @@ def export_rrbs_catalog(
     )
 
 
-def export_methdb_catalog(
+def build_methdb_snapshot(
     document: Mapping[str, object],
     output_path: PathLike,
     *,
     base_directory: PathLike = ".",
     core_executable: PathLike | None = None,
 ) -> Path:
-    """Export the exact fixed site-probability catalog used by a run."""
+    """Build one canonical MethDB snapshot from normalized inputs."""
 
     loaded = normalize_run_config(document, base_directory)
     if "methdb" in loaded.normalized["inputs"]:
@@ -150,7 +150,7 @@ def export_methdb_catalog(
     return _export_catalog(
         prepare_run(effective),
         output_path,
-        subcommand="methdb-catalog",
+        subcommand="methdb-build",
         label="MethDB",
         core_executable=core_executable,
     )
@@ -163,7 +163,7 @@ def export_methdb_bed(
     compressed: bool = True,
     core_executable: PathLike | None = None,
 ) -> Path:
-    """Decode one MethDB snapshot into a new human-readable extended BED."""
+    """Decode one MethDB snapshot into a human-readable extended BED."""
 
     try:
         executable = resolve_core_executable(core_executable)
@@ -383,7 +383,7 @@ def _export_catalog(
 __all__ = [
     "CatalogError",
     "export_methdb_bed",
-    "export_methdb_catalog",
+    "build_methdb_snapshot",
     "export_rrbs_catalog",
     "export_variant_catalog",
 ]

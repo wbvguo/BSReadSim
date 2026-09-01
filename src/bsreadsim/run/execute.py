@@ -75,7 +75,7 @@ from .prepare import (
     prepare_run,
     snapshot_prepared_file,
 )
-from .catalog import CatalogError, export_methdb_catalog, export_variant_catalog
+from .catalog import CatalogError, export_variant_catalog
 from ..process.batch import FragmentSummary
 from ..htsim.protocol import (
     Header,
@@ -98,8 +98,9 @@ from ..output.bam import build_sam_header
 
 PathLike = str | os.PathLike
 
-_PROCESS_BATCH_MAX_FRAGMENTS = 64
-_ANNOTATED_BATCH_FRAGMENTS = 8
+_PROCESS_BATCH_TARGET_FRAGMENTS = 1024
+_ANNOTATED_BATCH_FRAGMENTS = 128
+_CORE_CHUNK_FRAGMENTS = 8192
 _PROCESS_RESULT_POLL_SECONDS = 0.05
 
 class PipelineError(RuntimeError):
@@ -114,6 +115,51 @@ class RunResult:
     manifest_path: Path
     manifest: CompleteManifest
     outputs: OutputSummary
+
+
+@dataclass(frozen=True)
+class _ExecutionPlan:
+    """Internal stage allocation derived from one public thread budget."""
+
+    process_workers: int
+    use_process_pool: bool
+    core_workers: int
+    bam_compression_threads: int
+    protocol_batch_fragments: int
+    max_in_flight_fragments: int
+
+
+def _build_execution_plan(threads: int, output_format: str) -> _ExecutionPlan:
+    if isinstance(threads, bool) or not isinstance(threads, int) or threads < 1:
+        raise PipelineError("execution.threads must be a positive integer")
+    if output_format not in ("fastq", "fastq.gz", "bam"):
+        raise PipelineError("output format is outside the execution planner")
+
+    bam_threads = (
+        min(4, threads // 6)
+        if output_format == "bam" and threads >= 6
+        else 0
+    )
+    available = max(
+        1,
+        threads - (1 if output_format == "bam" else 0) - bam_threads,
+    )
+    core_workers = max(1, (available + 1) // 2)
+    process_workers = max(1, available - core_workers)
+    use_process_pool = threads > (2 if output_format == "bam" else 1)
+    protocol_batch_fragments = _PROCESS_BATCH_TARGET_FRAGMENTS
+    max_in_flight = max(
+        4096,
+        process_workers * protocol_batch_fragments * 2,
+    )
+    return _ExecutionPlan(
+        process_workers=process_workers,
+        use_process_pool=use_process_pool,
+        core_workers=core_workers,
+        bam_compression_threads=bam_threads,
+        protocol_batch_fragments=protocol_batch_fragments,
+        max_in_flight_fragments=max_in_flight,
+    )
 
 
 @dataclass(frozen=True)
@@ -333,6 +379,7 @@ def _write_shared_formatted_batch(
             read2,
             alignment_record_lengths=result.alignment_record_lengths,
             alignment=alignment,
+            precompressed_fastq=result.precompressed_fastq,
         )
     finally:
         for view in views:
@@ -392,23 +439,16 @@ def run_prepared(
     fragments = _mapping(normalized, "fragments")
     execution = _mapping(normalized, "execution")
     output = _mapping(normalized, "output")
+    execution_plan = _build_execution_plan(
+        execution["threads"],
+        output["format"],
+    )
     include_alignment = output["format"] == "bam"
     include_fragment_summary = bool(output["fragment_summary"])
     include_fragment_realization = bool(output["fragment_realization"])
     include_details = include_alignment
     columnar_details = include_alignment and supports_common_processing(process_config)
-    argv = build_core_argv(
-        prepared,
-        effective_run_id,
-        executable,
-        emit_details=include_details,
-        protocol_batch_fragments=_protocol_batch_fragment_limit(
-            emit_details=include_details,
-            max_in_flight=execution["max_in_flight_fragments"],
-            materializes_detail_objects=not columnar_details,
-        ),
-    )
-    if execution["workers"] > 1:
+    if execution_plan.use_process_pool:
         _require_picklable_process_state(process_config)
 
     output_directory = Path(output["directory"])
@@ -423,6 +463,26 @@ def run_prepared(
         prefix=".{}.truth-".format(output["prefix"]),
         dir=str(output_directory),
     ) as truth_directory:
+        inputs = _mapping(normalized, "inputs")
+        generated_methdb_path = (
+            Path(truth_directory) / "truth.methdb"
+            if output["save_methdb"] and "methdb" not in inputs
+            else None
+        )
+        argv = build_core_argv(
+            prepared,
+            effective_run_id,
+            executable,
+            emit_details=include_details,
+            protocol_batch_fragments=_protocol_batch_fragment_limit(
+                emit_details=include_details,
+                max_in_flight=execution_plan.max_in_flight_fragments,
+                materializes_detail_objects=not columnar_details,
+            ),
+            chunk_size=_CORE_CHUNK_FRAGMENTS,
+            core_workers=execution_plan.core_workers,
+            methdb_output_path=generated_methdb_path,
+        )
         truth_artifacts = _build_truth_artifacts(
             prepared,
             output,
@@ -450,6 +510,7 @@ def run_prepared(
                         str(executable),
                         "--sam-to-bam",
                         str(output["gzip_level"]),
+                        str(execution_plan.bam_compression_threads),
                     ),
                     sam_header=build_sam_header(
                         core.header,
@@ -472,10 +533,16 @@ def run_prepared(
                 paired_end=fragments["paired_end"],
                 format=output["format"],
                 gzip_level=output["gzip_level"],
+                precompressed_fastq=output["format"] == "fastq.gz",
                 bam_config=bam_config,
             )
             with OutputSession(output_config) as transaction:
-                if execution["workers"] == 1:
+                fastq_gzip_level = (
+                    output["gzip_level"]
+                    if output["format"] == "fastq.gz"
+                    else None
+                )
+                if not execution_plan.use_process_pool:
                     _consume_batches_inline(
                         core,
                         core.header,
@@ -486,7 +553,8 @@ def run_prepared(
                         include_alignment=include_alignment,
                         include_fragment_summary=include_fragment_summary,
                         include_fragment_realization=include_fragment_realization,
-                        max_in_flight=execution["max_in_flight_fragments"],
+                        max_in_flight=execution_plan.max_in_flight_fragments,
+                        fastq_gzip_level=fastq_gzip_level,
                     )
                 else:
                     _consume_batches(
@@ -494,13 +562,14 @@ def run_prepared(
                         core.header,
                         process_config,
                         transaction,
-                        workers=execution["workers"],
-                        max_in_flight=execution["max_in_flight_fragments"],
+                        workers=execution_plan.process_workers,
+                        max_in_flight=execution_plan.max_in_flight_fragments,
                         paired_end=fragments["paired_end"],
                         include_details=include_details,
                         include_alignment=include_alignment,
                         include_fragment_summary=include_fragment_summary,
                         include_fragment_realization=include_fragment_realization,
+                        fastq_gzip_level=fastq_gzip_level,
                     )
                 _add_truth_artifacts(
                     transaction,
@@ -546,13 +615,6 @@ def _build_truth_artifacts(
                 shutil.copyfile(identity.path, destination)
                 if _sha256_file(destination) != identity.sha256:
                     raise PipelineError("MethDB input changed while staging truth")
-            else:
-                export_methdb_catalog(
-                    normalized,
-                    destination,
-                    base_directory=Path.cwd(),
-                    core_executable=executable,
-                )
             artifacts.append(_TruthArtifact("truth.methdb", destination, None))
 
         if output["save_vcf"]:
@@ -632,6 +694,7 @@ def _consume_batches_inline(
     include_fragment_summary: bool,
     include_fragment_realization: bool,
     max_in_flight: int,
+    fastq_gzip_level: int | None,
 ) -> None:
     """Process authenticated batches inline through one bounded slot."""
 
@@ -662,6 +725,7 @@ def _consume_batches_inline(
                         include_alignment=include_alignment,
                         include_fragment_summary=include_fragment_summary,
                         include_fragment_realization=include_fragment_realization,
+                        fastq_gzip_level=fastq_gzip_level,
                     )
                 finally:
                     buffer.release()
@@ -700,6 +764,7 @@ def _consume_batches(
     include_alignment: bool,
     include_fragment_summary: bool,
     include_fragment_realization: bool,
+    fastq_gzip_level: int | None,
 ) -> None:
     """Dispatch whole frame payloads through ordered shared-memory slots."""
 
@@ -724,6 +789,7 @@ def _consume_batches(
                 include_alignment,
                 include_fragment_summary,
                 include_fragment_realization,
+                fastq_gzip_level,
             ),
         )
         with _AsyncFragmentWriter(output, min(slot_count, 4)) as writer:
@@ -811,7 +877,7 @@ def _protocol_batch_fragment_limit(
 ) -> int:
     """Bound detailed object lifetimes without shrinking columnar batches."""
 
-    maximum = min(_PROCESS_BATCH_MAX_FRAGMENTS, max_in_flight)
+    maximum = min(_PROCESS_BATCH_TARGET_FRAGMENTS, max_in_flight)
     if emit_details and materializes_detail_objects:
         return min(_ANNOTATED_BATCH_FRAGMENTS, maximum)
     return maximum
@@ -906,6 +972,8 @@ def _validate_process_batch_result(
         raise PipelineError("process worker changed a batch ordinal")
     if len(result.record_lengths) != expected_count:
         raise PipelineError("process worker changed a batch fragment count")
+    if not isinstance(result.precompressed_fastq, bool):
+        raise PipelineError("process worker returned an invalid FASTQ compression flag")
     if any(
         not isinstance(lengths, tuple)
         or len(lengths) != 2
@@ -1082,11 +1150,12 @@ def _expected_skipped_fragment_count(
     fragments = _mapping(config, "fragments")
     if config["technology"] in ("WGBS", "WGS") and _uses_variable_insert(fragments):
         return None
-    if (
-        config["technology"] in ("TBS", "WES", "TS")
-        and _mapping(config, "tbs")["fragment_center_stddev"] > 0
-    ):
-        return None
+    if config["technology"] in ("TBS", "WES", "TS"):
+        if (
+            _uses_variable_insert(fragments)
+            or _mapping(config, "tbs")["center_sd"] > 0
+        ):
+            return None
     return 0
 
 
@@ -1103,6 +1172,8 @@ def _require_released_capabilities(config: Mapping[str, object]) -> None:
         "vcf",
         "cgmap",
         "bed_methyl",
+        "methbg",
+        "methbed",
         "methdb",
         "asm",
         "asm_bed",
@@ -1122,13 +1193,17 @@ def _require_released_capabilities(config: Mapping[str, object]) -> None:
                     ", ".join(methylation_inputs)
                 )
             )
-    if ("asm" in inputs or "asm_bed" in inputs) and "vcf" not in inputs:
-        raise PipelineError("ASM generation requires a VCF input")
     mutation = _mapping(config, "mutation")
     coverage = _mapping(config, "coverage")
     if mutation["rate"] != 0 and "vcf" in inputs:
         raise PipelineError(
             "VCF and de novo mutation generation are mutually exclusive"
+        )
+    if mutation["rate"] != 0 and (
+        "asm" in inputs or "asm_bed" in inputs
+    ):
+        raise PipelineError(
+            "ASM and de novo mutation generation are mutually exclusive"
         )
     if coverage["kind"] == "profile":
         if "artifact" in coverage:
@@ -1163,32 +1238,32 @@ def _require_released_capabilities(config: Mapping[str, object]) -> None:
     elif coverage["kind"] != "uniform":
         raise PipelineError("coverage kind is outside the released contract")
 
+    reads = _mapping(config, "reads")
     fragments = _mapping(config, "fragments")
-    has_depth = "depth" in fragments
-    has_count = "count" in fragments
+    has_depth = "depth" in reads
+    has_count = "count" in reads
     if has_depth == has_count:
         raise PipelineError(
-            "exactly one of fragments.depth and fragments.count is required"
-        )
-    variable_insert = _uses_variable_insert(fragments)
-    if targeted and variable_insert:
-        raise PipelineError(
-            "the TBS baseline requires --insert-sd 0; WES and TS use the "
-            "same targeted constraint"
+            "exactly one of reads.depth and reads.count is required"
         )
     if targeted:
         tbs = _mapping(config, "tbs")
-        if tbs["fragment_center_stddev"] < 0:
+        if tbs["center_sd"] < 0:
             raise PipelineError(
-                "TBS fragment_center_stddev must be non-negative"
+                "TBS center SD must be non-negative"
             )
 
     methylation = _mapping(config, "methylation")
-    if methylation["cgmap_pool"] and "methdb" not in inputs and not (
-        "cgmap" in inputs or "bed_methyl" in inputs
+    if "methdb" in inputs and (
+        "vcf" in inputs or mutation["rate"] != 0
     ):
         raise PipelineError(
-            "cgmap_pool=true requires a CGmap or bedMethyl input"
+            "MethDB embeds variants and forbids external variant generation"
+        )
+    poolable_profiles = {"cgmap", "bed_methyl", "methbg", "methbed"}
+    if methylation["cgmap_pool"] and not (set(inputs) & poolable_profiles):
+        raise PipelineError(
+            "--pool-meth requires a text methylation profile"
         )
     if bisulfite and (
         "vcf" in inputs or mutation["rate"] != 0
@@ -1272,7 +1347,7 @@ def _build_process_config(prepared: PreparedRun) -> ProcessConfig:
             quality=quality,
             error=error,
             bisulfite=normalized["technology"] in ("WGBS", "RRBS", "TBS"),
-            methylation_model=BernoulliStateModel(),
+            meth_model=BernoulliStateModel(),
         )
     except (PreparationError, SequencingModelError, ProcessError) as error_value:
         raise PipelineError(

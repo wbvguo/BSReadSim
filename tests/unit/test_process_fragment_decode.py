@@ -16,8 +16,10 @@ from bsreadsim.output.fastq import (
 )
 from bsreadsim.htsim.protocol import (
     ProtocolError,
+    VariantSourceCode,
     decode_batch_payload,
 )
+from bsreadsim.process.batch import VariantSource
 from tests.helpers.stream_support import encode_stream, read_stream
 from bsreadsim.process.fragment import (
     decode_common_numpy_batch,
@@ -55,6 +57,27 @@ class ProtocolTypedAdapterTests(unittest.TestCase):
             ((1, 0), (2, 1)),
         )
         self.assertEqual(fragments[2].variants[0].alt_bases, b"")
+
+    def test_asm_variant_source_reconstructs_the_scientific_model(self) -> None:
+        source = make_full_annotation_batch()
+        details = replace(
+            source.details,
+            variant_sources=(
+                VariantSourceCode.VCF,
+                VariantSourceCode.VCF,
+                VariantSourceCode.ASM,
+            ),
+        )
+        batch = read_stream(
+            encode_stream(
+                self.header,
+                (replace(source, details=details),),
+            )
+        ).batches[0]
+
+        fragments = decode_fragments(batch, self.header)
+
+        self.assertIs(fragments[2].variants[0].source, VariantSource.ASM)
 
     def test_fastq_only_columns_build_a_compact_processing_model(self) -> None:
         without_annotations_header = replace(self.header, has_details=False)

@@ -1,9 +1,9 @@
 """Side-effect-limited preparation of one reproducible simulation run.
 
 This component sits between schema normalization and process launch.  It owns
-materializing an omitted master seed and hashing every immutable input.  It
-does not create output directories, start the C++ core, or interpret any
-biological file format.
+materializing omitted seeds and hashing every immutable input.  It does not
+create output directories, start the C++ core, or interpret any biological
+file format.
 """
 
 from __future__ import annotations
@@ -55,6 +55,31 @@ class PreparedRun:
 EntropySource = Callable[[int], int]
 
 
+SEED_DERIVATION_CONTRACT = "sha256-domain-separated-v1"
+_SEED_DERIVATION_PREFIX = b"BSReadSim/stage-seed/v1\0"
+_SEED_DOMAINS = ("mutation", "phasing", "methylation")
+
+
+def derive_stage_seed(master_seed: int, domain: str) -> int:
+    """Derive one stable unsigned 64-bit stage seed from the master seed."""
+    if (
+        isinstance(master_seed, bool)
+        or not isinstance(master_seed, int)
+        or master_seed < 0
+        or master_seed > UINT64_MAX
+    ):
+        raise PreparationError("master seed must be an unsigned 64-bit integer")
+    if domain not in _SEED_DOMAINS:
+        raise PreparationError("stage seed domain is unsupported")
+    digest = hashlib.sha256(
+        _SEED_DERIVATION_PREFIX
+        + master_seed.to_bytes(8, byteorder="little")
+        + b"\0"
+        + domain.encode("ascii")
+    ).digest()
+    return int.from_bytes(digest[:8], byteorder="little")
+
+
 def materialize_master_seed(
     config: LoadedRunConfig,
     *,
@@ -83,13 +108,38 @@ def materialize_master_seed(
     return config.with_master_seed(generated_seed)
 
 
+def materialize_run_seeds(
+    config: LoadedRunConfig,
+    *,
+    entropy: EntropySource = secrets.randbits,
+) -> LoadedRunConfig:
+    """Materialize the master seed and derive every omitted stage seed."""
+    effective = materialize_master_seed(config, entropy=entropy)
+    if effective.master_seed is None:  # Guaranteed by materialization.
+        raise PreparationError("master seed materialization failed")
+    normalized_seeds = effective.normalized.get("seeds")
+    if not isinstance(normalized_seeds, Mapping):
+        raise PreparationError("config stage seeds are missing")
+    unresolved = tuple(
+        domain for domain in _SEED_DOMAINS if normalized_seeds.get(domain) is None
+    )
+    if not unresolved:
+        return effective
+    return effective.with_resolved_seeds(
+        {
+            domain: derive_stage_seed(effective.master_seed, domain)
+            for domain in unresolved
+        }
+    )
+
+
 def prepare_run(
     config: LoadedRunConfig,
     *,
     entropy: EntropySource = secrets.randbits,
     hash_chunk_size: int = DEFAULT_HASH_CHUNK_SIZE,
 ) -> PreparedRun:
-    """Materialize the seed and hash all referenced input/model files.
+    """Materialize all seeds and hash referenced input/model files.
 
     Model hashes declared by the config are verified before a core process can
     be launched.  Files referenced by multiple roles are read only once, while
@@ -100,7 +150,7 @@ def prepare_run(
     if hash_chunk_size <= 0:
         raise PreparationError("hash_chunk_size must be a positive integer")
 
-    effective_config = materialize_master_seed(config, entropy=entropy)
+    effective_config = materialize_run_seeds(config, entropy=entropy)
     descriptors = tuple(_iter_file_descriptors(effective_config.normalized))
     cache: dict[Path, tuple[int, str]] = {}
     identities = []
@@ -252,7 +302,16 @@ def _iter_file_descriptors(
     inputs = config["inputs"]
     if not isinstance(inputs, Mapping):  # Protected by the schema; fail closed here too.
         raise PreparationError("normalized inputs section is not an object")
-    for name in ("vcf", "cgmap", "bed_methyl", "methdb", "asm", "asm_bed"):
+    for name in (
+        "vcf",
+        "cgmap",
+        "bed_methyl",
+        "methbg",
+        "methbed",
+        "methdb",
+        "asm",
+        "asm_bed",
+    ):
         if name in inputs:
             yield "input.{}".format(name), str(inputs[name]), None
 

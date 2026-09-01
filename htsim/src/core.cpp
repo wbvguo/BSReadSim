@@ -15,6 +15,8 @@
 #include <cfenv>
 #include <cstddef>
 #include <cstdint>
+#include <fstream>
+#include <future>
 #include <string>
 #include <vector>
 
@@ -36,7 +38,7 @@ namespace {
 
 using Values = std::unordered_map<std::string, std::vector<std::string>>;
 
-constexpr std::array<std::string_view, 46> known_options = {{
+constexpr std::array<std::string_view, 50> known_options = {{
     "--emit-details",
     "--protocol-batch-fragments",
     "--run-id",
@@ -48,11 +50,15 @@ constexpr std::array<std::string_view, 46> known_options = {{
     "--reference",
     "--vcf",
     "--cgmap",
-    "--bed-methyl",
+    "--bedmethyl",
+    "--methbg",
+    "--methbed",
     "--methdb",
+    "--methdb-output",
     "--asm",
     "--asm-bed",
     "--technology",
+    "--directional",
     "--paired-end",
     "--read-length-1",
     "--read-length-2",
@@ -70,7 +76,7 @@ constexpr std::array<std::string_view, 46> known_options = {{
     "--indel-extension-probability",
     "--homozygous-only",
     "--collect-non-cpg",
-    "--cgmap-pool",
+    "--pool-meth",
     "--update-variant-boundaries",
     "--beta-cg",
     "--beta-chg",
@@ -80,7 +86,7 @@ constexpr std::array<std::string_view, 46> known_options = {{
     "--rrbs-cut-site",
     "--rrbs-candidate-bed",
     "--tbs-bed",
-    "--tbs-center-stddev",
+    "--tbs-center-sd",
 }};
 
 bool is_known_option(std::string_view option)
@@ -103,7 +109,7 @@ Values collect_values(const std::vector<std::string> &arguments)
             throw CoreConfigError("missing value for core option: " + option);
         }
         const std::string &value = arguments[index + 1];
-        if (option != "--rrbs-cut-site" && values.find(option) != values.end()) {
+        if (values.find(option) != values.end()) {
             throw CoreConfigError("duplicate core option: " + option);
         }
         values[option].push_back(value);
@@ -270,6 +276,26 @@ bool valid_rrbs_cut_site(std::string_view value)
     return true;
 }
 
+std::vector<std::string> parse_rrbs_cut_site_list(std::string_view text)
+{
+    std::vector<std::string> cut_sites;
+    std::size_t begin = 0;
+    while (begin <= text.size()) {
+        const std::size_t end = text.find(',', begin);
+        const std::size_t length = end == std::string_view::npos
+            ? text.size() - begin
+            : end - begin;
+        if (length == 0) {
+            throw CoreConfigError(
+                "--rrbs-cut-site contains an empty comma-separated value");
+        }
+        cut_sites.emplace_back(text.substr(begin, length));
+        if (end == std::string_view::npos) {break;}
+        begin = end + 1;
+    }
+    return cut_sites;
+}
+
 BetaShape parse_beta_shape(std::string_view text, std::string_view name)
 {
     const std::size_t separator = text.find(',');
@@ -353,7 +379,10 @@ void validate_core_config(const CoreConfig &config)
     require_nonempty(config.vcf_path, "VCF path");
     require_nonempty(config.cgmap_path, "CGmap path");
     require_nonempty(config.bed_methyl_path, "bedMethyl path");
+    require_nonempty(config.methbg_path, "MethBG path");
+    require_nonempty(config.methbed_path, "MethBED path");
     require_nonempty(config.methdb_path, "MethDB path");
+    require_nonempty(config.methdb_output_path, "MethDB output path");
     require_nonempty(config.asm_path, "ASM path");
     require_nonempty(config.asm_bed_path, "ASM BED path");
     require_nonempty(config.coverage_profile_path, "coverage-profile path");
@@ -363,31 +392,44 @@ void validate_core_config(const CoreConfig &config)
     const bool has_vcf = config.vcf_path.has_value();
     const bool has_cgmap = config.cgmap_path.has_value();
     const bool has_bed_methyl = config.bed_methyl_path.has_value();
+    const bool has_methbg = config.methbg_path.has_value();
+    const bool has_methbed = config.methbed_path.has_value();
     const bool has_methdb = config.methdb_path.has_value();
+    const bool writes_methdb = config.methdb_output_path.has_value();
     const bool has_asm = config.asm_path.has_value();
     const bool has_asm_bed = config.asm_bed_path.has_value();
-    if (has_cgmap && has_bed_methyl) {
+    const unsigned profile_count = static_cast<unsigned>(has_cgmap)
+        + static_cast<unsigned>(has_bed_methyl)
+        + static_cast<unsigned>(has_methbg)
+        + static_cast<unsigned>(has_methbed);
+    if (profile_count > 1U) {
         throw CoreConfigError(
-            "CGmap and bedMethyl inputs are mutually exclusive");
+            "methylation profile inputs are mutually exclusive");
     }
     if (has_methdb
-        && (has_cgmap || has_bed_methyl || has_asm || has_asm_bed)) {
+        && (profile_count != 0U
+            || has_asm || has_asm_bed)) {
         throw CoreConfigError(
             "MethDB and methylation overlays are mutually exclusive");
+    }
+    if (has_methdb && has_vcf) {
+        throw CoreConfigError(
+            "MethDB embeds its variant authority and forbids a VCF input");
+    }
+    if (has_methdb && writes_methdb) {
+        throw CoreConfigError(
+            "MethDB input and generated MethDB output are mutually exclusive");
     }
     if (has_asm && has_asm_bed) {
         throw CoreConfigError(
             "ASM and ASM BED inputs are mutually exclusive");
     }
-    if ((has_asm || has_asm_bed) && !has_vcf) {
-        throw CoreConfigError("ASM generation requires a VCF input");
-    }
-    if (config.cgmap_pool && !has_cgmap && !has_bed_methyl) {
-        throw CoreConfigError(
-            "cgmap_pool=true requires a CGmap or bedMethyl input");
-    }
     if (config.cgmap_pool && has_methdb) {
-        throw CoreConfigError("MethDB forbids cgmap_pool=true");
+        throw CoreConfigError("MethDB forbids methylation value pooling");
+    }
+    if (config.cgmap_pool && profile_count == 0U) {
+        throw CoreConfigError(
+            "methylation value pooling requires a text methylation profile");
     }
 
     if (config.read_length_1 == 0 || config.insert_min == 0
@@ -399,8 +441,8 @@ void validate_core_config(const CoreConfig &config)
     if (config.core_workers > 64U) {
         throw CoreConfigError("core_workers must be in [1, 64]");
     }
-    if (config.protocol_batch_fragments > 64U) {
-        throw CoreConfigError("protocol_batch_fragments must be in [1, 64]");
+    if (config.protocol_batch_fragments > 4096U) {
+        throw CoreConfigError("protocol_batch_fragments must be in [1, 4096]");
     }
     if (!(config.insert_min <= config.insert_mean
           && config.insert_mean <= config.insert_max)) {
@@ -462,8 +504,17 @@ void validate_core_config(const CoreConfig &config)
         throw CoreConfigError(
             "VCF and de novo mutation generation are mutually exclusive");
     }
+    if ((has_asm || has_asm_bed) && config.mutation_rate > 0.0) {
+        throw CoreConfigError(
+            "ASM and de novo mutation generation are mutually exclusive");
+    }
+    if (has_methdb && config.mutation_rate > 0.0) {
+        throw CoreConfigError(
+            "MethDB embeds its variant authority and forbids de novo mutations");
+    }
     if (bisulfite_technology(config.technology)
-        && (has_vcf || config.mutation_rate > 0.0)
+        && (has_vcf || has_asm || has_asm_bed
+            || config.mutation_rate > 0.0)
         && !config.update_variant_boundaries) {
         throw CoreConfigError(
             "variant generation requires update_variant_boundaries=true");
@@ -483,7 +534,7 @@ void validate_core_config(const CoreConfig &config)
         if (config.rrbs_cut_sites.empty()) {
             throw CoreConfigError("RRBS requires at least one cut site");
         }
-        if (config.tbs_bed_path || config.tbs_center_stddev) {
+        if (config.tbs_bed_path || config.tbs_center_sd) {
             throw CoreConfigError("RRBS forbids TBS inputs");
         }
     } else if (targeted_technology(config.technology)) {
@@ -494,18 +545,14 @@ void validate_core_config(const CoreConfig &config)
             throw CoreConfigError(
                 "targeted technologies forbid an RRBS candidate BED");
         }
-        if (!config.tbs_bed_path || !config.tbs_center_stddev) {
+        if (!config.tbs_bed_path || !config.tbs_center_sd) {
             throw CoreConfigError(
-                "targeted technologies require a BED path and center standard deviation");
+                "targeted technologies require a BED path and center SD");
         }
-        if (!std::isfinite(*config.tbs_center_stddev)
-            || *config.tbs_center_stddev < 0.0) {
+        if (!std::isfinite(*config.tbs_center_sd)
+            || *config.tbs_center_sd < 0.0) {
             throw CoreConfigError(
-                "TBS center standard deviation must be finite and non-negative");
-        }
-        if (config.insert_sd != 0.0) {
-            throw CoreConfigError(
-                "targeted technologies require --insert-sd 0");
+                "TBS center SD must be finite and non-negative");
         }
     } else if (whole_genome_technology(config.technology)) {
         if (!config.rrbs_cut_sites.empty()) {
@@ -516,7 +563,7 @@ void validate_core_config(const CoreConfig &config)
             throw CoreConfigError(
                 "whole-genome technologies forbid an RRBS candidate BED");
         }
-        if (config.tbs_bed_path || config.tbs_center_stddev) {
+        if (config.tbs_bed_path || config.tbs_center_sd) {
             throw CoreConfigError(
                 "whole-genome technologies forbid targeted inputs");
         }
@@ -524,10 +571,15 @@ void validate_core_config(const CoreConfig &config)
         throw CoreConfigError("technology is outside the core contract");
     }
     if (!bisulfite_technology(config.technology)
-        && (has_cgmap || has_bed_methyl || has_methdb || has_asm
-            || has_asm_bed || config.cgmap_pool)) {
+        && (has_cgmap || has_bed_methyl || has_methbg || has_methbed || has_methdb
+            || writes_methdb
+            || has_asm || has_asm_bed || config.cgmap_pool)) {
         throw CoreConfigError(
             "standard sequencing forbids methylation inputs and pooling");
+    }
+    if (!bisulfite_technology(config.technology) && !config.directional) {
+        throw CoreConfigError(
+            "standard sequencing requires directional=true as an inert value");
     }
     const bool has_coverage_artifact = config.coverage_profile_path.has_value();
     if (config.coverage == CoverageMode::profile) {
@@ -537,7 +589,8 @@ void validate_core_config(const CoreConfig &config)
                     "whole-genome profile coverage requires a profile path");
             }
             if (config.insert_sd != 0.0
-                && (has_vcf || config.mutation_rate != 0.0)) {
+                && (has_vcf || has_asm || has_asm_bed
+                    || config.mutation_rate != 0.0)) {
                 throw CoreConfigError(
                     "variable-insert target GC does not yet support variants");
             }
@@ -602,11 +655,16 @@ CoreConfig parse_core_config(const std::vector<std::string> &arguments)
     config.reference_path = required(values, "--reference");
     config.vcf_path = optional_text(values, "--vcf");
     config.cgmap_path = optional_text(values, "--cgmap");
-    config.bed_methyl_path = optional_text(values, "--bed-methyl");
+    config.bed_methyl_path = optional_text(values, "--bedmethyl");
+    config.methbg_path = optional_text(values, "--methbg");
+    config.methbed_path = optional_text(values, "--methbed");
     config.methdb_path = optional_text(values, "--methdb");
+    config.methdb_output_path = optional_text(values, "--methdb-output");
     config.asm_path = optional_text(values, "--asm");
     config.asm_bed_path = optional_text(values, "--asm-bed");
     config.technology = parse_technology(required(values, "--technology"));
+    config.directional = parse_boolean(
+        required(values, "--directional"), "--directional");
 
     config.paired_end = parse_boolean(
         required(values, "--paired-end"), "--paired-end");
@@ -653,7 +711,7 @@ CoreConfig parse_core_config(const std::vector<std::string> &arguments)
     config.collect_non_cpg = parse_boolean(
         required(values, "--collect-non-cpg"), "--collect-non-cpg");
     config.cgmap_pool = parse_boolean(
-        required(values, "--cgmap-pool"), "--cgmap-pool");
+        required(values, "--pool-meth"), "--pool-meth");
     config.update_variant_boundaries = parse_boolean(
         required(values, "--update-variant-boundaries"),
         "--update-variant-boundaries");
@@ -668,17 +726,15 @@ CoreConfig parse_core_config(const std::vector<std::string> &arguments)
     config.coverage_profile_path = optional_text(values, "--coverage-profile");
     const auto rrbs = values.find("--rrbs-cut-site");
     if (rrbs != values.end()) {
-        for (const std::string &site : rrbs->second) {
-            config.rrbs_cut_sites.push_back(site);
-        }
+        config.rrbs_cut_sites = parse_rrbs_cut_site_list(rrbs->second.front());
     }
     config.rrbs_candidate_bed_path = optional_text(
         values, "--rrbs-candidate-bed");
     config.tbs_bed_path = optional_text(values, "--tbs-bed");
-    if (values.find("--tbs-center-stddev") != values.end()) {
-        config.tbs_center_stddev = parse_number(
-            required(values, "--tbs-center-stddev"),
-            "--tbs-center-stddev");
+    if (values.find("--tbs-center-sd") != values.end()) {
+        config.tbs_center_sd = parse_number(
+            required(values, "--tbs-center-sd"),
+            "--tbs-center-sd");
     }
 
     validate_core_config(config);
@@ -721,6 +777,88 @@ tbs::SamplingMode tbs_sampling_mode(const CoreConfig &config) noexcept
         : tbs::SamplingMode::uniform;
 }
 
+struct LibraryOrientation {
+    model::CaptureStrand informative_strand;
+    bool reverse_molecule;
+};
+
+LibraryOrientation sample_library_orientation(
+    const CoreConfig &config,
+    std::uint64_t key,
+    std::uint64_t fragment_ordinal,
+    model::CaptureStrand constraint)
+{
+    if (!bisulfite_technology(config.technology)) {
+        return {constraint, false};
+    }
+    if (constraint != model::CaptureStrand::unknown
+        && constraint != model::CaptureStrand::forward
+        && constraint != model::CaptureStrand::reverse) {
+        throw CoreGeneratorError("fragment capture strand is invalid");
+    }
+
+    const bool informative_reverse =
+        constraint == model::CaptureStrand::reverse
+        || (constraint == model::CaptureStrand::unknown
+            && rng::bernoulli(key, fragment_ordinal, 0U, 0.5, 0U));
+    const bool complementary = !config.directional
+        && rng::bernoulli(key, fragment_ordinal, 0U, 0.5, 1U);
+    return {
+        informative_reverse
+            ? model::CaptureStrand::reverse
+            : model::CaptureStrand::forward,
+        informative_reverse != complementary,
+    };
+}
+
+template <typename Value, typename Builder>
+void emit_fragments_ordered(
+    const std::vector<Value> &values,
+    std::uint64_t first_fragment_ordinal,
+    std::uint32_t worker_count,
+    Builder builder,
+    protocol::BatchEmitter &emitter)
+{
+    if (values.empty()) {return;}
+    const std::size_t workers = std::min<std::size_t>(
+        worker_count, values.size());
+    if (workers <= 1U || values.size() < 128U) {
+        for (std::size_t index = 0U; index < values.size(); ++index) {
+            emitter.write(builder(
+                values[index], first_fragment_ordinal + index));
+        }
+        return;
+    }
+
+    std::vector<std::future<std::vector<model::Fragment>>> pending;
+    pending.reserve(workers);
+    const std::size_t base_size = values.size() / workers;
+    const std::size_t remainder = values.size() % workers;
+    std::size_t begin = 0U;
+    for (std::size_t worker = 0U; worker < workers; ++worker) {
+        const std::size_t block_size =
+            base_size + (worker < remainder ? 1U : 0U);
+        const std::size_t end = begin + block_size;
+        pending.push_back(std::async(
+            std::launch::async,
+            [&values, &builder, first_fragment_ordinal, begin, end] {
+                std::vector<model::Fragment> built;
+                built.reserve(end - begin);
+                for (std::size_t index = begin; index < end; ++index) {
+                    built.push_back(builder(
+                        values[index], first_fragment_ordinal + index));
+                }
+                return built;
+            }));
+        begin = end;
+    }
+    for (auto &future : pending) {
+        for (model::Fragment &fragment : future.get()) {
+            emitter.write(std::move(fragment));
+        }
+    }
+}
+
 void require_generation_environment(const CoreConfig &config)
 {
     validate_core_config(config);
@@ -748,46 +886,30 @@ std::uint64_t checked_add(
 }
 
 crypto::Sha256Digest methdb_binding(
-    const CoreConfig &config,
-    const crypto::Sha256Digest &reference_sha256,
-    const std::optional<crypto::Sha256Digest> &vcf_sha256)
+    const std::vector<reference::ContigMetadata> &catalog)
 {
     crypto::Sha256 hash;
-    const auto bytes = [&](const void *data, std::size_t size) {
-        hash.update(static_cast<const std::uint8_t *>(data), size);
-    };
     const auto u64 = [&](std::uint64_t value) {
-        std::uint8_t encoded[8];
-        for (unsigned index = 0U; index < 8U; ++index) {
-            encoded[index] = static_cast<std::uint8_t>(value >> (index * 8U));
+        std::array<std::uint8_t, 8> encoded = {};
+        for (unsigned shift = 0U; shift < 64U; shift += 8U) {
+            encoded[shift / 8U] = static_cast<std::uint8_t>(value >> shift);
         }
-        bytes(encoded, sizeof(encoded));
+        hash.update(encoded.data(), encoded.size());
     };
-    const auto f64 = [&](double value) {
-        std::uint64_t encoded = 0U;
-        static_assert(sizeof(encoded) == sizeof(value));
-        std::memcpy(&encoded, &value, sizeof(encoded));
-        u64(encoded);
-    };
-    static constexpr char contract[] = "methdb-binding";
-    bytes(contract, sizeof(contract) - 1U);
-    bytes(reference_sha256.data(), reference_sha256.size());
-    if (vcf_sha256) {
-        u64(config.methylation_seed);
-        u64(config.phasing_seed);
-        const std::uint8_t marker = 1U;
-        bytes(&marker, 1U);
-        bytes(vcf_sha256->data(), vcf_sha256->size());
-    } else {
-        u64(config.methylation_seed);
-        const std::uint8_t marker = 0U;
-        bytes(&marker, 1U);
-        if (config.mutation_rate > 0.0) {u64(config.mutation_seed);}
-        f64(config.mutation_rate);
-        f64(config.indel_fraction);
-        f64(config.indel_extension_probability);
-        const std::uint8_t homozygous = config.homozygous_only ? 1U : 0U;
-        bytes(&homozygous, 1U);
+    static constexpr char contract[] = "methdb-v2-reference-binding";
+    hash.update(
+        reinterpret_cast<const std::uint8_t *>(contract),
+        sizeof(contract) - 1U);
+    u64(catalog.size());
+    for (const reference::ContigMetadata &contig : catalog) {
+        u64(contig.name.size());
+        hash.update(
+            reinterpret_cast<const std::uint8_t *>(contig.name.data()),
+            contig.name.size());
+        u64(contig.length);
+        hash.update(
+            contig.reference_sha256.data(),
+            contig.reference_sha256.size());
     }
     return hash.digest();
 }
@@ -1129,7 +1251,7 @@ void generate_rrbs_candidate_bed(
     }
 }
 
-void generate_methdb_catalog(
+void build_methdb_snapshot(
     const CoreConfig &config,
     std::ostream &sink)
 {
@@ -1151,8 +1273,6 @@ void generate_methdb_catalog(
                 catalog,
                 config.phasing_seed);
         }
-        std::optional<crypto::Sha256Digest> vcf_sha256;
-        if (variant_file) {vcf_sha256 = variant_file->file_sha256();}
         const bool generate_mutations = config.mutation_rate > 0.0;
         const variant::MutationParameters mutation_parameters{
             config.mutation_rate,
@@ -1161,14 +1281,25 @@ void generate_methdb_catalog(
             config.homozygous_only,
         };
         std::unique_ptr<methdb::CgmapProfile> cgmap_profile;
-        if (config.cgmap_path || config.bed_methyl_path) {
-            const bool bed_methyl = config.bed_methyl_path.has_value();
+        const std::string *profile_path = nullptr;
+        auto profile_format = methdb::MethylationProfileFormat::cgmap;
+        if (config.cgmap_path) {
+            profile_path = &*config.cgmap_path;
+        } else if (config.bed_methyl_path) {
+            profile_path = &*config.bed_methyl_path;
+            profile_format = methdb::MethylationProfileFormat::bed_methyl;
+        } else if (config.methbg_path) {
+            profile_path = &*config.methbg_path;
+            profile_format = methdb::MethylationProfileFormat::methbg;
+        } else if (config.methbed_path) {
+            profile_path = &*config.methbed_path;
+            profile_format = methdb::MethylationProfileFormat::methbed;
+        }
+        if (profile_path != nullptr) {
             cgmap_profile = std::make_unique<methdb::CgmapProfile>(
-                bed_methyl ? *config.bed_methyl_path : *config.cgmap_path,
+                *profile_path,
                 catalog,
-                bed_methyl
-                    ? methdb::MethylationProfileFormat::bed_methyl
-                    : methdb::MethylationProfileFormat::cgmap);
+                profile_format);
             if (config.cgmap_pool
                 && cgmap_profile->defined_probability_count() == 0U) {
                 throw CoreGeneratorError(
@@ -1183,12 +1314,12 @@ void generate_methdb_catalog(
                 catalog,
                 asm_bed
                     ? methdb::AsmProfileFormat::bed
-                    : methdb::AsmProfileFormat::htsim);
+                    : methdb::AsmProfileFormat::cgmaptools_ass);
         }
         const methdb::ContextShapes shapes = methylation_shapes(config);
         methdb::SnapshotWriter writer(
             sink,
-            methdb_binding(config, snapshot.file_sha256(), vcf_sha256),
+            methdb_binding(catalog),
             static_cast<std::uint32_t>(catalog.size()));
         snapshot.visit_contigs([&](const reference::Contig &contig) {
             std::vector<methdb::CgmapRecord> cgmap_records;
@@ -1202,11 +1333,14 @@ void generate_methdb_catalog(
                 asm_profile->validate_contig(contig);
                 asm_records = asm_profile->records(contig);
             }
-            const auto *asm_or_null = asm_profile ? &asm_records : nullptr;
             std::vector<variant::Variant> generated_variants;
             const std::vector<variant::Variant> *variant_records = nullptr;
             if (variant_file) {
                 variant_records = &variant_file->variants(contig.index);
+            } else if (asm_profile) {
+                generated_variants = methdb::variants_from_asm(
+                    contig, asm_records, config.phasing_seed);
+                variant_records = &generated_variants;
             } else if (generate_mutations) {
                 generated_variants = variant::generate_de_novo_events(
                     contig, config.mutation_seed, mutation_parameters);
@@ -1215,16 +1349,29 @@ void generate_methdb_catalog(
             if (variant_records) {
                 const variant::ContigVariants contig_variants(
                     contig.bases, *variant_records, contig.index);
-                const methdb::DiploidMethylationCatalog methylation(
+                const methdb::MethylationCatalog baseline(
+                    contig.bases,
+                    contig.index,
+                    config.methylation_seed,
+                    config.collect_non_cpg,
+                    shapes,
+                    cgmap_or_null,
+                    config.cgmap_pool);
+                const methdb::DiploidMethylationCatalog pre_asm_methylation(
                     contig,
                     contig_variants,
                     config.methylation_seed,
                     config.collect_non_cpg,
                     shapes,
                     cgmap_or_null,
-                    asm_or_null,
+                    nullptr,
                     config.cgmap_pool);
-                writer.write_diploid(catalog.at(contig.index), methylation);
+                writer.write_diploid(
+                    catalog.at(contig.index),
+                    baseline,
+                    pre_asm_methylation,
+                    *variant_records,
+                    asm_records);
             } else {
                 const methdb::MethylationCatalog methylation(
                     contig.bases,
@@ -1258,6 +1405,16 @@ void generate_variant_catalog_vcf(
             variant_file = std::make_unique<variant::VariantFile>(
                 *config.vcf_path, catalog, config.phasing_seed);
         }
+        std::unique_ptr<methdb::AsmProfile> asm_profile;
+        if (config.asm_path || config.asm_bed_path) {
+            const bool asm_bed = config.asm_bed_path.has_value();
+            asm_profile = std::make_unique<methdb::AsmProfile>(
+                asm_bed ? *config.asm_bed_path : *config.asm_path,
+                catalog,
+                asm_bed
+                    ? methdb::AsmProfileFormat::bed
+                    : methdb::AsmProfileFormat::cgmaptools_ass);
+        }
         const variant::MutationParameters mutation_parameters{
             config.mutation_rate,
             config.indel_fraction,
@@ -1267,15 +1424,31 @@ void generate_variant_catalog_vcf(
 
         variant::write_vcf_header(sink);
         snapshot.visit_contigs([&](const reference::Contig &contig) {
+            std::vector<methdb::AsmRecord> asm_records;
+            if (asm_profile) {asm_records = asm_profile->records(contig);}
+            std::vector<variant::Variant> generated_events;
+            const std::vector<variant::Variant> *events = nullptr;
             if (variant_file) {
-                variant::write_vcf_contig(
-                    sink, contig, variant_file->variants(contig.index));
+                events = &variant_file->variants(contig.index);
+            } else if (asm_profile) {
+                generated_events = methdb::variants_from_asm(
+                    contig, asm_records, config.phasing_seed);
+                events = &generated_events;
             } else {
-                const std::vector<variant::Variant> events =
-                    variant::generate_de_novo_events(
-                        contig, config.mutation_seed, mutation_parameters);
-                variant::write_vcf_contig(sink, contig, events);
+                generated_events = variant::generate_de_novo_events(
+                    contig, config.mutation_seed, mutation_parameters);
+                events = &generated_events;
             }
+            if (asm_profile) {
+                const variant::ContigVariants checked(
+                    contig.bases, *events, contig.index);
+                methdb::validate_asm_targets(
+                    contig,
+                    checked,
+                    config.collect_non_cpg,
+                    asm_records);
+            }
+            variant::write_vcf_contig(sink, contig, *events);
         });
         if (!sink) {
             throw CoreGeneratorError("failed while flushing the variant VCF");
@@ -1310,8 +1483,6 @@ protocol::Trailer generate_core_stream(
                 catalog,
                 config.phasing_seed);
         }
-        std::optional<crypto::Sha256Digest> vcf_sha256;
-        if (variant_file) {vcf_sha256 = variant_file->file_sha256();}
         const bool generate_mutations = config.mutation_rate > 0.0;
         const variant::MutationParameters mutation_parameters{
             config.mutation_rate,
@@ -1320,14 +1491,25 @@ protocol::Trailer generate_core_stream(
             config.homozygous_only,
         };
         std::unique_ptr<methdb::CgmapProfile> cgmap_profile;
-        if (config.cgmap_path || config.bed_methyl_path) {
-            const bool bed_methyl = config.bed_methyl_path.has_value();
+        const std::string *profile_path = nullptr;
+        auto profile_format = methdb::MethylationProfileFormat::cgmap;
+        if (config.cgmap_path) {
+            profile_path = &*config.cgmap_path;
+        } else if (config.bed_methyl_path) {
+            profile_path = &*config.bed_methyl_path;
+            profile_format = methdb::MethylationProfileFormat::bed_methyl;
+        } else if (config.methbg_path) {
+            profile_path = &*config.methbg_path;
+            profile_format = methdb::MethylationProfileFormat::methbg;
+        } else if (config.methbed_path) {
+            profile_path = &*config.methbed_path;
+            profile_format = methdb::MethylationProfileFormat::methbed;
+        }
+        if (profile_path != nullptr) {
             cgmap_profile = std::make_unique<methdb::CgmapProfile>(
-                bed_methyl ? *config.bed_methyl_path : *config.cgmap_path,
+                *profile_path,
                 catalog,
-                bed_methyl
-                    ? methdb::MethylationProfileFormat::bed_methyl
-                    : methdb::MethylationProfileFormat::cgmap);
+                profile_format);
             if (config.cgmap_pool
                 && cgmap_profile->defined_probability_count() == 0U) {
                 throw CoreGeneratorError(
@@ -1342,7 +1524,7 @@ protocol::Trailer generate_core_stream(
                 catalog,
                 asm_bed
                     ? methdb::AsmProfileFormat::bed
-                    : methdb::AsmProfileFormat::htsim);
+                    : methdb::AsmProfileFormat::cgmaptools_ass);
         }
         const methdb::ContextShapes context_shapes =
             methylation_shapes(config);
@@ -1382,16 +1564,35 @@ protocol::Trailer generate_core_stream(
             coverage_profile = std::make_unique<wgbs::WgbsGcProfile>(
                 *config.coverage_profile_path);
         }
-        const bool haplotype_gc_profile = coverage_profile
-            && (variant_file || generate_mutations);
         std::unique_ptr<methdb::Snapshot> fixed_methdb;
         if (config.methdb_path) {
             fixed_methdb = std::make_unique<methdb::Snapshot>(
                 *config.methdb_path,
-                methdb_binding(
-                    config, snapshot.file_sha256(), vcf_sha256),
+                methdb_binding(catalog),
                 catalog);
         }
+        std::ofstream generated_methdb_output;
+        std::unique_ptr<methdb::SnapshotWriter> generated_methdb;
+        if (config.methdb_output_path) {
+            if (catalog.size() > std::numeric_limits<std::uint32_t>::max()) {
+                throw CoreGeneratorError("MethDB contig count exceeds uint32");
+            }
+            generated_methdb_output.open(
+                *config.methdb_output_path,
+                std::ios::binary | std::ios::trunc);
+            if (!generated_methdb_output) {
+                throw CoreGeneratorError(
+                    "cannot open the generated MethDB sidecar");
+            }
+            generated_methdb = std::make_unique<methdb::SnapshotWriter>(
+                generated_methdb_output,
+                methdb_binding(catalog),
+                static_cast<std::uint32_t>(catalog.size()));
+        }
+        const bool haplotype_gc_profile = coverage_profile
+            && (variant_file || asm_profile || generate_mutations
+                || (fixed_methdb
+                    && fixed_methdb->has_diploid_contigs()));
         std::vector<std::uint32_t> candidate_weights(catalog.size(), 0);
         std::vector<double> rrbs_profile_weights(catalog.size(), 0.0);
         std::vector<std::vector<std::uint32_t>> target_bin_counts(
@@ -1404,14 +1605,22 @@ protocol::Trailer generate_core_stream(
             if (cgmap_profile) {
                 cgmap_profile->validate_contig(contig);
             }
-            if (asm_profile) {
-                asm_profile->validate_contig(contig);
-            }
+            std::vector<methdb::AsmRecord> asm_records;
+            if (asm_profile) {asm_records = asm_profile->records(contig);}
             std::vector<variant::Variant> generated_events;
+            std::vector<variant::Variant> saved_events;
             const std::vector<variant::Variant> *variants = nullptr;
-            if (variant_file) {
+            if (fixed_methdb
+                && fixed_methdb->contig_is_diploid(contig.index)) {
+                saved_events = fixed_methdb->variants(contig.index);
+                variants = &saved_events;
+            } else if (!fixed_methdb && variant_file) {
                 variants = &variant_file->variants(contig.index);
-            } else if (generate_mutations) {
+            } else if (!fixed_methdb && asm_profile) {
+                generated_events = methdb::variants_from_asm(
+                    contig, asm_records, config.phasing_seed);
+                variants = &generated_events;
+            } else if (!fixed_methdb && generate_mutations) {
                 generated_events = variant::generate_de_novo_events(
                     contig, config.mutation_seed, mutation_parameters);
                 variants = &generated_events;
@@ -1443,29 +1652,16 @@ protocol::Trailer generate_core_stream(
                 }
             }
             if (asm_profile) {
-                const std::vector<methdb::AsmRecord> asm_records =
-                    asm_profile->records(contig);
                 if (!asm_records.empty()) {
                     if (!planned_variants) {
                         throw CoreGeneratorError(
-                            "ASM planning lost its required VCF variant set");
+                            "ASM preflight lost its linked variant set");
                     }
-                    std::vector<methdb::CgmapRecord> cgmap_records;
-                    if (cgmap_profile) {
-                        cgmap_records = cgmap_profile->records(contig);
-                    }
-                    const auto *cgmap_records_or_null = cgmap_profile
-                        ? &cgmap_records
-                        : nullptr;
-                    (void)methdb::DiploidMethylationCatalog(
+                    methdb::validate_asm_targets(
                         contig,
                         *planned_variants,
-                        config.methylation_seed,
                         config.collect_non_cpg,
-                        context_shapes,
-                        cgmap_records_or_null,
-                        &asm_records,
-                        config.cgmap_pool);
+                        asm_records);
                 }
             }
             if (whole_genome_technology(config.technology)) {
@@ -1613,8 +1809,8 @@ protocol::Trailer generate_core_stream(
                           contig,
                           *planned_variants,
                           tbs_targets->targets(contig.index),
-                          *config.tbs_center_stddev,
-                          config.insert_mean,
+                          *config.tbs_center_sd,
+                          insert_parameters,
                           config.read_length_1,
                           config.paired_end,
                           config.max_ambiguous_fraction,
@@ -1623,8 +1819,8 @@ protocol::Trailer generate_core_stream(
                           contig.bases,
                           tbs_targets->targets(contig.index),
                           contig.index,
-                          *config.tbs_center_stddev,
-                          config.insert_mean,
+                          *config.tbs_center_sd,
+                          insert_parameters,
                           config.read_length_1,
                           config.paired_end,
                           config.max_ambiguous_fraction,
@@ -1684,7 +1880,7 @@ protocol::Trailer generate_core_stream(
         protocol::BatchEmitter emitter(
             writer,
             header,
-            config.core_workers,
+            1U,
             config.protocol_batch_fragments);
 
         std::uint64_t fragment_ordinal = 0;
@@ -1695,7 +1891,7 @@ protocol::Trailer generate_core_stream(
             : fragment_builder::FragmentDetail::full;
         snapshot.visit_contigs([&](const reference::Contig &contig) {
             const std::uint32_t requested = fragment_counts.at(contig.index);
-            if (requested == 0) {return;}
+            if (requested == 0U && !generated_methdb) {return;}
             std::vector<methdb::CgmapRecord> cgmap_records;
             if (cgmap_profile) {
                 cgmap_records = cgmap_profile->records(contig);
@@ -1710,11 +1906,21 @@ protocol::Trailer generate_core_stream(
             const auto *asm_records_or_null = asm_profile
                 ? &asm_records
                 : nullptr;
+            std::optional<methdb::SnapshotContig> saved_methdb_contig;
+            if (fixed_methdb) {
+                saved_methdb_contig = fixed_methdb->contig(contig.index);
+            }
             std::vector<variant::Variant> generated_events;
             const std::vector<variant::Variant> *variants = nullptr;
-            if (variant_file) {
+            if (saved_methdb_contig && saved_methdb_contig->diploid) {
+                variants = &saved_methdb_contig->variants;
+            } else if (!saved_methdb_contig && variant_file) {
                 variants = &variant_file->variants(contig.index);
-            } else if (generate_mutations) {
+            } else if (!saved_methdb_contig && asm_profile) {
+                generated_events = methdb::variants_from_asm(
+                    contig, asm_records, config.phasing_seed);
+                variants = &generated_events;
+            } else if (!saved_methdb_contig && generate_mutations) {
                 generated_events = variant::generate_de_novo_events(
                     contig, config.mutation_seed, mutation_parameters);
                 variants = &generated_events;
@@ -1734,11 +1940,9 @@ protocol::Trailer generate_core_stream(
                         std::make_unique<methdb::DiploidMethylationCatalog>(
                             contig.index,
                             static_cast<std::uint32_t>(contig.length),
-                            std::vector<methdb::DiploidSite>{},
-                            std::array<std::vector<methdb::DiploidSite>, 2>{});
-                } else if (fixed_methdb) {
-                    const auto &saved = fixed_methdb->contig(contig.index);
-                    if (!saved.diploid) {
+                            methdb::DiploidRuntimeArrays{});
+                } else if (saved_methdb_contig) {
+                    if (!saved_methdb_contig->diploid) {
                         throw CoreGeneratorError(
                             "MethDB contig is not diploid for the prepared "
                             "variant set");
@@ -1747,8 +1951,35 @@ protocol::Trailer generate_core_stream(
                         std::make_unique<methdb::DiploidMethylationCatalog>(
                             contig.index,
                             static_cast<std::uint32_t>(contig.length),
-                            saved.shared_sites,
-                            saved.haplotype_sites);
+                            std::move(saved_methdb_contig->diploid_sites));
+                } else if (generated_methdb) {
+                    const methdb::MethylationCatalog baseline(
+                        contig.bases,
+                        contig.index,
+                        config.methylation_seed,
+                        config.collect_non_cpg,
+                        context_shapes,
+                        cgmap_records_or_null,
+                        config.cgmap_pool);
+                    auto pre_asm_catalog = std::make_unique<
+                        methdb::DiploidMethylationCatalog>(
+                            contig,
+                            *contig_variants,
+                            config.methylation_seed,
+                            config.collect_non_cpg,
+                            context_shapes,
+                            cgmap_records_or_null,
+                            nullptr,
+                            config.cgmap_pool);
+                    generated_methdb->write_diploid(
+                        catalog.at(contig.index),
+                        baseline,
+                        *pre_asm_catalog,
+                        *variants,
+                        asm_records);
+                    pre_asm_catalog->apply_asm_layer(*variants, asm_records);
+                    diploid_methylation_catalog =
+                        std::move(pre_asm_catalog);
                 } else {
                     diploid_methylation_catalog =
                         std::make_unique<methdb::DiploidMethylationCatalog>(
@@ -1767,9 +1998,8 @@ protocol::Trailer generate_core_stream(
                         std::make_unique<methdb::MethylationCatalog>(
                             static_cast<std::uint32_t>(contig.length),
                             std::vector<methdb::CatalogSite>{});
-                } else if (fixed_methdb) {
-                    const auto &saved = fixed_methdb->contig(contig.index);
-                    if (saved.diploid) {
+                } else if (saved_methdb_contig) {
+                    if (saved_methdb_contig->diploid) {
                         throw CoreGeneratorError(
                             "MethDB contig is diploid without a prepared "
                             "variant set");
@@ -1777,7 +2007,7 @@ protocol::Trailer generate_core_stream(
                     reference_methylation_catalog =
                         std::make_unique<methdb::MethylationCatalog>(
                             static_cast<std::uint32_t>(contig.length),
-                            saved.reference_sites);
+                            std::move(saved_methdb_contig->reference_sites));
                 } else {
                     reference_methylation_catalog =
                         std::make_unique<methdb::MethylationCatalog>(
@@ -1788,25 +2018,42 @@ protocol::Trailer generate_core_stream(
                             context_shapes,
                             cgmap_records_or_null,
                             config.cgmap_pool);
+                    if (generated_methdb) {
+                        generated_methdb->write_reference(
+                            catalog.at(contig.index),
+                            *reference_methylation_catalog);
+                    }
                 }
             }
+            if (requested == 0U) {return;}
             const std::uint64_t haplotype_key = rng::derive_key(
                 config.master_seed, rng::Stage::haplotype, contig.index);
+            const std::uint64_t library_orientation_key = rng::derive_key(
+                config.master_seed,
+                rng::Stage::library_orientation,
+                contig.index);
             const auto build_fragment = [&](
                 std::uint32_t start,
                 std::uint8_t haplotype,
                 model::CaptureStrand capture_strand,
-                const fragment_builder::ReadLayout &layout) {
+                const fragment_builder::ReadLayout &layout,
+                std::uint64_t ordinal) {
+                const LibraryOrientation orientation = sample_library_orientation(
+                    config,
+                    library_orientation_key,
+                    ordinal,
+                    capture_strand);
                 if (!contig_variants) {
                     return fragment_builder::build_fragment(
                         contig,
                         *reference_methylation_catalog,
-                        fragment_ordinal,
+                        ordinal,
                         start,
                         haplotype,
-                        capture_strand,
+                        orientation.informative_strand,
                         layout,
-                        fragment_detail);
+                        fragment_detail,
+                        orientation.reverse_molecule);
                 }
                 if (layout.insert_length
                     > std::numeric_limits<std::uint32_t>::max() - start) {
@@ -1822,10 +2069,11 @@ protocol::Trailer generate_core_stream(
                 return fragment_builder::build_fragment(
                     std::move(projection),
                     *diploid_methylation_catalog,
-                    fragment_ordinal,
-                    capture_strand,
+                    ordinal,
+                    orientation.informative_strand,
                     layout,
-                    fragment_detail);
+                    fragment_detail,
+                    orientation.reverse_molecule);
             };
             const auto build_haplotype_fragment = [&](
                 std::uint32_t reference_start,
@@ -1834,7 +2082,8 @@ protocol::Trailer generate_core_stream(
                 bool include_end_anchor_insertion,
                 std::uint8_t haplotype,
                 model::CaptureStrand capture_strand,
-                const fragment_builder::ReadLayout &layout) {
+                const fragment_builder::ReadLayout &layout,
+                std::uint64_t ordinal) {
                 if (!contig_variants || !diploid_methylation_catalog) {
                     throw CoreGeneratorError(
                         "haplotype fragment lost its prepared variant set");
@@ -1849,13 +2098,19 @@ protocol::Trailer generate_core_stream(
                         include_start_anchor_insertion,
                         include_end_anchor_insertion,
                     });
+                const LibraryOrientation orientation = sample_library_orientation(
+                    config,
+                    library_orientation_key,
+                    ordinal,
+                    capture_strand);
                 return fragment_builder::build_fragment(
                     std::move(projection),
                     *diploid_methylation_catalog,
-                    fragment_ordinal,
-                    capture_strand,
+                    ordinal,
+                    orientation.informative_strand,
                     layout,
-                    fragment_detail);
+                    fragment_detail,
+                    orientation.reverse_molecule);
             };
 
             std::uint32_t emitted_for_contig = 0;
@@ -1999,22 +2254,28 @@ protocol::Trailer generate_core_stream(
                                 "variable haplotype skipped fragment count exceeds uint64");
                         }
                         skipped_fragment_count += batch.skipped_count;
-                        for (const wgbs::VariableHaplotypeCandidate &candidate
-                             : batch.candidates) {
-                            const fragment_builder::ReadLayout read_layout{
-                                candidate.reference_span,
-                                config.read_length_1,
-                                config.paired_end};
-                            emitter.write(build_fragment(
-                                candidate.reference_start,
-                                choose_haplotype(
-                                    candidate.eligible_haplotypes,
-                                    haplotype_key,
-                                    fragment_ordinal),
-                                model::CaptureStrand::unknown,
-                                read_layout));
-                            ++fragment_ordinal;
-                        }
+                        emit_fragments_ordered(
+                            batch.candidates,
+                            fragment_ordinal,
+                            config.core_workers,
+                            [&](const wgbs::VariableHaplotypeCandidate &candidate,
+                                std::uint64_t ordinal) {
+                                const fragment_builder::ReadLayout read_layout{
+                                    candidate.reference_span,
+                                    config.read_length_1,
+                                    config.paired_end};
+                                return build_fragment(
+                                    candidate.reference_start,
+                                    choose_haplotype(
+                                        candidate.eligible_haplotypes,
+                                        haplotype_key,
+                                        ordinal),
+                                    model::CaptureStrand::unknown,
+                                    read_layout,
+                                    ordinal);
+                            },
+                            emitter);
+                        fragment_ordinal += batch.candidates.size();
                         candidate_ordinal = batch.next_candidate_ordinal;
                     } else if (profiled_variable_starts || variable_starts) {
                         const auto batch = profiled_variable_starts
@@ -2030,22 +2291,28 @@ protocol::Trailer generate_core_stream(
                                 "variable WGBS skipped fragment count exceeds uint64");
                         }
                         skipped_fragment_count += batch.skipped_count;
-                        for (const wgbs::VariableWgbsCandidate &candidate
-                             : batch.candidates) {
-                            const fragment_builder::ReadLayout read_layout{
-                                candidate.insert_length,
-                                config.read_length_1,
-                                config.paired_end};
-                            emitter.write(build_fragment(
-                                candidate.reference_start,
-                                choose_haplotype(
-                                    model::HaplotypeMask::both,
-                                    haplotype_key,
-                                    fragment_ordinal),
-                                model::CaptureStrand::unknown,
-                                read_layout));
-                            ++fragment_ordinal;
-                        }
+                        emit_fragments_ordered(
+                            batch.candidates,
+                            fragment_ordinal,
+                            config.core_workers,
+                            [&](const wgbs::VariableWgbsCandidate &candidate,
+                                std::uint64_t ordinal) {
+                                const fragment_builder::ReadLayout read_layout{
+                                    candidate.insert_length,
+                                    config.read_length_1,
+                                    config.paired_end};
+                                return build_fragment(
+                                    candidate.reference_start,
+                                    choose_haplotype(
+                                        model::HaplotypeMask::both,
+                                        haplotype_key,
+                                        ordinal),
+                                    model::CaptureStrand::unknown,
+                                    read_layout,
+                                    ordinal);
+                            },
+                            emitter);
+                        fragment_ordinal += batch.candidates.size();
                         candidate_ordinal = batch.next_candidate_ordinal;
                     } else if (profiled_haplotype_starts) {
                         const auto batch = profiled_haplotype_starts->sample(
@@ -2061,15 +2328,21 @@ protocol::Trailer generate_core_stream(
                                 "haplotype coverage skipped fragment count exceeds uint64");
                         }
                         skipped_fragment_count += batch.skipped_count;
-                        for (const wgbs::HaplotypeCandidate &candidate
-                             : batch.candidates) {
-                            emitter.write(build_fragment(
-                                candidate.reference_start,
-                                candidate.haplotype,
-                                model::CaptureStrand::unknown,
-                                fixed_read_layout));
-                            ++fragment_ordinal;
-                        }
+                        emit_fragments_ordered(
+                            batch.candidates,
+                            fragment_ordinal,
+                            config.core_workers,
+                            [&](const wgbs::HaplotypeCandidate &candidate,
+                                std::uint64_t ordinal) {
+                                return build_fragment(
+                                    candidate.reference_start,
+                                    candidate.haplotype,
+                                    model::CaptureStrand::unknown,
+                                    fixed_read_layout,
+                                    ordinal);
+                            },
+                            emitter);
+                        fragment_ordinal += batch.candidates.size();
                         candidate_ordinal += chunk;
                     } else {
                         std::vector<std::uint32_t> starts;
@@ -2101,19 +2374,25 @@ protocol::Trailer generate_core_stream(
                                 candidate_ordinal,
                                 chunk);
                         }
-                        for (const std::uint32_t start : starts) {
-                            emitter.write(build_fragment(
-                                start,
-                                choose_haplotype(
-                                    variant_starts
-                                        ? variant_starts->haplotype_mask(start)
-                                        : model::HaplotypeMask::both,
-                                    haplotype_key,
-                                    fragment_ordinal),
-                                model::CaptureStrand::unknown,
-                                fixed_read_layout));
-                            ++fragment_ordinal;
-                        }
+                        emit_fragments_ordered(
+                            starts,
+                            fragment_ordinal,
+                            config.core_workers,
+                            [&](std::uint32_t start, std::uint64_t ordinal) {
+                                return build_fragment(
+                                    start,
+                                    choose_haplotype(
+                                        variant_starts
+                                            ? variant_starts->haplotype_mask(start)
+                                            : model::HaplotypeMask::both,
+                                        haplotype_key,
+                                        ordinal),
+                                    model::CaptureStrand::unknown,
+                                    fixed_read_layout,
+                                    ordinal);
+                            },
+                            emitter);
+                        fragment_ordinal += starts.size();
                         candidate_ordinal += chunk;
                     }
                     emitted_for_contig += chunk;
@@ -2178,58 +2457,63 @@ protocol::Trailer generate_core_stream(
                         requested - emitted_for_contig;
                     const std::uint32_t chunk =
                         std::min(remaining, config.chunk_size);
-                    std::vector<std::uint32_t> indices;
-                    if (profile_sampler) {
-                        indices = profile_sampler->sample_indices(
-                            contig.index,
-                            config.master_seed,
-                            candidate_ordinal,
-                            chunk);
-                    } else if (diploid_catalog) {
-                        indices = diploid_catalog->sample_indices(
-                            contig.index,
-                            config.master_seed,
-                            candidate_ordinal,
-                            chunk);
-                    } else {
-                        indices = reference_catalog->sample_indices(
-                            contig.index,
-                            config.master_seed,
-                            candidate_ordinal,
-                            chunk);
-                    }
-                    for (const std::uint32_t index : indices) {
-                        const rrbs::Candidate &candidate = diploid_catalog
-                            ? diploid_catalog->candidate(index)
-                            : reference_catalog->candidate(index);
-                        const fragment_builder::ReadLayout read_layout{
-                            candidate.template_length,
-                            config.read_length_1,
-                            config.paired_end,
-                            diploid_catalog
-                                ? fragment_builder::ReadLayout::InsertCoordinate::haplotype
-                                : fragment_builder::ReadLayout::InsertCoordinate::reference,
-                        };
-                        const std::uint8_t selected_haplotype = choose_haplotype(
-                            candidate.haplotype_mask,
-                            haplotype_key,
-                            fragment_ordinal);
-                        emitter.write(diploid_catalog
-                            ? build_haplotype_fragment(
-                                  candidate.reference_start,
-                                  candidate.reference_end,
-                                  candidate.include_start_anchor_insertion,
-                                  candidate.include_end_anchor_insertion,
-                                  selected_haplotype,
-                                  model::CaptureStrand::unknown,
-                                  read_layout)
-                            : build_fragment(
-                                  candidate.reference_start,
-                                  selected_haplotype,
-                                  model::CaptureStrand::unknown,
-                                  read_layout));
-                        ++fragment_ordinal;
-                    }
+                    const std::vector<std::uint32_t> indices = profile_sampler
+                        ? profile_sampler->sample_indices(
+                              contig.index,
+                              config.master_seed,
+                              candidate_ordinal,
+                              chunk)
+                        : diploid_catalog
+                            ? diploid_catalog->sample_indices(
+                                  contig.index,
+                                  config.master_seed,
+                                  candidate_ordinal,
+                                  chunk)
+                            : reference_catalog->sample_indices(
+                                  contig.index,
+                                  config.master_seed,
+                                  candidate_ordinal,
+                                  chunk);
+                    emit_fragments_ordered(
+                        indices,
+                        fragment_ordinal,
+                        config.core_workers,
+                        [&](std::uint32_t index, std::uint64_t ordinal) {
+                            const rrbs::Candidate &candidate = diploid_catalog
+                                ? diploid_catalog->candidate(index)
+                                : reference_catalog->candidate(index);
+                            const fragment_builder::ReadLayout read_layout{
+                                candidate.template_length,
+                                config.read_length_1,
+                                config.paired_end,
+                                diploid_catalog
+                                    ? fragment_builder::ReadLayout::InsertCoordinate::haplotype
+                                    : fragment_builder::ReadLayout::InsertCoordinate::reference,
+                            };
+                            const std::uint8_t selected_haplotype =
+                                choose_haplotype(
+                                    candidate.haplotype_mask,
+                                    haplotype_key,
+                                    ordinal);
+                            return diploid_catalog
+                                ? build_haplotype_fragment(
+                                      candidate.reference_start,
+                                      candidate.reference_end,
+                                      candidate.include_start_anchor_insertion,
+                                      candidate.include_end_anchor_insertion,
+                                      selected_haplotype,
+                                      model::CaptureStrand::unknown,
+                                      read_layout,
+                                      ordinal)
+                                : build_fragment(
+                                      candidate.reference_start,
+                                      selected_haplotype,
+                                      model::CaptureStrand::unknown,
+                                      read_layout,
+                                      ordinal);
+                        },
+                        emitter);
+                    fragment_ordinal += indices.size();
                     emitted_for_contig += chunk;
                     candidate_ordinal += chunk;
                 }
@@ -2244,8 +2528,8 @@ protocol::Trailer generate_core_stream(
                             contig,
                             *contig_variants,
                             tbs_targets->targets(contig.index),
-                            *config.tbs_center_stddev,
-                            config.insert_mean,
+                            *config.tbs_center_sd,
+                            insert_parameters,
                             config.read_length_1,
                             config.paired_end,
                             config.max_ambiguous_fraction,
@@ -2255,8 +2539,8 @@ protocol::Trailer generate_core_stream(
                         contig.bases,
                         tbs_targets->targets(contig.index),
                         contig.index,
-                        *config.tbs_center_stddev,
-                        config.insert_mean,
+                        *config.tbs_center_sd,
+                        insert_parameters,
                         config.read_length_1,
                         config.paired_end,
                         config.max_ambiguous_fraction,
@@ -2295,40 +2579,57 @@ protocol::Trailer generate_core_stream(
                             "TBS skipped fragment count exceeds uint64");
                     }
                     skipped_fragment_count += batch.skipped_count;
-                    for (const tbs::Candidate &candidate : batch.candidates) {
-                        const fragment_builder::ReadLayout read_layout{
-                            candidate.template_length,
-                            config.read_length_1,
-                            config.paired_end,
-                            diploid_catalog
-                                ? fragment_builder::ReadLayout::InsertCoordinate::haplotype
-                                : fragment_builder::ReadLayout::InsertCoordinate::reference,
-                        };
-                        const std::uint8_t selected_haplotype = choose_haplotype(
-                            candidate.haplotype_mask,
-                            haplotype_key,
-                            fragment_ordinal);
-                        emitter.write(diploid_catalog
-                            ? build_haplotype_fragment(
-                                  candidate.reference_start,
-                                  candidate.reference_end,
-                                  candidate.include_start_anchor_insertion,
-                                  candidate.include_end_anchor_insertion,
-                                  selected_haplotype,
-                                  candidate.capture_strand,
-                                  read_layout)
-                            : build_fragment(
-                                  candidate.reference_start,
-                                  selected_haplotype,
-                                  candidate.capture_strand,
-                                  read_layout));
-                        ++fragment_ordinal;
-                    }
+                    emit_fragments_ordered(
+                        batch.candidates,
+                        fragment_ordinal,
+                        config.core_workers,
+                        [&](const tbs::Candidate &candidate,
+                            std::uint64_t ordinal) {
+                            const fragment_builder::ReadLayout read_layout{
+                                candidate.template_length,
+                                config.read_length_1,
+                                config.paired_end,
+                                diploid_catalog
+                                    ? fragment_builder::ReadLayout::InsertCoordinate::haplotype
+                                    : fragment_builder::ReadLayout::InsertCoordinate::reference,
+                            };
+                            const std::uint8_t selected_haplotype =
+                                choose_haplotype(
+                                    candidate.haplotype_mask,
+                                    haplotype_key,
+                                    ordinal);
+                            return diploid_catalog
+                                ? build_haplotype_fragment(
+                                      candidate.reference_start,
+                                      candidate.reference_end,
+                                      candidate.include_start_anchor_insertion,
+                                      candidate.include_end_anchor_insertion,
+                                      selected_haplotype,
+                                      candidate.capture_strand,
+                                      read_layout,
+                                      ordinal)
+                                : build_fragment(
+                                      candidate.reference_start,
+                                      selected_haplotype,
+                                      candidate.capture_strand,
+                                      read_layout,
+                                      ordinal);
+                        },
+                        emitter);
+                    fragment_ordinal += batch.candidates.size();
                     emitted_for_contig += chunk;
                     candidate_ordinal += chunk;
                 }
             }
         });
+        if (generated_methdb) {
+            generated_methdb->finish();
+            generated_methdb_output.flush();
+            if (!generated_methdb_output) {
+                throw CoreGeneratorError(
+                    "failed while flushing the generated MethDB sidecar");
+            }
+        }
         if (fragment_ordinal
             != static_cast<std::uint64_t>(requested_fragment_count)) {
             throw CoreGeneratorError("generated fragment count disagrees with plan");

@@ -44,7 +44,7 @@ def _check_wheel(wheel: Path) -> None:
             {
                 "bsreadsim/_licenses/HTSlib.txt",
                 "bsreadsim/_licenses/htscodecs.txt",
-                "bsreadsim/data/examples/test.fa",
+                "bsreadsim/data/example/test.fa",
                 "bsreadsim/data/registry.json",
                 "bsreadsim/htsim/htsim-core",
                 "bsreadsim/run-config.schema.json",
@@ -133,7 +133,7 @@ def _check_sdist(sdist: Path) -> None:
             "LICENSE",
             "MANIFEST.in",
             "README.md",
-            "data/examples/test.fa",
+            "data/example/test.fa",
             "data/registry.json",
             "htsim/src/core.cpp",
             "htslib/LICENSE",

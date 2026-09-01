@@ -13,10 +13,13 @@ import hashlib
 import os
 from pathlib import Path
 import subprocess
+import threading
 
 
 from ..process.batch import (
     BaseState,
+    CaptureStrand,
+    ConversionMode,
     MethylationContext,
     MethylationSource,
     NO_VARIANT_INDEX,
@@ -28,7 +31,7 @@ from ..process.batch import (
     format_fragment_identifier,
 )
 
-from ..htsim.protocol import Header
+from ..htsim.protocol import Header, Technology
 from .errors import OutputError
 
 from .._cext import format_sam_batch as _cext_format_sam_batch
@@ -41,6 +44,9 @@ ANNOTATION_STATE_ALPHABET = (
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 )
 ANNOTATION_STATE_SCHEMA = "state64"
+ANNOTATION_GENOME_CONVERSION_SCHEMA = "bismark-genome-conversion"
+ANNOTATION_READ_CONVERSION_SCHEMA = "bismark-read-conversion"
+ANNOTATION_LIBRARY_STRAND_SCHEMA = "bismark-strand-id"
 ANNOTATION_READ_SUMMARY_SCHEMA = "u16x12"
 ANNOTATION_FRAGMENT_SUMMARY_SCHEMA = "u16x12"
 ANNOTATION_FRAGMENT_REALIZATION_SCHEMA = "packed-b64url"
@@ -104,6 +110,11 @@ def build_sam_header(
         raise BamError("BAM fragment_realization must be a boolean")
     if fragment_realization and not fragment_summary:
         raise BamError("BAM fragment_realization requires fragment_summary")
+    bisulfite_tags = header.technology in (
+        Technology.WGBS,
+        Technology.RRBS,
+        Technology.TBS,
+    )
     lines = ["@HD\tVN:1.6\tSO:unsorted"]
     lines.extend(
         "@SQ\tSN:{}\tLN:{}".format(contig.name, contig.length)
@@ -128,6 +139,18 @@ def build_sam_header(
             ),
             "@CO\tBSREADSIM_ZT={};ALPHABET={}".format(
                 ANNOTATION_STATE_SCHEMA, ANNOTATION_STATE_ALPHABET
+            ),
+            "@CO\tBSREADSIM_XG={};ENABLED={};VALUES=CT|GA".format(
+                ANNOTATION_GENOME_CONVERSION_SCHEMA,
+                1 if bisulfite_tags else 0,
+            ),
+            "@CO\tBSREADSIM_XR={};ENABLED={};VALUES=CT|GA".format(
+                ANNOTATION_READ_CONVERSION_SCHEMA,
+                1 if bisulfite_tags else 0,
+            ),
+            "@CO\tBSREADSIM_YS={};ENABLED={};VALUES=OT|OB|CTOT|CTOB".format(
+                ANNOTATION_LIBRARY_STRAND_SCHEMA,
+                1 if bisulfite_tags else 0,
             ),
             "@CO\tBSREADSIM_ZR={};REQUIRED=1".format(
                 ANNOTATION_READ_SUMMARY_SCHEMA
@@ -369,6 +392,68 @@ _FLAG_COUNT_OVERFLOW = 1 << 13
 _SUMMARY_MAX = 0xFFFF
 
 
+def _informative_strand(
+    fragment: ProcessedFragment,
+) -> CaptureStrand:
+    if fragment.fragment_conversion_mode is ConversionMode.NONE:
+        return CaptureStrand.UNKNOWN
+    if fragment.capture_strand in (
+        CaptureStrand.FORWARD,
+        CaptureStrand.REVERSE,
+    ):
+        return fragment.capture_strand
+    if fragment.capture_strand is not CaptureStrand.UNKNOWN:
+        raise BamError("BAM fragment has an unsupported informative strand")
+    return (
+        CaptureStrand.FORWARD
+        if fragment.fragment_conversion_mode is ConversionMode.C2T
+        else CaptureStrand.REVERSE
+    )
+
+
+def _bisulfite_tags(
+    fragment: ProcessedFragment,
+    mate: ProcessedMate,
+) -> tuple[str, ...]:
+    strand = _informative_strand(fragment)
+    if strand is CaptureStrand.UNKNOWN:
+        if mate.conversion_mode is not ConversionMode.NONE:
+            raise BamError("BAM informative strand and mate conversion disagree")
+        return ()
+    if mate.conversion_mode is ConversionMode.NONE:
+        raise BamError("BAM informative strand and mate conversion disagree")
+    try:
+        first = next(value for value in fragment.mates if value.mate_index == 0)
+    except StopIteration as error:
+        raise BamError("BAM fragment has no read 1 orientation") from error
+    if first.conversion_mode is ConversionMode.NONE:
+        raise BamError("BAM read 1 has no bisulfite conversion")
+
+    genome_conversion = {
+        CaptureStrand.FORWARD: "CT",
+        CaptureStrand.REVERSE: "GA",
+    }[strand]
+    read_conversion = {
+        ConversionMode.C2T: "CT",
+        ConversionMode.G2A: "GA",
+    }[mate.conversion_mode]
+    first_conversion = {
+        ConversionMode.C2T: "CT",
+        ConversionMode.G2A: "GA",
+    }[first.conversion_mode]
+    library_strand = {
+        ("CT", "CT"): "OT",
+        ("GA", "CT"): "OB",
+        ("CT", "GA"): "CTOT",
+        ("GA", "GA"): "CTOB",
+    }[(genome_conversion, first_conversion)]
+    return (
+        "XG:Z:{}".format(genome_conversion),
+        "XR:Z:{}".format(read_conversion),
+        "YS:Z:{}".format(library_strand),
+    )
+
+
 def _site_state_suffixes(
     fragment: ProcessedFragment,
     mates: tuple[ProcessedMate, ...],
@@ -399,6 +484,7 @@ def _site_state_suffixes(
         if mate.reverse_complement:
             state_text = state_text[::-1]
         fields = [
+            *_bisulfite_tags(fragment, mate),
             "zt:Z:{}".format(state_text),
             _summary_tag("zr", _finalize_summary(raw_summary)),
         ]
@@ -502,9 +588,10 @@ def _read_summary_values(
         )
         state_characters.append(ANNOTATION_STATE_ALPHABET[state])
 
+    informative_strand = _informative_strand(fragment)
     flags = (
         (int(fragment.haplotype) & 0x3)
-        | ((int(fragment.capture_strand) & 0x3) << 2)
+        | ((int(informative_strand) & 0x3) << 2)
         | ((int(mate.conversion_mode) & 0x7) << 4)
     )
     if has_asm:
@@ -542,9 +629,10 @@ def _fragment_summary_values(
         context_counts[context_code - 1] += 1
         methylated_counts[context_code - 1] += int(bool(site.methylated))
         has_asm = has_asm or site.methylation_source is MethylationSource.ASM
+    informative_strand = _informative_strand(fragment)
     flags = (
         (int(fragment.haplotype) & 0x3)
-        | ((int(fragment.capture_strand) & 0x3) << 2)
+        | ((int(informative_strand) & 0x3) << 2)
         | ((int(fragment.fragment_conversion_mode) & 0x7) << 4)
     )
     if has_asm:
@@ -848,6 +936,9 @@ class BamOutput:
         self._completed = False
         self._size_bytes = 0
         self._sha256 = ""
+        self._digest = hashlib.sha256()
+        self._reader_error = None  # type: BaseException | None
+        self._reader = None  # type: threading.Thread | None
         self._stderr_path = path.with_name(path.name + ".writer-stderr")
         self.raw = None  # type: BinaryIO | None
         self.stderr = None  # type: BinaryIO | None
@@ -858,15 +949,22 @@ class BamOutput:
             self.process = subprocess.Popen(
                 config.writer_argv,
                 stdin=subprocess.PIPE,
-                stdout=self.raw,
+                stdout=subprocess.PIPE,
                 stderr=self.stderr,
                 close_fds=True,
             )
-            if self.process.stdin is None:
-                raise OutputError("BAM writer has no SAM input stream")
+            if self.process.stdin is None or self.process.stdout is None:
+                raise OutputError("BAM writer has no streaming pipe")
+            self._reader = threading.Thread(
+                target=self._drain_stdout,
+                name="bsreadsim-bam-output",
+                daemon=True,
+            )
+            self._reader.start()
             self.write_bytes(config.sam_header)
         except Exception:
             self._stop_process()
+            self._join_reader()
             self._close_files()
             self._unlink_stderr()
             raise
@@ -904,6 +1002,9 @@ class BamOutput:
                 raise OutputError(
                     "BAM writer did not terminate"
                 ) from timeout_error
+            self._join_reader()
+            if self._reader_error is not None:
+                raise OutputError("failed while receiving BAM output") from self._reader_error
             if self.raw is None:
                 raise OutputError("BAM staged file is unavailable")
             self.raw.flush()
@@ -917,25 +1018,13 @@ class BamOutput:
         except BaseException as observed:
             error = observed
         finally:
+            self._join_reader()
             self._close_files()
             self.closed = True
 
         if error is None:
-            try:
-                digest = hashlib.sha256()
-                size = 0
-                with self.path.open("rb") as staged:
-                    while True:
-                        block = staged.read(1024 * 1024)
-                        if not block:
-                            break
-                        size += len(block)
-                        digest.update(block)
-                self._size_bytes = size
-                self._sha256 = digest.hexdigest()
-                self._completed = True
-            except BaseException as observed:
-                error = observed
+            self._sha256 = self._digest.hexdigest()
+            self._completed = True
         self._unlink_stderr()
         if error is not None:
             if isinstance(error, OutputError):
@@ -956,6 +1045,39 @@ class BamOutput:
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=5)
+
+    def _drain_stdout(self) -> None:
+        process = self.process
+        raw = self.raw
+        if process is None or process.stdout is None or raw is None:
+            self._reader_error = OutputError("BAM output pipe is unavailable")
+            return
+        try:
+            while True:
+                block = process.stdout.read(1024 * 1024)
+                if not block:
+                    return
+                view = memoryview(block)
+                while view:
+                    written = raw.write(view)
+                    if written is None or written <= 0:
+                        raise OSError("staged BAM write made no progress")
+                    self._digest.update(view[:written])
+                    self._size_bytes += written
+                    view = view[written:]
+        except BaseException as error:
+            self._reader_error = error
+        finally:
+            with suppress(OSError):
+                process.stdout.close()
+
+    def _join_reader(self) -> None:
+        reader = self._reader
+        if reader is None:
+            return
+        reader.join(timeout=self._WAIT_SECONDS)
+        if reader.is_alive() and self._reader_error is None:
+            self._reader_error = OutputError("BAM output reader did not terminate")
 
     def _close_files(self) -> None:
         for stream in (self.raw, self.stderr):
@@ -994,6 +1116,9 @@ __all__ = [
     "ALIGNMENT_SCORE_SCHEME",
     "ANNOTATION_FRAGMENT_REALIZATION_SCHEMA",
     "ANNOTATION_FRAGMENT_SUMMARY_SCHEMA",
+    "ANNOTATION_GENOME_CONVERSION_SCHEMA",
+    "ANNOTATION_LIBRARY_STRAND_SCHEMA",
+    "ANNOTATION_READ_CONVERSION_SCHEMA",
     "ANNOTATION_READ_SUMMARY_SCHEMA",
     "ANNOTATION_STATE_SCHEMA",
     "BAM_CONTRACT",

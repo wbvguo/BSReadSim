@@ -67,13 +67,14 @@ def _run_cli(
     *,
     workers: int,
     advanced: bool = False,
+    output_format: str = "fastq",
 ):
     arguments = [
         "run",
         "wgbs",
         "-r", str(root / "tiny.fa"),
         "-o", str(root / name),
-        "-n", "7",
+        "-n", "14",
         "--seed", "1311768467463790320",
         "--mutation-rate", "0",
         "--indel-fraction", "0.15",
@@ -87,12 +88,9 @@ def _run_cli(
         "--beta-chh", "5,2",
         "--conversion-rate", "0.73",
         "--undirectional",
-        "--workers", str(workers),
-        "--core-workers", "2",
-        "--chunk-size", "3",
-        "--max-in-flight-fragments", "2",
+        "--threads", str(workers),
         "--prefix", "sample",
-        "--format", "fastq",
+        "--format", output_format,
         "--core", str(core),
     ]
     if advanced:
@@ -129,8 +127,21 @@ def _run_cli(
     return SimpleNamespace(manifest_path=manifest_path)
 
 
-def run(core: Path, root: Path, name: str, *, workers: int):
-    return _run_cli(core, root, name, workers=workers)
+def run(
+    core: Path,
+    root: Path,
+    name: str,
+    *,
+    workers: int,
+    output_format: str = "fastq",
+):
+    return _run_cli(
+        core,
+        root,
+        name,
+        workers=workers,
+        output_format=output_format,
+    )
 
 
 def run_advanced(core: Path, root: Path, name: str, *, workers: int):
@@ -156,7 +167,7 @@ def run_direct_profile_cli(core: Path, root: Path) -> None:
                 "wgbs",
                 "-r", str(root / "tiny.fa"),
                 "-o", str(output),
-                "-n", "7",
+                "-n", "14",
                 "--seed", "1311768467463790320",
                 "--mutation-rate", "0",
                 "--read-length", "3",
@@ -165,9 +176,10 @@ def run_direct_profile_cli(core: Path, root: Path) -> None:
                 "--insert-max", "8",
                 "--insert-sd", "1",
                 "--max-ambiguous-fraction", "0",
+                "--sampling", "gc",
                 "--gc-profile", str(profile_path),
                 "--error-rate", "0",
-                "--workers", "1",
+                "--threads", "1",
                 "--core", str(core),
             ]
         )
@@ -214,6 +226,25 @@ def main() -> None:
         run(core, root, "fastq-pool", workers=2)
         if data_files(root / "fastq-inline") != data_files(root / "fastq-pool"):
             raise SystemExit("worker count changed ordered FASTQ bytes")
+
+        run(
+            core,
+            root,
+            "fastq-gzip-inline",
+            workers=1,
+            output_format="fastq.gz",
+        )
+        run(
+            core,
+            root,
+            "fastq-gzip-pool",
+            workers=2,
+            output_format="fastq.gz",
+        )
+        if data_files(root / "fastq-gzip-inline") != data_files(
+            root / "fastq-gzip-pool"
+        ):
+            raise SystemExit("thread count changed ordered FASTQ.gz bytes")
 
         # Non-uniform sequencing policies use the general typed path, whose
         # worker count must still preserve exact bytes.

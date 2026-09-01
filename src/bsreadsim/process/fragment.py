@@ -86,6 +86,9 @@ def _resolve_fragment_mode(
     config: ProcessConfig,
 ) -> ConversionMode:
     """Resolve molecule orientation before bisulfite chemistry is applied."""
+    # Current cores resolve the fragment's informative Watson/Crick source and
+    # library geometry before serialization. UNKNOWN remains supported here so
+    # archived protocol fixtures and direct library callers stay readable.
     if not config.bisulfite:
         return ConversionMode.NONE
     if fragment.capture_strand is CaptureStrand.FORWARD:
@@ -152,6 +155,45 @@ def _resolve_fragment_modes(
             )
             result[positions] = _bernoulli_from_pair(pair0, 0.5)
     return result
+
+
+def _resolve_informative_strand(
+    capture_strand: CaptureStrand,
+    conversion_mode: ConversionMode,
+) -> CaptureStrand:
+    """Resolve the reference-oriented strand carrying methylation evidence."""
+    if conversion_mode is ConversionMode.NONE:
+        return CaptureStrand.UNKNOWN
+    if capture_strand in (CaptureStrand.FORWARD, CaptureStrand.REVERSE):
+        return capture_strand
+    if capture_strand is not CaptureStrand.UNKNOWN:
+        raise ProcessError("fragment has an unsupported capture strand")
+    return (
+        CaptureStrand.FORWARD
+        if conversion_mode is ConversionMode.C2T
+        else CaptureStrand.REVERSE
+    )
+
+
+def _resolve_informative_strands(
+    capture_strands: np.ndarray,
+    conversion_modes: np.ndarray,
+) -> np.ndarray:
+    """Vectorized counterpart of :func:`_resolve_informative_strand`."""
+    if capture_strands.shape != conversion_modes.shape:
+        raise ProcessError("strand and conversion-mode columns disagree")
+    resolved = capture_strands.copy()
+    resolved[conversion_modes == int(ConversionMode.NONE)] = int(
+        CaptureStrand.UNKNOWN
+    )
+    unknown = resolved == int(CaptureStrand.UNKNOWN)
+    resolved[
+        np.logical_and(unknown, conversion_modes == int(ConversionMode.C2T))
+    ] = int(CaptureStrand.FORWARD)
+    resolved[
+        np.logical_and(unknown, conversion_modes == int(ConversionMode.G2A))
+    ] = int(CaptureStrand.REVERSE)
+    return resolved
 
 
 def decode_fragments(
@@ -372,6 +414,10 @@ def _process_fragment_with_states(
     include_fragment_realization: bool = False,
 ) -> ProcessedFragment:
     fragment_mode = _resolve_fragment_mode(fragment, config)
+    informative_strand = _resolve_informative_strand(
+        fragment.capture_strand,
+        fragment_mode,
+    )
     if config.bisulfite:
         site_states = (
             _materialize_site_states(fragment, sampled_methylation)
@@ -423,7 +469,7 @@ def _process_fragment_with_states(
         fragment.variants,
         site_states,
         processed_mates,
-        fragment.capture_strand,
+        informative_strand,
         sum(bool(value) for value in converted_fragment.succeeded),
         sum(
             bool(attempted) and not bool(succeeded)
@@ -487,7 +533,7 @@ def supports_common_processing(config: ProcessConfig) -> bool:
     """Whether common columns support the uniform vectorized process path."""
 
     return (
-        isinstance(config.methylation_model, BernoulliStateModel)
+        isinstance(config.meth_model, BernoulliStateModel)
         and isinstance(config.quality, UniformQuality)
         and isinstance(config.error, UniformError)
     )
@@ -540,7 +586,10 @@ def _pack_fragment_summaries(
     fragment_count = batch.fragment_count
     summary = np.zeros((fragment_count, 12), dtype=np.uint64)
     haplotypes = batch.array(batch.haplotypes, _U1)
-    capture_strands = batch.array(batch.capture_strands, _U1)
+    capture_strands = _resolve_informative_strands(
+        batch.array(batch.capture_strands, _U1),
+        fragment_modes,
+    )
     summary[:, 0] = (
         haplotypes.astype(np.uint64)
         | (capture_strands.astype(np.uint64) << np.uint64(2))
@@ -836,6 +885,10 @@ def _generate_columnar_read_batch(
         contig_indices,
         config,
     )
+    informative_strands = _resolve_informative_strands(
+        capture_strands,
+        fragment_modes,
+    )
     mate_modes = (
         np.bitwise_xor(fragment_modes[mate_fragment], reverse.astype(np.uint8))
         if config.bisulfite
@@ -946,7 +999,10 @@ def _generate_columnar_read_batch(
         summary = np.zeros((batch.mate_count, 12), dtype=np.uint64)
         summary[:, 0] = (
             haplotypes[mate_fragment].astype(np.uint64)
-            | (capture_strands[mate_fragment].astype(np.uint64) << np.uint64(2))
+            | (
+                informative_strands[mate_fragment].astype(np.uint64)
+                << np.uint64(2)
+            )
             | (mate_modes.astype(np.uint64) << np.uint64(4))
             | variant_flags.astype(np.uint64)
         )
@@ -1099,7 +1155,7 @@ def _generate_columnar_read_batch(
                     (),
                     (),
                     tuple(mates),
-                    CaptureStrand(int(capture_strands[fragment_index])),
+                    CaptureStrand(int(informative_strands[fragment_index])),
                 )
             )
     return tuple(processed)

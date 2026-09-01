@@ -1,55 +1,32 @@
 # Tutorials
 
-These tutorials are organized around common simulation goals. Start with
-Synthetic WGBS for a generated baseline, then progressively incorporate a
-variant set, a methylation profile, or allele-specific methylation. The
-tutorials on RRBS/TBS and ground truth can be followed independently.
+These tutorials provide runnable commands for common bisulfite-sequencing
+tasks. Replace the example paths before running them, and use inputs from the
+same reference assembly. For WGS, WES, and TS examples, see
+[Other assays](other-assays.md).
 
 | Goal | Tutorial |
 | --- | --- |
-| Generate WGBS data without measured profiles | [Synthetic WGBS](#wgbs) |
-| Incorporate measured variants and methylation | [Variant sets and methylation profiles](#variant-sets-and-methylation-profiles) |
+| Generate WGBS from a reference genome | [WGBS from a reference genome](#wgbs) |
+| Incorporate existing variants and methylation | [Variant sets and methylation profiles](#variant-sets-and-methylation-profiles) |
 | Add haplotype-specific methylation | [Allele-specific methylation](#allele-specific-methylation) |
-| Simulate restriction or capture enrichment | [RRBS and TBS](#rrbs-and-tbs) |
-| Generate reads with detailed truth | [Ground-truth benchmarking](#ground-truth-benchmarking) |
+| Simulate restriction or targeted sampling | [Enrichment-based assays](#enrichment-based-assays) |
+| Export annotated BAM and reusable truth | [Save ground truth](#save) |
+| Simulate new reads from a saved snapshot | [Reuse ground truth](#reuse) |
 
-Each section provides a complete command template, its required inputs, and
-the expected result. Replace example paths with inputs from the same reference
-assembly, and use [Customize](customize.md) for the full set of model and
-parameter choices.
+Use [Customize](customize.md) to choose models and review their default
+behavior. Use the [CLI reference](../reference/cli.md) for accepted values and
+complete option combination rules.
 
-## Synthetic WGBS { #wgbs }
+## WGBS from a reference genome { #wgbs }
 
-**When to use.** Generate a WGBS baseline when no measured genetic or
-methylation profile is available. BSReadSim introduces variants at the
-requested mutation rate and generates context-specific methylation
-probabilities from its default Beta distributions.
-
-**Inputs.** A reference FASTA. No VCF or methylation profile is required.
-
-**Methylation pattern.** Without a methylation input, BSReadSim draws a
-probability for every eligible cytosine from the Beta distribution assigned to
-its CG, CHG, or CHH context. These probabilities form the MethDB used to
-realize methylation on sampled fragments. `--seed-meth` makes the generated
-MethDB reproducible.
-
-Adjust the three distributions to create a different synthetic pattern:
-
-| Pattern | `--beta-cg` | `--beta-chg` | `--beta-chh` |
-| --- | --- | --- | --- |
-| High CpG, low non-CpG | `8,2` | `1,19` | `1,19` |
-| Low CpG, low non-CpG | `2,8` | `1,19` | `1,19` |
-
-The mean of `Beta(a, b)` is `a / (a + b)`, so the two CpG distributions are
-centered at `0.8` and `0.2`. Probabilities are generated independently at
-individual sites in the current model.
-
-**Run.**
+This example generates 100,000 paired-end WGBS read records from a reference
+FASTA, with de novo variants and a simulated methylation profile.
 
 ```bash
 bsreadsim run wgbs \
-  -r reference.fa \
-  -o runs/synthetic-wgbs \
+  -r test.fa \
+  -o test/wgbs-denovo \
   -n 100000 \
   --mutation-rate 0.001 \
   --seed-mut 7 \
@@ -57,163 +34,174 @@ bsreadsim run wgbs \
   -s 42
 ```
 
-**Expected result.** `runs/synthetic-wgbs/` contains paired compressed FASTQ
-and `sim.manifest.json`. The manifest records the generated variant and
-methylation settings plus the effective seeds. Add `--save-methdb` when the
-generated MethDB should also be published beneath `truth/`.
+With the default paired-end mode and `fastq.gz` format, the output directory
+has this structure:
 
-**Customize further.** Adjust `--mutation-rate` to control synthetic genetic
-variation, or set it to `0` when no variants are desired. Keep `--seed-mut`
-and `--seed-meth` fixed to reuse the same genome and methylome while changing
-`-s` to draw different reads. See [Genome](customize.md#genetic-variation) and
-[Methylome](customize.md#methylation) for the available models.
+```text { .no-copy }
+test/wgbs-denovo/
+├── sim.R1.fastq.gz
+├── sim.R2.fastq.gz
+└── sim.manifest.json
+```
+
+??? info "How it works"
+
+    **Generation:** With no VCF or methylation profile, BSReadSim generates
+    [de novo variants](customize.md#generated-variants) and
+    [context-specific methylation probabilities](customize.md#generated-methylation).
+    [Whole-genome fragments](customize.md#generate-fragments) use the
+    configured fragment-length distribution, and the default
+    [Bernoulli model](customize.md#methylation-states) realizes methylation
+    states before bisulfite conversion.
+
+    **Sampling:** Eligible whole-genome starts are
+    [sampled uniformly](customize.md#sample-fragments). The explicit
+    [random seeds](customize.md#random-seeds) make genome preparation, fragment
+    sampling, and read generation reproducible.
 
 ## Variant sets and methylation profiles
 
-**When to use.** Incorporate a measured variant set and methylation
-probabilities into an input-informed WGBS simulation.
-
-**Inputs.** A reference FASTA, a one-sample diploid VCF variant set, and either
-a bedMethyl or CGmap methylation profile from the same assembly. A VCF
-automatically disables de novo mutation generation.
-
-**Run.**
+This recipe combines a one-sample diploid VCF with a site-level methylation
+profile from the same reference assembly. It uses CGmap, but bedMethyl,
+MethBED, and MethBG are also supported.
 
 ```bash
 bsreadsim run wgbs \
-  -r reference.fa \
-  -o runs/profile-based \
+  -r test.fa \
+  -o test/wgbs-profile \
   -n 100000 \
-  --vcf sample.vcf.gz \
-  --bed-methyl sample.bed.gz \
+  --vcf test.vcf.gz \
+  --cgmap test.cgmap.gz \
   --seed-phase 7 \
   --seed-meth 11 \
   -s 42
 ```
 
-**Expected result.** `runs/profile-based/` contains paired compressed FASTQ
-and a manifest identifying both measured inputs. Profile positions use their
-supplied probabilities; missing positions use the context-specific generated
-fallback.
+??? info "How it works"
 
-**Customize further.** Use `--cgmap` instead of `--bed-methyl`, or enable
-context pooling when an empirical distribution matters more than individual
-loci. See the [VCF](../reference/formats/vcf-variants.md),
-[bedMethyl](../reference/formats/bed-methyl-profile.md), and
-[CGmap](../reference/formats/cgmap-profile.md) contracts.
+    When a VCF is provided, BSReadSim uses its diploid variant set instead of
+    generating de novo variants. Existing phasing is preserved; unphased
+    heterozygous variants are assigned to haplotypes using `--seed-phase`.
+
+    The CGmap file supplies methylation levels. Unlisted eligible sites
+    receive generated context-specific methylation probabilities rather than
+    being treated as unmethylated.
+
+    See [Load variants from a VCF](customize.md#vcf-genome),
+    [Load methylation profiles](customize.md#predefined-methylation),
+    and the [input file formats](../reference/formats.md).
 
 ## Allele-specific methylation
 
-**When to use.** Simulate selected sites with different methylation
-probabilities on the REF and ALT haplotypes.
-
-**Inputs.** The reference, diploid VCF, and baseline methylation profile from
-the profile-based scenario, plus an ASM or ASM BED file. Every ASM row must
-link to a heterozygous SNV in the VCF.
-
-**Run.**
+Use an ASM profile to assign different methylation probabilities to linked REF
+and ALT alleles. A VCF can optionally be provided to preserve its complete
+variant set and existing phasing.
 
 ```bash
 bsreadsim run wgbs \
-  -r reference.fa \
-  -o runs/asm \
+  -r test.fa \
+  -o test/wgbs-asm \
   -n 100000 \
-  --vcf sample.vcf.gz \
-  --bed-methyl sample.bed.gz \
-  --asm sample.asm.gz \
+  --cgmap test.cgmap.gz \
+  --asm test.asm.gz \
   --seed-phase 7 \
   --seed-meth 11 \
   -s 42
 ```
 
-**Expected result.** `runs/asm/` contains reads generated from the
-profile-informed methylome with haplotype-specific probabilities overlaid at
-linked sites. The manifest records the VCF, baseline profile, and ASM input.
+??? info "How it works"
 
-**Customize further.** Use `--asm-bed` for the BED representation. ASM
-overrides the baseline profile at linked sites. See the
-[ASM](../reference/formats/asm-profile.md) and
-[ASM BED](../reference/formats/asm-bed-profile.md) contracts.
+    Without a VCF, the heterozygous SNVs linked by the ASM profile define the
+    variant set. `--seed-phase` makes their haplotype assignment reproducible.
 
-## RRBS and TBS
+    At each ASM site, each haplotype receives the methylation probability
+    associated with its linked-SNV allele. Other sites retain their baseline
+    methylation probabilities.
+
+    See [Add allele-specific methylation](customize.md#allele-specific-methylation)
+    and the [ASM input formats](../reference/formats.md#allele-specific-methylation-inputs).
+
+## Enrichment-based assays
 
 ### RRBS { #rrbs }
 
-**When to use.** Simulate a library enriched for restriction-enzyme fragments
-within a selected size range.
-
-**Inputs.** A reference FASTA and one or more cut motifs. This baseline uses
-MspI `C|CGG` and uniform sampling over eligible fragments.
-
-**Run.**
+Reduced representation bisulfite sequencing (RRBS) samples restriction-enzyme
+fragments inside a retained size window. This example uses the default MspI
+cut site `C|CGG` and uniform sampling.
 
 ```bash
 bsreadsim run rrbs \
-  -r reference.fa \
-  -o runs/rrbs-uniform \
+  -r test.fa \
+  -o test/rrbs \
   -n 100000 \
   --cut-site 'C|CGG' \
   --insert-min 100 \
-  --insert-mean 250 \
   --insert-max 500 \
   --mutation-rate 0 \
   -s 42
 ```
 
-**Expected result.** `runs/rrbs-uniform/` contains reads sampled from
-MspI-bounded fragments between 100 and 500 bases, plus the run manifest.
+??? info "How it works"
 
-**Customize further.** Add motifs for a multi-enzyme library or use externally
-scored candidates. Score-based runs must share genome, variant, motif, and
-fragment-boundary settings with the candidate build. See
-[Customize](customize.md#rrbs) and the
-[RRBS candidate format](../reference/formats/rrbs-candidate-bed.md).
+    **Generation:** `--cut-site 'C|CGG'` defines MspI digestion. RRBS retains
+    restriction fragments between `--insert-min 100` and
+    `--insert-max 500`.
+
+    **Sampling:** Because no score model is selected, retained fragments are
+    sampled uniformly. For non-uniform sampling, export the exact candidates
+    with `build rrbs`, score them with an external model, then load the scored
+    file with `--sampling score` and `--rrbs-candidates`.
+
+    See [RRBS fragment sampling](customize.md#rrbs) and the
+    [RRBS candidate contract](../reference/formats.md#rrbs-candidate-bed).
 
 ### TBS { #tbs }
 
-**When to use.** Simulate a bisulfite library enriched for predefined genomic
-targets.
-
-**Inputs.** A reference FASTA and a strand-aware BED6 target file. This
-baseline assigns equal sampling mass to every eligible target.
-
-**Run.**
+Targeted bisulfite sequencing (TBS) uses target regions from a strand-aware
+BED6 file to represent probe enrichment. This example samples eligible targets
+uniformly.
 
 ```bash
 bsreadsim run tbs \
-  -r reference.fa \
-  -o runs/tbs-uniform \
+  -r test.fa \
+  -o test/tbs \
   -n 100000 \
   --targets targets.bed \
   --insert-mean 300 \
-  --insert-sd 0 \
+  --center-sd 50 \
   --mutation-rate 0 \
   -s 42
 ```
 
-**Expected result.** `runs/tbs-uniform/` contains reads sampled around the BED
-targets with a fixed 300-base fragment length, plus the run manifest.
+??? info "How it works"
 
-**Customize further.** Use score-based sampling when BED column 5 should
-supply relative capture weights. Scores are relative and do not need to sum to
-one. See [Customize](customize.md#tbs), the
-[TBS target format](../reference/formats/tbs-catalog.md), and the
-[target-score sampling guide](../reference/advanced/target-score-sampling.md).
+    **Generation:** `--targets` supplies the enriched regions.
+    `--center-sd 50` controls fragment-center displacement, and
+    `--insert-mean 300` sets the mean fragment length.
 
-## Ground-truth benchmarking
+    **Sampling:** Targets are sampled uniformly by default. `--sampling score`
+    instead uses BED column 5 as each target's relative weight.
 
-**When to use.** Generate reads with origin, methylation, conversion, variant,
-and sequencing-error truth for method development or accuracy evaluation.
+    This model represents enrichment through target-centered fragment
+    placement; it does not simulate individual probes or capture chemistry.
+    See [Targeted fragment generation](customize.md#tbs),
+    [fragment sampling](customize.md#sample-fragments), and the
+    [target BED contract](../reference/formats.md#capture-target-bed).
 
-**Inputs.** A reference FASTA. This example generates variants and a
-methylome internally; measured inputs can be substituted from the earlier
-profile-based scenarios.
+## Ground truth in simulation
 
-**Run.**
+BSReadSim provides ground truth for controlled simulations. The saved truth
+can support method development and benchmarking or be reused in later
+simulations.
+
+### Save
+
+This example saves reads as origin-annotated BAM and exports the prepared
+variants and methylation profile as reusable VCF and MethDB artifacts.
 
 ```bash
 bsreadsim run wgbs \
-  -r reference.fa \
+  -r test.fa \
   -o runs/benchmark \
   -n 100000 \
   --mutation-rate 0.001 \
@@ -224,12 +212,48 @@ bsreadsim run wgbs \
   --save-truth
 ```
 
-**Expected result.** `runs/benchmark/` contains `sim.bam`,
-`sim.manifest.json`, `truth/sim.variants.vcf.gz`, and `truth/sim.methdb`. BAM
-annotations retain read-level truth, while the VCF and MethDB preserve the
-biological models used by the run.
+The output directory has this structure:
 
-**Customize further.** Add fragment summaries or complete-fragment
-realizations for more detailed BAM truth. See
-[Output](customize.md#reproducibility), [Outputs](../outputs/index.md), and
-[Annotated BAM](../reference/formats/bam.md) for the exact artifacts and tags.
+```text { .no-copy }
+runs/benchmark/
+├── sim.bam
+├── sim.manifest.json
+└── truth/
+    ├── sim.variants.vcf.gz
+    └── sim.methdb
+```
+
+??? info "How it works"
+
+    `--format bam` replaces FASTQ with origin-annotated BAM. `--save-truth`
+    writes the prepared, phased variant set and methylation profile as
+    reusable VCF and MethDB artifacts.
+
+    Add [`--fragment-realization`](customize.md#truth-artifacts) when
+    complete-fragment methylation and conversion states are needed in BAM.
+
+    See [Save simulation truth](customize.md#truth-artifacts),
+    [Outputs](../outputs/index.md), and
+    [Annotated BAM](../outputs/index.md#annotated-bam) for the artifact and tag
+    contracts.
+
+### Reuse
+
+Load the saved MethDB to reuse the same methylation profile and embedded
+variants in another WGBS run:
+
+```bash
+bsreadsim run wgbs \
+  -r test.fa \
+  -o test/wgbs-reuse \
+  -n 100000 \
+  --methdb runs/benchmark/truth/sim.methdb \
+  -s 43
+```
+
+`--methdb` loads the saved snapshot directly. Changing the master seed draws
+new fragments and reads while retaining the prepared methylation profile and
+variant set. Use the saved VCF with `--vcf` instead when only the prepared
+variant set should be reused. See
+[Load methylation profiles](customize.md#predefined-methylation) for input
+combination rules.

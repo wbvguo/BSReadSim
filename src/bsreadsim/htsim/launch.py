@@ -31,7 +31,10 @@ def build_core_argv(
     core_executable: PathLike,
     *,
     emit_details: bool = False,
-    protocol_batch_fragments: int = 64,
+    protocol_batch_fragments: int = 1024,
+    chunk_size: int = 8192,
+    core_workers: int = 1,
+    methdb_output_path: PathLike | None = None,
 ) -> tuple[str, ...]:
     """Return one complete, deterministic ``htsim-core`` argv tuple.
 
@@ -48,14 +51,27 @@ def build_core_argv(
     if (
         isinstance(protocol_batch_fragments, bool)
         or not isinstance(protocol_batch_fragments, int)
-        or not 1 <= protocol_batch_fragments <= 64
+        or not 1 <= protocol_batch_fragments <= 4096
     ):
-        raise CoreArgvError("protocol_batch_fragments must be in [1, 64]")
+        raise CoreArgvError("protocol_batch_fragments must be in [1, 4096]")
+    if (
+        isinstance(chunk_size, bool)
+        or not isinstance(chunk_size, int)
+        or not 1 <= chunk_size <= UINT32_MAX
+    ):
+        raise CoreArgvError("chunk_size must be in [1, 4294967295]")
+    if (
+        isinstance(core_workers, bool)
+        or not isinstance(core_workers, int)
+        or not 1 <= core_workers <= 64
+    ):
+        raise CoreArgvError("core_workers must be in [1, 64]")
     config, roles = _validate_prepared_run(prepared)
 
+    reads = _mapping(config, "reads")
     fragments = _mapping(config, "fragments")
-    execution = _mapping(config, "execution")
     mutation = _mapping(config, "mutation")
+    sequencing = _mapping(config, "sequencing")
     seeds = _mapping(config, "seeds")
     methylation = _mapping(config, "methylation")
     beta = _mapping(methylation, "beta")
@@ -101,17 +117,47 @@ def build_core_argv(
     reference = roles["reference"]
     _append_file(arguments, "--reference", reference)
 
-    for input_name in ("vcf", "cgmap", "bed_methyl", "methdb", "asm", "asm_bed"):
+    for input_name in (
+        "vcf",
+        "cgmap",
+        "bed_methyl",
+        "methbg",
+        "methbed",
+        "methdb",
+        "asm",
+        "asm_bed",
+    ):
         if input_name in inputs:
-            option_name = input_name.replace("_", "-")
+            option_name = (
+                "bedmethyl"
+                if input_name == "bed_methyl"
+                else input_name.replace("_", "-")
+            )
             _append_file(
                 arguments,
                 "--" + option_name,
                 roles["input." + input_name],
             )
+    if methdb_output_path is not None:
+        if "methdb" in inputs:
+            raise CoreArgvError(
+                "methdb_output_path cannot be combined with a MethDB input"
+            )
+        arguments.extend(
+            (
+                "--methdb-output",
+                _path_argument("methdb_output_path", methdb_output_path),
+            )
+        )
 
     technology = _text("technology", config["technology"])
     arguments.extend(("--technology", technology))
+    arguments.extend(
+        (
+            "--directional",
+            _boolean("sequencing.directional", sequencing["directional"]),
+        )
+    )
 
     paired_end = _boolean("fragments.paired_end", fragments["paired_end"])
     arguments.extend(("--paired-end", paired_end))
@@ -149,15 +195,23 @@ def build_core_argv(
             _number("fragments.insert_sd", fragments["insert_sd"]),
         )
     )
-    if "depth" in fragments:
-        arguments.extend(("--depth", _number("fragments.depth", fragments["depth"])))
+    if "depth" in reads:
+        arguments.extend(("--depth", _number("reads.depth", reads["depth"])))
     else:
+        reads_per_fragment = 2 if fragments["paired_end"] else 1
+        read_count = int(
+            _unsigned(
+                "reads.count",
+                reads["count"],
+                UINT32_MAX * reads_per_fragment,
+            )
+        )
+        if read_count % reads_per_fragment != 0:
+            raise CoreArgvError("reads.count must form complete fragments")
         arguments.extend(
             (
                 "--fragments",
-                _unsigned(
-                    "fragments.count", fragments["count"], UINT32_MAX
-                ),
+                str(read_count // reads_per_fragment),
             )
         )
     arguments.extend(
@@ -168,16 +222,25 @@ def build_core_argv(
                 fragments["max_ambiguous_fraction"],
             ),
             "--chunk-size",
-            _unsigned("execution.chunk_size", execution["chunk_size"], UINT32_MAX),
+            str(chunk_size),
             "--core-workers",
-            _unsigned("execution.core_workers", execution["core_workers"], 64),
+            str(core_workers),
         )
     )
 
     if technology == "RRBS":
         rrbs = _mapping(config, "rrbs")
-        for cut_site in rrbs["cut_sites"]:
-            arguments.extend(("--rrbs-cut-site", _text("rrbs.cut_site", cut_site)))
+        cut_sites = rrbs["cut_sites"]
+        if not isinstance(cut_sites, list) or not cut_sites:
+            raise CoreArgvError("normalized rrbs.cut_sites must be a nonempty list")
+        arguments.extend(
+            (
+                "--rrbs-cut-site",
+                ",".join(
+                    _text("rrbs.cut_site", cut_site) for cut_site in cut_sites
+                ),
+            )
+        )
         if "candidate_bed" in rrbs:
             candidate_bed = Path(
                 _text("rrbs.candidate_bed", rrbs["candidate_bed"])
@@ -197,9 +260,9 @@ def build_core_argv(
         _append_file(arguments, "--tbs-bed", roles["input.tbs-bed"])
         arguments.extend(
             (
-                "--tbs-center-stddev",
+                "--tbs-center-sd",
                 _number(
-                    "tbs.fragment_center_stddev", tbs["fragment_center_stddev"]
+                    "tbs.center_sd", tbs["center_sd"]
                 ),
             )
         )
@@ -243,7 +306,7 @@ def build_core_argv(
             _boolean("mutation.homozygous_only", mutation["homozygous_only"]),
             "--collect-non-cpg",
             _boolean("methylation.collect_non_cpg", methylation["collect_non_cpg"]),
-            "--cgmap-pool",
+            "--pool-meth",
             _boolean("methylation.cgmap_pool", methylation["cgmap_pool"]),
             "--update-variant-boundaries",
             _boolean(
@@ -337,7 +400,16 @@ def _expected_roles(
 
     add("reference", config["reference"])
     inputs = _mapping(config, "inputs")
-    for name in ("vcf", "cgmap", "bed_methyl", "methdb", "asm", "asm_bed"):
+    for name in (
+        "vcf",
+        "cgmap",
+        "bed_methyl",
+        "methbg",
+        "methbed",
+        "methdb",
+        "asm",
+        "asm_bed",
+    ):
         if name in inputs:
             add("input." + name, inputs[name])
     if config["technology"] in ("TBS", "WES", "TS"):

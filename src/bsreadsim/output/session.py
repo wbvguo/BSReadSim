@@ -43,6 +43,7 @@ class OutputConfig:
     paired_end: bool
     format: str = "fastq.gz"
     gzip_level: int = 6
+    precompressed_fastq: bool = False
     bam_config: BamConfig | None = None
 
     def __post_init__(self) -> None:
@@ -65,6 +66,10 @@ class OutputConfig:
             or not 0 <= self.gzip_level <= 9
         ):
             raise OutputError("gzip_level must be an integer in [0, 9]")
+        if not isinstance(self.precompressed_fastq, bool):
+            raise OutputError("precompressed_fastq must be a boolean")
+        if self.precompressed_fastq and self.format != "fastq.gz":
+            raise OutputError("precompressed_fastq requires format='fastq.gz'")
         if self.bam_config is not None and not isinstance(
             self.bam_config, BamConfig
         ):
@@ -136,8 +141,10 @@ class _BinaryOutput:
                 fileobj=self.sink,
                 mtime=0,
             )
-        else:
+        elif compression in ("none", "gzip-members"):
             self.stream = self.sink
+        else:
+            raise OutputError("unsupported staged compression mode")
         self.closed = False
 
     def write_text(self, value: str) -> None:
@@ -220,9 +227,16 @@ class OutputSession:
                         staged_path, config.bam_config
                     )
                 else:
+                    compression = "none"
+                    if config.format == "fastq.gz":
+                        compression = (
+                            "gzip-members"
+                            if config.precompressed_fastq
+                            else "gzip"
+                        )
                     self._streams[role] = _BinaryOutput(
                         staged_path,
-                        "gzip" if config.format == "fastq.gz" else "none",
+                        compression,
                         config.gzip_level,
                     )
         except Exception:
@@ -258,6 +272,10 @@ class OutputSession:
         """Write one complete SE/PE fragment to every staged artifact."""
         self._require_state("open")
         try:
+            if self.config.precompressed_fastq:
+                raise OutputError(
+                    "precompressed FASTQ output requires formatted batches"
+                )
             self._validate_fragment(fragment)
             if "read1" in self._streams:
                 read1, read2 = format_fragment_records_trusted(
@@ -340,6 +358,7 @@ class OutputSession:
         *,
         alignment_record_lengths: tuple[int, ...] = (),
         alignment: BytesLike | None = None,
+        precompressed_fastq: bool = False,
     ) -> None:
         """Write one already validated, consecutive formatted fragment batch."""
 
@@ -356,6 +375,12 @@ class OutputSession:
                 raise OutputError("formatted batches must be consecutive")
             if not isinstance(record_lengths, tuple) or not record_lengths:
                 raise OutputError("formatted batch record lengths must be non-empty")
+            if not isinstance(precompressed_fastq, bool):
+                raise OutputError("formatted FASTQ compression flag must be boolean")
+            if precompressed_fastq != self.config.precompressed_fastq:
+                raise OutputError(
+                    "formatted FASTQ compression disagrees with output policy"
+                )
 
             fastq_enabled = "read1" in self._streams
             read1_view = None
@@ -373,6 +398,14 @@ class OutputSession:
                     raise OutputError(
                         "formatted batch mate cardinality disagrees with output"
                     )
+                if precompressed_fastq:
+                    for label, view in (("read1", read1_view), ("read2", read2_view)):
+                        if view is not None and (
+                            len(view) < 20 or bytes(view[:3]) != b"\x1f\x8b\x08"
+                        ):
+                            raise OutputError(
+                                "formatted {} is not a gzip member".format(label)
+                            )
             elif read1_view is not None or read2_view is not None:
                 raise OutputError("BAM-only batch contains unpublished FASTQ bytes")
 
@@ -437,9 +470,17 @@ class OutputSession:
                     raise OutputError("BAM-only batch has FASTQ record lengths")
                 read1_total += read1_length
                 read2_total += read2_length
-            if read1_view is not None and read1_total != len(read1_view):
+            if (
+                read1_view is not None
+                and not precompressed_fastq
+                and read1_total != len(read1_view)
+            ):
                 raise OutputError("formatted batch region sizes disagree with records")
-            if read2_view is not None and read2_total != len(read2_view):
+            if (
+                read2_view is not None
+                and not precompressed_fastq
+                and read2_total != len(read2_view)
+            ):
                 raise OutputError("formatted read2 region size disagrees with records")
             if alignment_view is not None and sum(
                 alignment_record_lengths

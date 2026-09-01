@@ -13,11 +13,12 @@ from bsreadsim.output.bam import (
 )
 from bsreadsim.process import (
     BaseState,
+    CaptureStrand,
     ConversionMode,
     ProcessedFragment,
     ProcessedMate,
 )
-from bsreadsim.htsim.protocol import Contig
+from bsreadsim.htsim.protocol import Contig, Technology
 from tests.unit.test_process_stages import make_fragment
 from tests.unit.test_protocol import make_header
 
@@ -99,8 +100,52 @@ class BamFormattingTests(unittest.TestCase):
         self.assertIn("@PG\tID:bsreadsim\tPN:bsreadsim\tVN:1.2.3\n", value)
         self.assertIn("MAPQ 60 denotes simulated origin", value)
         self.assertIn("BSREADSIM_ZT=state64", value)
+        self.assertIn(
+            "BSREADSIM_XG=bismark-genome-conversion;ENABLED=1;VALUES=CT|GA",
+            value,
+        )
+        self.assertIn(
+            "BSREADSIM_XR=bismark-read-conversion;ENABLED=1;VALUES=CT|GA",
+            value,
+        )
+        self.assertIn(
+            "BSREADSIM_YS=bismark-strand-id;ENABLED=1;"
+            "VALUES=OT|OB|CTOT|CTOB",
+            value,
+        )
         self.assertIn("BSREADSIM_ZR=u16x12;REQUIRED=1", value)
         self.assertIn("BSREADSIM_ZF=u16x12;ENABLED=0", value)
+
+    def test_non_bisulfite_bam_disables_and_omits_conversion_tags(self) -> None:
+        header = replace(
+            make_header(details=True),
+            technology=Technology.WGS,
+        )
+        header_text = build_sam_header(
+            header,
+            sample_name="sample",
+            program_version="1.2.3",
+        ).decode("ascii")
+        self.assertIn("BSREADSIM_XG=bismark-genome-conversion;ENABLED=0", header_text)
+        self.assertIn("BSREADSIM_XR=bismark-read-conversion;ENABLED=0", header_text)
+        self.assertIn("BSREADSIM_YS=bismark-strand-id;ENABLED=0", header_text)
+
+        source = fragment_for((10, 11, -1, 12, 15))
+        fragment = replace(
+            source,
+            fragment_conversion_mode=ConversionMode.NONE,
+            capture_strand=CaptureStrand.UNKNOWN,
+            mates=(replace(source.mates[0], conversion_mode=ConversionMode.NONE),),
+        )
+        tags = tag_fields(fields(format_sam_fragment(
+            fragment,
+            paired_end=False,
+            read_group_id=RUN_ID,
+            contig_length=100,
+        )[0]))
+        self.assertNotIn("XG", tags)
+        self.assertNotIn("XR", tags)
+        self.assertNotIn("YS", tags)
 
     def test_indel_projection_forms_query_complete_cigar(self) -> None:
         record = format_sam_fragment(
@@ -118,6 +163,9 @@ class BamFormattingTests(unittest.TestCase):
         tags = tag_fields(value)
         self.assertEqual(tags["RG"], "RG:Z:" + RUN_ID)
         self.assertEqual(tags["AS"], "AS:i:5")
+        self.assertEqual(tags["XG"], "XG:Z:CT")
+        self.assertEqual(tags["XR"], "XR:Z:CT")
+        self.assertEqual(tags["YS"], "YS:Z:OT")
         self.assertTrue(tags["zt"].startswith("zt:Z:"))
         self.assertTrue(tags["zr"].startswith("zr:B:S,"))
         self.assertNotIn("PG", tags)
@@ -187,7 +235,99 @@ class BamFormattingTests(unittest.TestCase):
         ])
         self.assertEqual(tag_fields(first)["MC"], "MC:Z:5M")
         self.assertEqual(tag_fields(second)["MC"], "MC:Z:5M")
+        self.assertEqual(tag_fields(first)["XG"], "XG:Z:CT")
+        self.assertEqual(tag_fields(second)["XG"], "XG:Z:CT")
+        self.assertEqual(tag_fields(first)["XR"], "XR:Z:CT")
+        self.assertEqual(tag_fields(second)["XR"], "XR:Z:GA")
+        self.assertEqual(tag_fields(first)["YS"], "YS:Z:OT")
+        self.assertEqual(tag_fields(second)["YS"], "YS:Z:OT")
         self.assertEqual(second[9], "TGTCG")
+
+    def test_original_bottom_fragment_has_bismark_tags(self) -> None:
+        source = make_fragment(
+            paired_end=True,
+            capture_strand=CaptureStrand.REVERSE,
+        )
+        left, right = source.mates
+        original_bottom = replace(
+            source,
+            mates=(
+                replace(right, mate_index=0),
+                replace(left, mate_index=1),
+            ),
+        )
+        processed = process_fragment(
+            original_bottom,
+            "chrMini",
+            UniformProcessConfig(
+                master_seed=7,
+                conversion_rate=1,
+                error_rate=0,
+                quality_phred=30,
+            ),
+        )
+        first, second = tuple(
+            tag_fields(fields(record))
+            for record in format_sam_fragment(
+                processed,
+                paired_end=True,
+                read_group_id="run",
+                contig_length=1000,
+            )
+        )
+
+        self.assertEqual(first["XG"], "XG:Z:GA")
+        self.assertEqual(second["XG"], "XG:Z:GA")
+        self.assertEqual(first["XR"], "XR:Z:CT")
+        self.assertEqual(second["XR"], "XR:Z:GA")
+        self.assertEqual(first["YS"], "YS:Z:OB")
+        self.assertEqual(second["YS"], "YS:Z:OB")
+
+    def test_complementary_fragments_have_bismark_tags(self) -> None:
+        for capture_strand, expected in (
+            (CaptureStrand.FORWARD, ("CT", "GA", "CT", "CTOT")),
+            (CaptureStrand.REVERSE, ("GA", "GA", "CT", "CTOB")),
+        ):
+            source = make_fragment(
+                paired_end=True,
+                capture_strand=capture_strand,
+            )
+            left, right = source.mates
+            if capture_strand is CaptureStrand.FORWARD:
+                source = replace(
+                    source,
+                    mates=(
+                        replace(right, mate_index=0),
+                        replace(left, mate_index=1),
+                    ),
+                )
+            processed = process_fragment(
+                source,
+                "chrMini",
+                UniformProcessConfig(
+                    master_seed=7,
+                    conversion_rate=1,
+                    error_rate=0,
+                    quality_phred=30,
+                ),
+            )
+            first, second = tuple(
+                tag_fields(fields(record))
+                for record in format_sam_fragment(
+                    processed,
+                    paired_end=True,
+                    read_group_id="run",
+                    contig_length=1000,
+                )
+            )
+            genome, first_read, second_read, library = expected
+            with self.subTest(library=library):
+                self.assertEqual(first["XG"], "XG:Z:" + genome)
+                self.assertEqual(second["XG"], "XG:Z:" + genome)
+                self.assertEqual(first["XR"], "XR:Z:" + first_read)
+                self.assertEqual(second["XR"], "XR:Z:" + second_read)
+                self.assertEqual(first["YS"], "YS:Z:" + library)
+                self.assertEqual(second["YS"], "YS:Z:" + library)
 
     def test_rich_tags_are_required_and_fragment_summary_is_optional(self) -> None:
         fragment = fragment_for((10, 11, -1, 12, 15))
@@ -207,6 +347,9 @@ class BamFormattingTests(unittest.TestCase):
 
         self.assertEqual(len(regular["zt"].removeprefix("zt:Z:")), 5)
         self.assertEqual(len(regular["zr"].split(",")), 13)
+        self.assertEqual(regular["XG"], "XG:Z:CT")
+        self.assertEqual(regular["XR"], "XR:Z:CT")
+        self.assertEqual(regular["YS"], "YS:Z:OT")
         self.assertNotIn("zf", regular)
         self.assertEqual(len(summarized["zf"].split(",")), 13)
 

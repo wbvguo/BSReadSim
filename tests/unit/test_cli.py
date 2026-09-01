@@ -91,7 +91,7 @@ class CommandLineTests(unittest.TestCase):
                 "export", "test-fasta", "-o", str(output)
             )
             self.assertEqual(copied.returncode, 0, copied.stderr)
-            self.assertTrue(output.read_bytes().startswith(b">bsreadsim_test\n"))
+            self.assertTrue(output.read_bytes().startswith(b">chr10\n"))
 
     def test_export_requires_a_target_and_its_paths(self) -> None:
         for arguments in (
@@ -134,10 +134,113 @@ class CommandLineTests(unittest.TestCase):
             build_rrbs_document(arguments, REPOSITORY_ROOT), REPOSITORY_ROOT
         ).normalized
         self.assertEqual(normalized["technology"], "RRBS")
-        self.assertEqual(normalized["fragments"]["count"], 1)
+        self.assertEqual(normalized["reads"]["count"], 2)
         self.assertEqual(normalized["mutation"]["rate"], 0)
         self.assertEqual(normalized["seeds"]["mutation"], "7")
         self.assertEqual(normalized["seeds"]["phasing"], "8")
+
+    def test_run_stage_seeds_are_derived_but_build_defaults_remain_zero(self) -> None:
+        run_arguments = build_parser().parse_args(
+            [
+                "run", "wgbs", "-r", "reference.fa", "-o", "output",
+                "-n", "2",
+            ]
+        )
+        self.assertEqual(
+            build_run_document(run_arguments, REPOSITORY_ROOT)["seeds"],
+            {"mutation": None, "phasing": None, "methylation": None},
+        )
+
+        build_arguments = build_parser().parse_args(
+            [
+                "build", "methdb", "-r", "reference.fa", "-o", "truth.methdb",
+            ]
+        )
+        self.assertEqual(
+            build_methdb_document(build_arguments, REPOSITORY_ROOT)["seeds"],
+            {"mutation": "0", "phasing": "0", "methylation": "0"},
+        )
+
+    def test_rrbs_cut_sites_have_a_default_and_accept_lists(self) -> None:
+        default_run = build_parser().parse_args(
+            [
+                "run", "rrbs", "-r", "reference.fa", "-o", "output",
+                "-n", "2",
+            ]
+        )
+        self.assertEqual(
+            build_run_document(default_run, REPOSITORY_ROOT)["rrbs"]["cut_sites"],
+            ["C|CGG"],
+        )
+
+        default_build = build_parser().parse_args(
+            [
+                "build", "rrbs", "-r", "reference.fa", "-o", "candidates.bed",
+            ]
+        )
+        self.assertEqual(
+            build_rrbs_document(default_build, REPOSITORY_ROOT)["rrbs"]["cut_sites"],
+            ["C|CGG"],
+        )
+
+        comma_separated = build_parser().parse_args(
+            [
+                "run", "rrbs", "-r", "reference.fa", "-o", "output",
+                "-n", "2", "--cut-site", "C|CGG,G|ANTC",
+            ]
+        )
+        self.assertEqual(
+            build_run_document(comma_separated, REPOSITORY_ROOT)["rrbs"]["cut_sites"],
+            ["C|CGG", "G|ANTC"],
+        )
+
+        mixed_case = build_parser().parse_args(
+            [
+                "run", "rrbs", "-r", "reference.fa", "-o", "output",
+                "-n", "2", "--cut-site", "c|cgg,g|aNtc",
+            ]
+        )
+        self.assertEqual(
+            build_run_document(mixed_case, REPOSITORY_ROOT)["rrbs"]["cut_sites"],
+            ["C|CGG", "G|ANTC"],
+        )
+
+        repeated = build_parser().parse_args(
+            [
+                "run", "rrbs", "-r", "reference.fa", "-o", "output",
+                "-n", "2", "--cut-site", "C|CGG", "--cut-site", "G|ANTC",
+            ]
+        )
+        with self.assertRaisesRegex(
+            CommandLineError, "--cut-site may be supplied once"
+        ):
+            build_run_document(repeated, REPOSITORY_ROOT)
+
+        explicit = build_parser().parse_args(
+            [
+                "run", "rrbs", "-r", "reference.fa", "-o", "output",
+                "-n", "2", "--cut-site", "G|ANTC",
+            ]
+        )
+        self.assertEqual(
+            build_run_document(explicit, REPOSITORY_ROOT)["rrbs"]["cut_sites"],
+            ["G|ANTC"],
+        )
+
+        duplicate = build_parser().parse_args(
+            [
+                "run", "rrbs", "-r", "reference.fa", "-o", "output",
+                "-n", "2", "--cut-site", "C|CGG,c|cgg",
+            ]
+        )
+        with self.assertRaisesRegex(
+            CommandLineError, "duplicate --cut-site after case normalization"
+        ):
+            build_run_document(duplicate, REPOSITORY_ROOT)
+
+        help_result = run_module("run", "rrbs", "--help")
+        self.assertEqual(help_result.returncode, 0, help_result.stderr)
+        self.assertIn("default: C|CGG", " ".join(help_result.stdout.split()))
 
     def test_build_variants_accepts_generation_or_vcf_normalization(self) -> None:
         generated = build_parser().parse_args(
@@ -151,7 +254,7 @@ class CommandLineTests(unittest.TestCase):
         ).normalized
         self.assertEqual(normalized["mutation"]["rate"], 0.002)
         self.assertEqual(normalized["seeds"]["mutation"], "19")
-        self.assertEqual(normalized["fragments"]["count"], 1)
+        self.assertEqual(normalized["reads"]["count"], 1)
 
         from_vcf = build_parser().parse_args(
             [
@@ -205,6 +308,36 @@ class CommandLineTests(unittest.TestCase):
         )
         self.assertEqual(document["methylation"]["beta"]["CG"], [2.0, 8.0])
 
+    def test_build_methdb_accepts_all_poolable_text_profiles(self) -> None:
+        for option, path, input_name in (
+            ("--cgmap", "profile.cgmap", "cgmap"),
+            ("--bedmethyl", "profile.bedmethyl", "bed_methyl"),
+            ("--methbg", "profile.methbg", "methbg"),
+            ("--methbed", "profile.methbed", "methbed"),
+        ):
+            with self.subTest(option=option):
+                arguments = build_parser().parse_args(
+                    [
+                        "build", "methdb", "-r", "reference.fa",
+                        "-o", "truth.methdb", option, path, "--pool-meth",
+                    ]
+                )
+                document = build_methdb_document(arguments, REPOSITORY_ROOT)
+                self.assertEqual(document["inputs"][input_name], path)
+                self.assertTrue(document["methylation"]["cgmap_pool"])
+
+    def test_build_methdb_accepts_asm_without_vcf(self) -> None:
+        arguments = build_parser().parse_args(
+            [
+                "build", "methdb", "-r", "reference.fa", "-o", "truth.methdb",
+                "--asm", "profile.asm", "--seed-phase", "9",
+            ]
+        )
+        document = build_methdb_document(arguments, REPOSITORY_ROOT)
+        self.assertEqual(document["inputs"], {"asm": "profile.asm"})
+        self.assertEqual(document["mutation"]["rate"], 0)
+        self.assertEqual(document["seeds"]["phasing"], "9")
+
     def test_beta_parameters_require_comma_delimited_pairs(self) -> None:
         result = run_module(
             "build", "methdb", "-r", "reference.fa", "-o", "truth.methdb",
@@ -226,16 +359,32 @@ class CommandLineTests(unittest.TestCase):
         ts = run_module("run", "ts", "--help")
         for result in (wgbs, rrbs, tbs, wgs, wes, ts):
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("-n FRAGMENTS", result.stdout)
+            self.assertIn("--reads N", result.stdout)
+            self.assertNotIn("--fragments", result.stdout)
             self.assertIn("-f {fastq,fastq.gz,bam}", result.stdout)
             self.assertIn("--seed-mut", result.stdout)
+            self.assertIn("default: 1000000", result.stdout)
+            self.assertIn("omit to derive from --seed", result.stdout)
         self.assertIn("--gc-profile", wgbs.stdout)
         self.assertIn("--gc-profile", wgs.stdout)
-        self.assertNotIn("--sampling", wgbs.stdout)
+        self.assertIn("--sampling {uniform,gc}", wgbs.stdout)
+        self.assertIn("--sampling {uniform,gc}", wgs.stdout)
         self.assertIn("--sampling {uniform,score}", rrbs.stdout)
         self.assertIn("--sampling {uniform,score}", tbs.stdout)
         self.assertIn("--sampling {uniform,score}", wes.stdout)
         self.assertIn("--sampling {uniform,score}", ts.stdout)
+        for result, input_option in (
+            (wgbs, "--gc-profile"),
+            (wgs, "--gc-profile"),
+            (rrbs, "--cut-site"),
+            (tbs, "--targets"),
+            (wes, "--targets"),
+            (ts, "--targets"),
+        ):
+            self.assertLess(
+                result.stdout.index("--sampling"),
+                result.stdout.index(input_option),
+            )
         for result in (wgs, wes, ts):
             self.assertNotIn("--conversion-rate", result.stdout)
             self.assertNotIn("--seed-meth", result.stdout)
@@ -283,9 +432,52 @@ class CommandLineTests(unittest.TestCase):
                 self.assertTrue(document["output"]["save_vcf"])
                 self.assertEqual(document["inputs"], {})
                 if technology in ("WES", "TS"):
-                    self.assertEqual(document["fragments"]["insert_sd"], 0.0)
-                    self.assertEqual(document["fragments"]["insert_min"], 400)
-                    self.assertEqual(document["fragments"]["insert_max"], 400)
+                    self.assertEqual(document["fragments"]["insert_sd"], 25.0)
+                    self.assertEqual(document["fragments"]["insert_min"], 100)
+                    self.assertEqual(document["fragments"]["insert_max"], 1000)
+
+    def test_methdb_owns_variants_and_defaults_mutation_to_zero(self) -> None:
+        arguments = build_parser().parse_args(
+            [
+                "run", "wgbs", "-r", "reference.fa", "-o", "output",
+                "-n", "10", "--methdb", "profile.methdb",
+            ]
+        )
+        document = build_run_document(arguments, REPOSITORY_ROOT)
+        self.assertEqual(document["mutation"]["rate"], 0.0)
+        self.assertEqual(document["inputs"]["methdb"], "profile.methdb")
+
+        for conflicting in (
+            ("--vcf", "variants.vcf"),
+            ("--mutation-rate", "0.01"),
+        ):
+            parsed = build_parser().parse_args(
+                [
+                    "run", "wgbs", "-r", "reference.fa", "-o", "output",
+                    "-n", "10", "--methdb", "profile.methdb", *conflicting,
+                ]
+            )
+            with self.assertRaisesRegex(CommandLineError, "embeds variants"):
+                build_run_document(parsed, REPOSITORY_ROOT)
+
+    def test_text_methylation_profiles_allow_pooling(self) -> None:
+        for option, path, input_name in (
+            ("--cgmap", "profile.cgmap", "cgmap"),
+            ("--bedmethyl", "profile.bedmethyl", "bed_methyl"),
+            ("--methbg", "profile.methbg", "methbg"),
+            ("--methbed", "profile.methbed", "methbed"),
+        ):
+            with self.subTest(option=option):
+                arguments = build_parser().parse_args(
+                    [
+                        "run", "wgbs", "-r", "reference.fa", "-o", "output",
+                        "-n", "10", option, path, "--pool-meth",
+                    ]
+                )
+                document = build_run_document(arguments, REPOSITORY_ROOT)
+                self.assertEqual(document["mutation"]["rate"], 0.001)
+                self.assertEqual(document["inputs"][input_name], path)
+                self.assertTrue(document["methylation"]["cgmap_pool"])
 
     def test_run_defaults_and_truth_flags_project_cleanly(self) -> None:
         arguments = build_parser().parse_args(
@@ -296,7 +488,8 @@ class CommandLineTests(unittest.TestCase):
         )
         document = build_run_document(arguments, REPOSITORY_ROOT)
         self.assertEqual(document["technology"], "WGBS")
-        self.assertEqual(document["fragments"]["count"], 10)
+        self.assertEqual(document["reads"]["count"], 10)
+        self.assertNotIn("count", document["fragments"])
         self.assertEqual(document["output"]["format"], "fastq.gz")
         self.assertTrue(document["output"]["save_methdb"])
         self.assertTrue(document["output"]["save_vcf"])
@@ -340,7 +533,7 @@ class CommandLineTests(unittest.TestCase):
             arguments = build_parser().parse_args(
                 [
                     "run", "wgbs", "-r", "reference.fa", "-o", "output", "-n", "100",
-                    "--gc-profile", "gc.tsv", "--workers", "2",
+                    "--sampling", "gc", "--gc-profile", "gc.tsv", "--threads", "2",
                 ]
             )
             normalized = normalize_run_config(
@@ -350,6 +543,27 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(artifact["sha256"], hashlib.sha256(profile).hexdigest())
         self.assertEqual(normalized["fragments"]["insert_sd"], 25)
         self.assertEqual(normalized["mutation"]["rate"], 0)
+        self.assertEqual(normalized["execution"]["threads"], 2)
+
+    def test_gc_sampling_requires_an_explicit_profile_pair(self) -> None:
+        common = [
+            "run", "wgbs", "-r", "reference.fa", "-o", "output", "-n", "10",
+        ]
+        missing_profile = build_parser().parse_args(
+            common + ["--sampling", "gc"]
+        )
+        with self.assertRaisesRegex(
+            CommandLineError, "--sampling gc requires --gc-profile"
+        ):
+            build_run_document(missing_profile, REPOSITORY_ROOT)
+
+        implicit_profile = build_parser().parse_args(
+            common + ["--gc-profile", "gc.tsv"]
+        )
+        with self.assertRaisesRegex(
+            CommandLineError, "--gc-profile requires --sampling gc"
+        ):
+            build_run_document(implicit_profile, REPOSITORY_ROOT)
 
     def test_rrbs_and_tbs_sampling_modes_are_unambiguous(self) -> None:
         rrbs_common = [
@@ -370,7 +584,7 @@ class CommandLineTests(unittest.TestCase):
         tbs = build_parser().parse_args(
             [
                 "run", "tbs", "-r", "reference.fa", "-o", "output", "-n", "24",
-                "--targets", "targets.bed", "--sampling", "score",
+                "--sampling", "score", "--targets", "targets.bed",
                 "--insert-mean", "150", "--insert-sd", "0",
             ]
         )
@@ -385,7 +599,7 @@ class CommandLineTests(unittest.TestCase):
         arguments = build_parser().parse_args(
             [
                 "run", "wgbs", "-r", "reference.fa", "-o", "output", "-n", "10",
-                "--vcf", "variants.vcf", "--bed-methyl", "levels.bed.gz",
+                "--vcf", "variants.vcf", "--bedmethyl", "levels.bed.gz",
                 "--asm-bed", "alleles.bed.gz", "--seed-phase", "9",
             ]
         )
@@ -393,6 +607,77 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(document["mutation"]["rate"], 0)
         self.assertEqual(set(document["inputs"]), {"vcf", "bed_methyl", "asm_bed"})
         self.assertEqual(document["seeds"]["phasing"], "9")
+
+        asm_only_arguments = build_parser().parse_args(
+            [
+                "run", "wgbs", "-r", "reference.fa", "-o", "output",
+                "-n", "10", "--asm", "alleles.asm", "--seed-phase", "11",
+            ]
+        )
+        asm_only = build_run_document(
+            asm_only_arguments, REPOSITORY_ROOT
+        )
+        self.assertEqual(set(asm_only["inputs"]), {"asm"})
+        self.assertEqual(asm_only["mutation"]["rate"], 0)
+        self.assertEqual(asm_only["seeds"]["phasing"], "11")
+
+    def test_read_count_defaults_and_requires_complete_pairs(self) -> None:
+        default = build_parser().parse_args(
+            ["run", "wgbs", "-r", "reference.fa", "-o", "output"]
+        )
+        self.assertEqual(
+            build_run_document(default, REPOSITORY_ROOT)["reads"],
+            {"count": 1_000_000},
+        )
+
+        paired = build_parser().parse_args(
+            [
+                "run", "wgbs", "-r", "reference.fa", "-o", "output",
+                "--reads", "10",
+            ]
+        )
+        self.assertEqual(
+            build_run_document(paired, REPOSITORY_ROOT)["reads"],
+            {"count": 10},
+        )
+
+        odd_paired = build_parser().parse_args(
+            [
+                "run", "wgbs", "-r", "reference.fa", "-o", "output",
+                "--reads", "9",
+            ]
+        )
+        with self.assertRaisesRegex(CommandLineError, "must be even"):
+            build_run_document(odd_paired, REPOSITORY_ROOT)
+
+        single = build_parser().parse_args(
+            [
+                "run", "wgbs", "-r", "reference.fa", "-o", "output",
+                "--reads", "9", "--single-end",
+            ]
+        )
+        self.assertEqual(
+            build_run_document(single, REPOSITORY_ROOT)["reads"],
+            {"count": 9},
+        )
+
+        depth = build_parser().parse_args(
+            [
+                "run", "wgbs", "-r", "reference.fa", "-o", "output",
+                "--depth", "12.5",
+            ]
+        )
+        self.assertEqual(
+            build_run_document(depth, REPOSITORY_ROOT)["reads"],
+            {"depth": 12.5},
+        )
+
+        conflict = run_module(
+            "run", "wgbs", "-r", "reference.fa", "-o", "output",
+            "--reads", "10", "--depth", "12.5",
+        )
+        self.assertEqual(conflict.returncode, 2)
+        self.assertIn("not allowed with argument", conflict.stderr)
 
     def test_old_command_and_option_names_are_not_accepted(self) -> None:
         for arguments in (
@@ -406,6 +691,22 @@ class CommandLineTests(unittest.TestCase):
             (
                 "run", "wgbs", "-r", "ref.fa", "-o", "out", "-n", "1",
                 "--insert-size", "150",
+            ),
+            (
+                "run", "wgbs", "-r", "ref.fa", "-o", "out",
+                "--fragments", "2",
+            ),
+            (
+                "run", "wgbs", "-r", "ref.fa", "-o", "out", "-n", "2",
+                "--bed-methyl", "profile.bedmethyl",
+            ),
+            (
+                "run", "wgbs", "-r", "ref.fa", "-o", "out", "-n", "2",
+                "--cgmap", "profile.cgmap", "--pool-methylation-values",
+            ),
+            (
+                "run", "wgbs", "-r", "ref.fa", "-o", "out", "-n", "2",
+                "--cgmap", "profile.cgmap", "--cgmap-pool",
             ),
         ):
             result = run_module(*arguments)

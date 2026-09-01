@@ -21,8 +21,10 @@ using htsim::methdb::ContextShapes;
 using htsim::methdb::CgmapRecord;
 using htsim::methdb::DiploidCatalogError;
 using htsim::methdb::DiploidMethylationCatalog;
-using htsim::methdb::DiploidSite;
+using htsim::methdb::DiploidRuntimeArrays;
 using htsim::methdb::MethylationCatalog;
+using htsim::methdb::ProbabilityU16;
+using htsim::methdb::RuntimeSite;
 using htsim::model::Bases;
 using htsim::model::MethylationAllele;
 using htsim::model::MethylationContext;
@@ -35,6 +37,16 @@ using htsim::variant::Variant;
 void require(bool condition, const std::string &message)
 {
     if (!condition) {throw std::runtime_error(message);}
+}
+
+ProbabilityU16 quantized(float probability)
+{
+    return htsim::methdb::probability_to_u16(probability);
+}
+
+float quantized_float(float probability)
+{
+    return htsim::methdb::probability_from_u16(quantized(probability));
 }
 
 template <typename Operation>
@@ -79,16 +91,31 @@ ContextShapes shapes()
     return {{2.0, 5.0}, {3.0, 4.0}, {5.0, 2.0}};
 }
 
-const DiploidSite *find(
-    const std::vector<DiploidSite> &sites,
-    std::uint64_t origin_id)
+std::uint32_t insertion_key(
+    std::uint32_t event_ordinal,
+    std::uint8_t insertion_offset)
 {
-    const auto found = std::find_if(
-        sites.begin(), sites.end(),
-        [origin_id](const DiploidSite &site) {
-            return site.origin_id == origin_id;
-        });
-    return found == sites.end() ? nullptr : &*found;
+    return (event_ordinal << 2U) | insertion_offset;
+}
+
+const RuntimeSite *find(
+    const std::vector<RuntimeSite> &sites,
+    std::uint32_t key)
+{
+    const RuntimeSite query = static_cast<RuntimeSite>(key) << 32U;
+    const auto found = std::lower_bound(sites.begin(), sites.end(), query);
+    return found == sites.end() || htsim::methdb::runtime_site_key(*found) != key
+        ? nullptr : &*found;
+}
+
+bool same_arrays(
+    const DiploidRuntimeArrays &left,
+    const DiploidRuntimeArrays &right)
+{
+    return left.reference_shared == right.reference_shared
+        && left.reference_haplotypes == right.reference_haplotypes
+        && left.insertion_shared == right.insertion_shared
+        && left.insertion_haplotypes == right.insertion_haplotypes;
 }
 
 std::vector<Variant> variant_fixture()
@@ -112,20 +139,25 @@ void test_reference_only_parity()
         contig.bases, contig.index, 41U, true, configured);
     const DiploidMethylationCatalog diploid(
         contig, variants, 41U, true, configured);
-    require(diploid.shared_sites().size() == baseline.sites().size()
-                && diploid.haplotype_sites(0).empty()
-                && diploid.haplotype_sites(1).empty(),
+    const DiploidRuntimeArrays &runtime = diploid.runtime_arrays();
+    require(runtime.reference_shared.size() == baseline.sites().size()
+                && runtime.insertion_shared.empty()
+                && runtime.reference_haplotypes[0].empty()
+                && runtime.reference_haplotypes[1].empty()
+                && runtime.insertion_haplotypes[0].empty()
+                && runtime.insertion_haplotypes[1].empty(),
             "reference-only diploid catalog did not collapse to shared sites");
     for (std::size_t index = 0; index < baseline.sites().size(); ++index) {
         const auto &old_site = baseline.sites()[index];
-        const auto &new_site = diploid.shared_sites()[index];
-        require(new_site.origin_id
-                    == htsim::methdb::reference_origin_id(
-                        old_site.reference_position)
-                    && new_site.context == old_site.context
-                    && new_site.allele == MethylationAllele::shared
-                    && new_site.methylation_probability
-                        == old_site.methylation_probability,
+        const RuntimeSite new_site = runtime.reference_shared[index];
+        require(htsim::methdb::runtime_site_key(new_site)
+                    == old_site.reference_position
+                    && htsim::methdb::runtime_site_context(new_site)
+                        == old_site.context
+                    && htsim::methdb::runtime_site_allele(new_site)
+                        == MethylationAllele::shared
+                    && htsim::methdb::runtime_site_probability(new_site)
+                        == old_site.probability_u16,
                 "reference-only site or Beta address changed");
     }
 
@@ -144,33 +176,40 @@ void test_reference_only_parity()
                         == baseline.sites()[index].reference_position
                     && projected[index].context == baseline.sites()[index].context
                     && projected[index].methylation_probability
-                        == baseline.sites()[index].methylation_probability,
+                        == htsim::methdb::probability_from_u16(
+                            baseline.sites()[index].probability_u16),
                 "reference-only protocol site projection changed");
     }
 
     const std::vector<CgmapRecord> records = {
-        {1U, 0.125F, MethylationContext::cg_c, true, 2U},
-        {2U, 0.0F, MethylationContext::cg_g, false, 2U},
-        {4U, 0.75F, MethylationContext::chg_c, true, 0U},
+        {1U, quantized(0.125F), MethylationContext::cg_c, true, 2U},
+        {2U, 0U, MethylationContext::cg_g, false, 2U},
+        {4U, quantized(0.75F), MethylationContext::chg_c, true, 0U},
     };
     const MethylationCatalog cgmap_baseline(
         contig.bases, contig.index, 41U, true, configured, &records);
     const DiploidMethylationCatalog cgmap_diploid(
         contig, variants, 41U, true, configured, &records);
+    const DiploidRuntimeArrays &cgmap_runtime =
+        cgmap_diploid.runtime_arrays();
     require(
-        cgmap_diploid.shared_sites().size() == cgmap_baseline.sites().size(),
+        cgmap_runtime.reference_shared.size()
+            == cgmap_baseline.sites().size(),
         "event-free CGmap diploid catalog changed the site count");
     for (std::size_t index = 0U;
          index < cgmap_baseline.sites().size();
-         ++index) {
+        ++index) {
         const auto &reference_site = cgmap_baseline.sites()[index];
-        const auto &diploid_site = cgmap_diploid.shared_sites()[index];
+        const RuntimeSite diploid_site = cgmap_runtime.reference_shared[index];
         require(
-            diploid_site.origin_id == reference_site.reference_position
-                && diploid_site.context == reference_site.context
-                && diploid_site.methylation_source == reference_site.methylation_source
-                && diploid_site.methylation_probability
-                    == reference_site.methylation_probability,
+            htsim::methdb::runtime_site_key(diploid_site)
+                    == reference_site.reference_position
+                && htsim::methdb::runtime_site_context(diploid_site)
+                    == reference_site.context
+                && htsim::methdb::runtime_site_source(diploid_site)
+                    == reference_site.methylation_source
+                && htsim::methdb::runtime_site_probability(diploid_site)
+                    == reference_site.probability_u16,
             "event-free CGmap reference/diploid catalogs diverged");
     }
 }
@@ -184,64 +223,72 @@ void test_variant_context_entities_and_alleles()
     constexpr std::uint64_t seed = 73U;
     const DiploidMethylationCatalog catalog(
         contig, variants, seed, true, configured);
+    const DiploidRuntimeArrays &runtime = catalog.runtime_arrays();
 
-    const auto ref2 = htsim::methdb::reference_origin_id(2U);
-    const DiploidSite *alt_context = find(catalog.haplotype_sites(0), ref2);
-    const DiploidSite *ref_context = find(catalog.haplotype_sites(1), ref2);
+    const RuntimeSite *alt_context = find(
+        runtime.reference_haplotypes[0], 2U);
+    const RuntimeSite *ref_context = find(
+        runtime.reference_haplotypes[1], 2U);
     require(alt_context && ref_context
-                && alt_context->context == MethylationContext::chh_c
-                && alt_context->allele == MethylationAllele::alternate_haplotype
-                && ref_context->context == MethylationContext::cg_c
-                && ref_context->allele == MethylationAllele::reference_haplotype,
+                && htsim::methdb::runtime_site_context(*alt_context)
+                    == MethylationContext::chh_c
+                && htsim::methdb::runtime_site_allele(*alt_context)
+                    == MethylationAllele::alternate_haplotype
+                && htsim::methdb::runtime_site_context(*ref_context)
+                    == MethylationContext::cg_c
+                && htsim::methdb::runtime_site_allele(*ref_context)
+                    == MethylationAllele::reference_haplotype,
             "heterozygous SNV did not split reference and ALT contexts");
-    require(alt_context->methylation_probability
-                == htsim::beta_sampler::sample_beta_for_site(
+    require(htsim::methdb::runtime_site_probability(*alt_context)
+                == quantized(htsim::beta_sampler::sample_beta_for_site(
                     seed,
                     contig.index,
                     htsim::methdb::variant_reference_site_entity(
                         2U, HaplotypeMask::haplotype_1, 0U),
                     configured.chh.alpha,
-                    configured.chh.beta)
-                && ref_context->methylation_probability
-                    == htsim::beta_sampler::sample_beta_for_site(
+                    configured.chh.beta))
+                && htsim::methdb::runtime_site_probability(*ref_context)
+                    == quantized(htsim::beta_sampler::sample_beta_for_site(
                         seed,
                         contig.index,
                         htsim::methdb::reference_site_entity(2U),
                         configured.cg.alpha,
-                        configured.cg.beta),
+                        configured.cg.beta)),
             "heterozygous context used the wrong 64-bit Beta identity");
 
-    const DiploidSite *inserted_c = find(
-        catalog.shared_sites(),
-        htsim::methdb::insertion_origin_id(1U, 0U));
-    const DiploidSite *inserted_g = find(
-        catalog.shared_sites(),
-        htsim::methdb::insertion_origin_id(1U, 1U));
+    const RuntimeSite *inserted_c = find(
+        runtime.insertion_shared, insertion_key(1U, 0U));
+    const RuntimeSite *inserted_g = find(
+        runtime.insertion_shared, insertion_key(1U, 1U));
     require(inserted_c && inserted_g
-                && inserted_c->context == MethylationContext::cg_c
-                && inserted_g->context == MethylationContext::cg_g
-                && inserted_c->allele == MethylationAllele::shared
-                && inserted_g->allele == MethylationAllele::shared,
+                && htsim::methdb::runtime_site_context(*inserted_c)
+                    == MethylationContext::cg_c
+                && htsim::methdb::runtime_site_context(*inserted_g)
+                    == MethylationContext::cg_g
+                && htsim::methdb::runtime_site_allele(*inserted_c)
+                    == MethylationAllele::shared
+                && htsim::methdb::runtime_site_allele(*inserted_g)
+                    == MethylationAllele::shared,
             "homozygous inserted CpG was not shared by both haplotypes");
-    require(inserted_c->methylation_probability
-                == htsim::beta_sampler::sample_beta_for_site(
+    require(htsim::methdb::runtime_site_probability(*inserted_c)
+                == quantized(htsim::beta_sampler::sample_beta_for_site(
                     seed,
                     contig.index,
                     htsim::methdb::insertion_site_entity(
                         1U, 0U, HaplotypeMask::both, 0U),
                     configured.cg.alpha,
-                    configured.cg.beta),
+                    configured.cg.beta)),
             "inserted CpG used the wrong event/offset Beta identity");
 
     for (const std::uint32_t position : {7U, 8U}) {
-        const DiploidSite *site = find(
-            catalog.haplotype_sites(0),
-            htsim::methdb::reference_origin_id(position));
-        require(site && site->allele == MethylationAllele::reference_haplotype,
+        const RuntimeSite *site = find(
+            runtime.reference_haplotypes[0], position);
+        require(site
+                    && htsim::methdb::runtime_site_allele(*site)
+                        == MethylationAllele::reference_haplotype,
                 "heterozygous deletion did not retain reference-haplotype ownership");
         require(!find(
-                    catalog.haplotype_sites(1),
-                    htsim::methdb::reference_origin_id(position)),
+                    runtime.reference_haplotypes[1], position),
                 "deleted haplotype retained a methylation site");
     }
 }
@@ -271,12 +318,12 @@ void test_fragment_boundary_uses_complete_haplotype_context()
                 && ref_sites[0].allele
                     == MethylationAllele::reference_haplotype,
             "fragment edge was classified from its local slice");
-    const DiploidSite *catalog_site = find(
-        catalog.haplotype_sites(0),
-        htsim::methdb::reference_origin_id(2U));
+    const RuntimeSite *catalog_site = find(
+        catalog.runtime_arrays().reference_haplotypes[0], 2U);
     require(catalog_site
                 && alt_sites[0].methylation_probability
-                    == catalog_site->methylation_probability,
+                    == htsim::methdb::probability_from_u16(
+                        htsim::methdb::runtime_site_probability(*catalog_site)),
             "overlapping fragments did not reuse the same site probability");
 }
 
@@ -290,30 +337,29 @@ void test_deletion_joins_previously_separated_context()
     const ContigVariants variants(contig.bases, events, contig.index);
     const DiploidMethylationCatalog catalog(
         contig, variants, 91U, true, shapes());
-    const DiploidSite *alt_c = find(
-        catalog.haplotype_sites(0),
-        htsim::methdb::reference_origin_id(0U));
-    const DiploidSite *alt_g = find(
-        catalog.haplotype_sites(0),
-        htsim::methdb::reference_origin_id(3U));
-    const DiploidSite *ref_c = find(
-        catalog.haplotype_sites(1),
-        htsim::methdb::reference_origin_id(0U));
-    const DiploidSite *ref_g = find(
-        catalog.haplotype_sites(1),
-        htsim::methdb::reference_origin_id(3U));
+    const DiploidRuntimeArrays &runtime = catalog.runtime_arrays();
+    const RuntimeSite *alt_c = find(runtime.reference_haplotypes[0], 0U);
+    const RuntimeSite *alt_g = find(runtime.reference_haplotypes[0], 3U);
+    const RuntimeSite *ref_c = find(runtime.reference_haplotypes[1], 0U);
+    const RuntimeSite *ref_g = find(runtime.reference_haplotypes[1], 3U);
     require(alt_c && alt_g && ref_c && ref_g
-                && alt_c->context == MethylationContext::cg_c
-                && alt_g->context == MethylationContext::cg_g
-                && ref_c->context == MethylationContext::chh_c
-                && ref_g->context == MethylationContext::chh_g,
+                && htsim::methdb::runtime_site_context(*alt_c)
+                    == MethylationContext::cg_c
+                && htsim::methdb::runtime_site_context(*alt_g)
+                    == MethylationContext::cg_g
+                && htsim::methdb::runtime_site_context(*ref_c)
+                    == MethylationContext::chh_c
+                && htsim::methdb::runtime_site_context(*ref_g)
+                    == MethylationContext::chh_g,
             "deletion did not recompute context across its joined boundary");
 
     const DiploidMethylationCatalog cpg_only(
         contig, variants, 91U, false, shapes());
-    require(cpg_only.haplotype_sites(0).size() == 2U
-                && cpg_only.haplotype_sites(1).empty()
-                && cpg_only.shared_sites().empty(),
+    const DiploidRuntimeArrays &cpg_runtime = cpg_only.runtime_arrays();
+    require(cpg_runtime.reference_haplotypes[0].size() == 2U
+                && cpg_runtime.reference_haplotypes[1].empty()
+                && cpg_runtime.reference_shared.empty()
+                && cpg_runtime.insertion_shared.empty(),
             "CpG-only filter did not use the final haplotype context");
 }
 
@@ -323,39 +369,49 @@ void test_cgmap_overlay_respects_haplotype_equivalence()
     const ContigVariants variants(
         contig.bases, variant_fixture(), contig.index);
     const std::vector<CgmapRecord> records = {
-        {2U, 0.875F, MethylationContext::cg_c, true, 2U},
-        {3U, 0.0F, MethylationContext::cg_g, false, 2U},
-        {7U, 0.625F, MethylationContext::cg_c, true, 2U},
+        {2U, quantized(0.875F), MethylationContext::cg_c, true, 2U},
+        {3U, 0U, MethylationContext::cg_g, false, 2U},
+        {7U, quantized(0.625F), MethylationContext::cg_c, true, 2U},
     };
     const DiploidMethylationCatalog catalog(
         contig, variants, 73U, true, shapes(), &records);
+    const DiploidRuntimeArrays &runtime = catalog.runtime_arrays();
 
-    const auto ref2 = htsim::methdb::reference_origin_id(2U);
-    const DiploidSite *alternate = find(catalog.haplotype_sites(0), ref2);
-    const DiploidSite *reference = find(catalog.haplotype_sites(1), ref2);
+    const RuntimeSite *alternate = find(
+        runtime.reference_haplotypes[0], 2U);
+    const RuntimeSite *reference = find(
+        runtime.reference_haplotypes[1], 2U);
     require(
         alternate != nullptr && reference != nullptr
-            && alternate->methylation_source == MethylationSource::beta
-            && alternate->context == MethylationContext::chh_c
-            && reference->methylation_source == MethylationSource::cgmap
-            && reference->context == MethylationContext::cg_c
-            && reference->methylation_probability == 0.875F,
+            && htsim::methdb::runtime_site_source(*alternate)
+                == MethylationSource::beta
+            && htsim::methdb::runtime_site_context(*alternate)
+                == MethylationContext::chh_c
+            && htsim::methdb::runtime_site_source(*reference)
+                == MethylationSource::cgmap
+            && htsim::methdb::runtime_site_context(*reference)
+                == MethylationContext::cg_c
+            && htsim::methdb::runtime_site_probability(*reference)
+                == quantized(0.875F),
         "CGmap was not restricted to the reference-equivalent haplotype");
 
-    const DiploidSite *retained_after_deletion = find(
-        catalog.haplotype_sites(0),
-        htsim::methdb::reference_origin_id(7U));
+    const RuntimeSite *retained_after_deletion = find(
+        runtime.reference_haplotypes[0], 7U);
     require(
         retained_after_deletion != nullptr
-            && retained_after_deletion->methylation_source == MethylationSource::cgmap
-            && retained_after_deletion->methylation_probability == 0.625F,
+            && htsim::methdb::runtime_site_source(*retained_after_deletion)
+                == MethylationSource::cgmap
+            && htsim::methdb::runtime_site_probability(
+                   *retained_after_deletion)
+                == quantized(0.625F),
         "CGmap did not overlay the retained reference haplotype");
 
-    const DiploidSite *inserted = find(
-        catalog.shared_sites(),
-        htsim::methdb::insertion_origin_id(1U, 0U));
+    const RuntimeSite *inserted = find(
+        runtime.insertion_shared, insertion_key(1U, 0U));
     require(
-        inserted != nullptr && inserted->methylation_source == MethylationSource::beta,
+        inserted != nullptr
+            && htsim::methdb::runtime_site_source(*inserted)
+                == MethylationSource::beta,
         "CGmap leaked onto a variant-created methylation site");
 
     const auto projection = htsim::haplotype::project_interval(
@@ -371,7 +427,8 @@ void test_cgmap_overlay_respects_haplotype_equivalence()
     require(
         projected_reference != projected.end()
             && projected_reference->methylation_source == MethylationSource::cgmap
-            && projected_reference->methylation_probability == 0.875F,
+            && projected_reference->methylation_probability
+                == quantized_float(0.875F),
         "protocol projection lost CGmap provenance");
 }
 
@@ -381,8 +438,8 @@ void test_cgmap_pool_uses_typed_variant_entities()
     const ContigVariants variants(
         contig.bases, variant_fixture(), contig.index);
     const std::vector<CgmapRecord> records = {
-        {2U, 0.125F, MethylationContext::cg_c, true, 2U},
-        {3U, 0.875F, MethylationContext::cg_g, true, 2U},
+        {2U, quantized(0.125F), MethylationContext::cg_c, true, 2U},
+        {3U, quantized(0.875F), MethylationContext::cg_g, true, 2U},
     };
     constexpr std::uint64_t seed = 73U;
     const htsim::methdb::CgmapPool pool(records);
@@ -395,41 +452,51 @@ void test_cgmap_pool_uses_typed_variant_entities()
         &records,
         nullptr,
         true);
+    const DiploidRuntimeArrays &runtime = catalog.runtime_arrays();
 
-    const std::uint64_t ref2 =
-        htsim::methdb::reference_origin_id(2U);
-    const DiploidSite *alternate = find(catalog.haplotype_sites(0U), ref2);
-    const DiploidSite *reference = find(catalog.haplotype_sites(1U), ref2);
+    const RuntimeSite *alternate = find(
+        runtime.reference_haplotypes[0], 2U);
+    const RuntimeSite *reference = find(
+        runtime.reference_haplotypes[1], 2U);
     require(
         alternate != nullptr && reference != nullptr
-            && alternate->context == MethylationContext::chh_c
-            && alternate->methylation_source == MethylationSource::beta
-            && reference->context == MethylationContext::cg_c
-            && reference->methylation_source == MethylationSource::pooled_cgmap,
+            && htsim::methdb::runtime_site_context(*alternate)
+                == MethylationContext::chh_c
+            && htsim::methdb::runtime_site_source(*alternate)
+                == MethylationSource::beta
+            && htsim::methdb::runtime_site_context(*reference)
+                == MethylationContext::cg_c
+            && htsim::methdb::runtime_site_source(*reference)
+                == MethylationSource::pooled_cgmap,
         "CGmap pool ignored the typed context on a split haplotype site");
     const auto expected_reference = pool.sample(
-        reference->context,
+        htsim::methdb::runtime_site_context(*reference),
         seed,
         contig.index,
         htsim::methdb::reference_site_entity(2U));
     require(
         expected_reference.has_value()
-            && reference->methylation_probability == *expected_reference,
+            && htsim::methdb::runtime_site_probability(*reference)
+                == *expected_reference,
         "reference-equivalent haplotype used the wrong pool address");
 
     for (const std::uint8_t offset : {std::uint8_t{0U}, std::uint8_t{1U}}) {
-        const DiploidSite *inserted = find(
-            catalog.shared_sites(),
-            htsim::methdb::insertion_origin_id(1U, offset));
+        const RuntimeSite *inserted = find(
+            runtime.insertion_shared, insertion_key(1U, offset));
         const auto entity = htsim::methdb::insertion_site_entity(
             1U, offset, HaplotypeMask::both, 0U);
         require(inserted != nullptr
-                    && inserted->methylation_source == MethylationSource::pooled_cgmap,
+                    && htsim::methdb::runtime_site_source(*inserted)
+                        == MethylationSource::pooled_cgmap,
                 "variant-created CpG did not use the typed context pool");
         const auto expected = pool.sample(
-            inserted->context, seed, contig.index, entity);
+            htsim::methdb::runtime_site_context(*inserted),
+            seed,
+            contig.index,
+            entity);
         require(expected.has_value()
-                    && inserted->methylation_probability == *expected,
+                    && htsim::methdb::runtime_site_probability(*inserted)
+                        == *expected,
                 "inserted site used the wrong uint64 pool entity");
     }
 }
@@ -443,30 +510,43 @@ void test_asm_overlay_uses_typed_haplotype_mask()
     };
     const ContigVariants variants(contig.bases, events, contig.index);
     const std::vector<CgmapRecord> cgmap = {
-        {2U, 0.5F, MethylationContext::cg_c, true, 2U},
+        {2U, quantized(0.5F), MethylationContext::cg_c, true, 2U},
     };
     const std::vector<AsmRecord> asm_records = {
-        {2U, 9U, 0.2F, 0.8F, MethylationContext::cg_c, 2U, 3U, 0U},
+        {2U, 9U, quantized(0.2F), quantized(0.8F),
+         MethylationContext::cg_c, 2U, 3U, 0U},
     };
     const DiploidMethylationCatalog catalog(
         contig, variants, 73U, true, shapes(), &cgmap, &asm_records);
-    const std::uint64_t origin =
-        htsim::methdb::reference_origin_id(2U);
+    DiploidMethylationCatalog reused(
+        contig, variants, 73U, true, shapes(), &cgmap, nullptr);
+    reused.apply_asm_layer(events, asm_records);
     require(
-        find(catalog.shared_sites(), origin) == nullptr,
+        same_arrays(reused.runtime_arrays(), catalog.runtime_arrays()),
+        "save-and-simulate ASM reuse changed the runtime catalog");
+    const std::uint32_t origin = 2U;
+    const DiploidRuntimeArrays &runtime = catalog.runtime_arrays();
+    require(
+        find(runtime.reference_shared, origin) == nullptr,
         "ASM target remained in the shared catalog");
-    const DiploidSite *alternate = find(catalog.haplotype_sites(0U), origin);
-    const DiploidSite *reference = find(catalog.haplotype_sites(1U), origin);
+    const RuntimeSite *alternate = find(
+        runtime.reference_haplotypes[0], origin);
+    const RuntimeSite *reference = find(
+        runtime.reference_haplotypes[1], origin);
     require(
         alternate != nullptr && reference != nullptr
-            && alternate->methylation_source == MethylationSource::asm_source
-            && alternate->allele
+            && htsim::methdb::runtime_site_source(*alternate)
+                == MethylationSource::asm_source
+            && htsim::methdb::runtime_site_allele(*alternate)
                 == MethylationAllele::alternate_haplotype
-            && alternate->methylation_probability == 0.8F
-            && reference->methylation_source == MethylationSource::asm_source
-            && reference->allele
+            && htsim::methdb::runtime_site_probability(*alternate)
+                == quantized(0.8F)
+            && htsim::methdb::runtime_site_source(*reference)
+                == MethylationSource::asm_source
+            && htsim::methdb::runtime_site_allele(*reference)
                 == MethylationAllele::reference_haplotype
-            && reference->methylation_probability == 0.2F,
+            && htsim::methdb::runtime_site_probability(*reference)
+                == quantized(0.2F),
         "ASM probabilities did not follow HaplotypeMask value 1");
 
     for (const std::uint8_t haplotype : {std::uint8_t{0U}, std::uint8_t{1U}}) {
@@ -484,7 +564,7 @@ void test_asm_overlay_uses_typed_haplotype_mask()
             target != sites.end()
                 && target->methylation_source == MethylationSource::asm_source
                 && target->methylation_probability
-                    == (haplotype == 0U ? 0.8F : 0.2F),
+                    == quantized_float(haplotype == 0U ? 0.8F : 0.2F),
             "protocol projection lost ASM allele ownership");
     }
 
@@ -496,18 +576,20 @@ void test_asm_overlay_uses_typed_haplotype_mask()
         contig.bases, reversed_events, contig.index);
     const DiploidMethylationCatalog reversed(
         contig, reversed_variants, 73U, true, shapes(), nullptr, &asm_records);
-    const DiploidSite *reversed_reference =
-        find(reversed.haplotype_sites(0U), origin);
-    const DiploidSite *reversed_alternate =
-        find(reversed.haplotype_sites(1U), origin);
+    const RuntimeSite *reversed_reference = find(
+        reversed.runtime_arrays().reference_haplotypes[0], origin);
+    const RuntimeSite *reversed_alternate = find(
+        reversed.runtime_arrays().reference_haplotypes[1], origin);
     require(
         reversed_reference != nullptr && reversed_alternate != nullptr
-            && reversed_reference->allele
+            && htsim::methdb::runtime_site_allele(*reversed_reference)
                 == MethylationAllele::reference_haplotype
-            && reversed_reference->methylation_probability == 0.2F
-            && reversed_alternate->allele
+            && htsim::methdb::runtime_site_probability(*reversed_reference)
+                == quantized(0.2F)
+            && htsim::methdb::runtime_site_allele(*reversed_alternate)
                 == MethylationAllele::alternate_haplotype
-            && reversed_alternate->methylation_probability == 0.8F,
+            && htsim::methdb::runtime_site_probability(*reversed_alternate)
+                == quantized(0.8F),
         "ASM probabilities did not follow HaplotypeMask value 2");
 
     const DiploidMethylationCatalog pooled(
@@ -519,19 +601,24 @@ void test_asm_overlay_uses_typed_haplotype_mask()
         &cgmap,
         &asm_records,
         true);
+    const DiploidRuntimeArrays &pooled_runtime = pooled.runtime_arrays();
     require(
-        find(pooled.shared_sites(), origin) == nullptr,
+        find(pooled_runtime.reference_shared, origin) == nullptr,
         "ASM target remained shared after CGmap pooling");
-    const DiploidSite *pooled_alternate =
-        find(pooled.haplotype_sites(0U), origin);
-    const DiploidSite *pooled_reference =
-        find(pooled.haplotype_sites(1U), origin);
+    const RuntimeSite *pooled_alternate = find(
+        pooled_runtime.reference_haplotypes[0], origin);
+    const RuntimeSite *pooled_reference = find(
+        pooled_runtime.reference_haplotypes[1], origin);
     require(
         pooled_alternate != nullptr && pooled_reference != nullptr
-            && pooled_alternate->methylation_source == MethylationSource::asm_source
-            && pooled_alternate->methylation_probability == 0.8F
-            && pooled_reference->methylation_source == MethylationSource::asm_source
-            && pooled_reference->methylation_probability == 0.2F,
+            && htsim::methdb::runtime_site_source(*pooled_alternate)
+                == MethylationSource::asm_source
+            && htsim::methdb::runtime_site_probability(*pooled_alternate)
+                == quantized(0.8F)
+            && htsim::methdb::runtime_site_source(*pooled_reference)
+                == MethylationSource::asm_source
+            && htsim::methdb::runtime_site_probability(*pooled_reference)
+                == quantized(0.2F),
         "ASM did not retain precedence over the typed CGmap pool");
 }
 
@@ -539,7 +626,8 @@ void test_asm_links_fail_closed()
 {
     const Contig contig = make_contig("AACGTAACGTT");
     const std::vector<AsmRecord> records = {
-        {2U, 9U, 0.2F, 0.8F, MethylationContext::cg_c, 2U, 3U, 0U},
+        {2U, 9U, quantized(0.2F), quantized(0.8F),
+         MethylationContext::cg_c, 2U, 3U, 0U},
     };
     const ContigVariants no_variants(contig.bases, {}, contig.index);
     require_error(
@@ -591,7 +679,8 @@ void test_asm_links_fail_closed()
     const ContigVariants context_variants(
         context_contig.bases, context_events, context_contig.index);
     const std::vector<AsmRecord> divergent = {
-        {2U, 3U, 0.2F, 0.8F, MethylationContext::cg_c, 2U, 2U, 0U},
+        {2U, 3U, quantized(0.2F), quantized(0.8F),
+         MethylationContext::cg_c, 2U, 2U, 0U},
     };
     require_error(
         [&] {
@@ -614,20 +703,42 @@ void test_invalid_inputs_fail_closed()
         contig.bases, variant_fixture(), contig.index);
     const DiploidMethylationCatalog catalog(
         contig, variants, 73U, true, shapes());
+
+    DiploidRuntimeArrays invalid_runtime;
+    invalid_runtime.reference_shared.push_back(
+        htsim::methdb::pack_runtime_site(
+            static_cast<std::uint32_t>(contig.length),
+            0U,
+            MethylationContext::cg_c,
+            MethylationSource::beta,
+            MethylationAllele::shared,
+            true));
     require_error(
-        [&] {(void)catalog.haplotype_sites(2U);},
-        "invalid haplotype catalog was accepted");
-    require_error(
-        [] {
-            (void)htsim::methdb::insertion_origin_id(
-                htsim::model::no_variant_index, 0U);
+        [&] {
+            (void)DiploidMethylationCatalog(
+                contig.index,
+                static_cast<std::uint32_t>(contig.length),
+                invalid_runtime);
         },
-        "no-event insertion origin was accepted");
+        "out-of-contig packed runtime site was accepted");
+
+    DiploidRuntimeArrays wrong_ownership;
+    wrong_ownership.reference_haplotypes[0].push_back(
+        htsim::methdb::pack_runtime_site(
+            2U,
+            0U,
+            MethylationContext::cg_c,
+            MethylationSource::beta,
+            MethylationAllele::shared,
+            true));
     require_error(
-        [] {
-            (void)htsim::methdb::insertion_origin_id(1U, 4U);
+        [&] {
+            (void)DiploidMethylationCatalog(
+                contig.index,
+                static_cast<std::uint32_t>(contig.length),
+                wrong_ownership);
         },
-        "fifth insertion origin base was accepted");
+        "shared allele in a haplotype runtime array was accepted");
 
     auto projection = htsim::haplotype::project_interval(
         contig,

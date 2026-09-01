@@ -48,6 +48,7 @@ enum class VariantKind : std::uint8_t {
 enum class VariantSource : std::uint8_t {
     vcf = 1,
     de_novo = 2,
+    asm_profile = 3,
 };
 
 enum class MethylationContext : std::uint8_t {

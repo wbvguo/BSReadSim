@@ -25,6 +25,11 @@ void require(bool condition, const std::string &message)
     if (!condition) {throw std::runtime_error(message);}
 }
 
+std::uint16_t q(float probability)
+{
+    return htsim::methdb::probability_to_u16(probability);
+}
+
 template <typename Operation>
 void require_error(Operation operation, const std::string &message)
 {
@@ -95,7 +100,7 @@ void test_catalog_order_shapes_and_reuse()
         const float expected = htsim::beta_sampler::sample_beta(
             UINT64_C(0x123456789abcdef0), contig_index,
             site.reference_position, shape.alpha, shape.beta);
-        require(site.methylation_probability == expected,
+        require(site.probability_u16 == q(expected),
                 "catalog used the wrong shape or RNG address");
         saw_cg = saw_cg || site.context == MethylationContext::cg_c
             || site.context == MethylationContext::cg_g;
@@ -123,8 +128,8 @@ void test_catalog_order_shapes_and_reuse()
                     == catalog.sites()[index].reference_position
                     && repeated.sites()[index].context
                         == catalog.sites()[index].context
-                    && repeated.sites()[index].methylation_probability
-                        == catalog.sites()[index].methylation_probability,
+                    && repeated.sites()[index].probability_u16
+                        == catalog.sites()[index].probability_u16,
                 "repeated catalog changed a genomic site");
     }
 }
@@ -159,9 +164,9 @@ void test_cgmap_overlay_and_na_fallback()
 {
     const auto bases = encode("ACGACAGCAATCGTTGAA");
     const std::vector<CgmapRecord> records = {
-        {1U, 0.125F, MethylationContext::cg_c, true, 2U},
-        {2U, 0.0F, MethylationContext::cg_g, false, 2U},
-        {4U, 0.75F, MethylationContext::chg_c, true, 0U},
+        {1U, q(0.125F), MethylationContext::cg_c, true, 2U},
+        {2U, 0U, MethylationContext::cg_g, false, 2U},
+        {4U, q(0.75F), MethylationContext::chg_c, true, 0U},
     };
     const MethylationCatalog catalog(
         bases, 2U, 17U, true, shapes(), &records);
@@ -178,7 +183,7 @@ void test_cgmap_overlay_and_na_fallback()
     require(
         cg_c != catalog.sites().end()
             && cg_c->methylation_source == MethylationSource::cgmap
-            && cg_c->methylation_probability == 0.125F,
+            && cg_c->probability_u16 == q(0.125F),
         "defined CGmap value did not replace the Beta level");
     require(
         cg_g != catalog.sites().end()
@@ -187,7 +192,7 @@ void test_cgmap_overlay_and_na_fallback()
     require(
         chg_c != catalog.sites().end()
             && chg_c->methylation_source == MethylationSource::cgmap
-            && chg_c->methylation_probability == 0.75F,
+            && chg_c->probability_u16 == q(0.75F),
         "non-CpG CGmap value was not overlaid");
 
     const MethylationCatalog cpg_only(
@@ -202,7 +207,7 @@ void test_cgmap_overlay_and_na_fallback()
         "CGmap overlay bypassed the CpG-only filter");
 
     const std::vector<CgmapRecord> mismatched = {
-        {1U, 0.5F, MethylationContext::chh_c, true, 0U},
+        {1U, q(0.5F), MethylationContext::chh_c, true, 0U},
     };
     require_error(
         [&] {
@@ -216,9 +221,9 @@ void test_cgmap_context_pool_and_beta_fallback()
 {
     const auto bases = encode("ACGACAGCAATCGTTGAA");
     const std::vector<CgmapRecord> records = {
-        {1U, 0.125F, MethylationContext::cg_c, true, 2U},
-        {2U, 0.875F, MethylationContext::cg_g, true, 2U},
-        {4U, 0.75F, MethylationContext::chg_c, true, 0U},
+        {1U, q(0.125F), MethylationContext::cg_c, true, 2U},
+        {2U, q(0.875F), MethylationContext::cg_g, true, 2U},
+        {4U, q(0.75F), MethylationContext::chg_c, true, 0U},
     };
     constexpr std::uint64_t seed = 17U;
     constexpr std::uint32_t contig_index = 4U;
@@ -238,20 +243,20 @@ void test_cgmap_context_pool_and_beta_fallback()
         if (expected) {
             require(
                 site.methylation_source == MethylationSource::pooled_cgmap
-                    && site.methylation_probability == *expected,
+                    && site.probability_u16 == *expected,
                 "reference catalog lost a typed CGmap pool draw");
             saw_pooled = true;
         } else {
             const ShapePair &shape = shape_for_test(site.context, configured);
             require(
                 site.methylation_source == MethylationSource::beta
-                    && site.methylation_probability
-                        == htsim::beta_sampler::sample_beta(
+                    && site.probability_u16
+                        == q(htsim::beta_sampler::sample_beta(
                             seed,
                             contig_index,
                             site.reference_position,
                             shape.alpha,
-                            shape.beta),
+                            shape.beta)),
                 "empty CGmap context class did not retain Beta fallback");
             saw_beta_fallback = true;
         }

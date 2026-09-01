@@ -1,8 +1,9 @@
 site_name: BSReadSim
 site_description: Bisulfite sequencing read simulation with additional genomics assay support
 site_url: https://wbvguo.github.io/BSReadSim/
+dev_addr: 127.0.0.1:8700
 repo_url: https://github.com/wbvguo/BSReadSim
-repo_name: wbvguo/BSReadSim
+repo_name: GitHub
 docs_dir: docs
 
 theme:
@@ -26,7 +27,6 @@ theme:
         name: Switch to light mode
   features:
     - navigation.expand
-    - navigation.sections
     - navigation.top
     - navigation.tracking
     - search.highlight
@@ -67,16 +67,12 @@ nav:
       - Tutorials: simulation/tutorials.md
       - Customize: simulation/customize.md
       - Other assays: simulation/other-assays.md
-  - Outputs:
-      - Overview: outputs/index.md
-      - Inspect outputs: outputs/inspect.md
+  - Outputs: outputs/index.md
   - Reference:
-      - Command line: reference/cli.md
-      - File formats: reference/formats.md
-      - Supported platforms: getting-started/platforms.md
-      - Troubleshooting: help/troubleshooting.md
+      - CLI reference: reference/cli.md
+      - Input formats: reference/formats.md
+      - Troubleshoot: help/troubleshoot.md
 
 # Exact contracts and advanced guides stay outside the global navigation.
 not_in_nav: |
-  /reference/formats/*.md
   /reference/advanced/*.md

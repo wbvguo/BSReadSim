@@ -205,6 +205,61 @@ void test_paired_fragment_and_overlap_projection()
 
 }
 
+void test_reverse_molecule_geometry()
+{
+    const Contig contig = contig_for("ACGCGTACGT");
+    const MethylationCatalog catalog(
+        contig.bases, contig.index, 17, true, shapes());
+    const ReadLayout paired_layout{6, 4, true};
+    const auto paired = htsim::fragment_builder::build_fragment(
+        contig,
+        catalog,
+        0,
+        1,
+        1,
+        htsim::model::CaptureStrand::reverse,
+        paired_layout,
+        FragmentDetail::full,
+        true);
+
+    require(paired.mates.size() == 2,
+            "reverse paired fragment did not contain two mates");
+    require(paired.mates[0].mate_index == 0
+                && paired.mates[0].template_start == 2
+                && paired.mates[0].template_end == 6
+                && paired.mates[0].reverse_complement
+                && paired.mates[0].reference_start == 3
+                && paired.mates[0].reference_end == 7,
+            "reverse-molecule R1 projection is wrong");
+    require(paired.mates[1].mate_index == 1
+                && paired.mates[1].template_start == 0
+                && paired.mates[1].template_end == 4
+                && !paired.mates[1].reverse_complement
+                && paired.mates[1].reference_start == 1
+                && paired.mates[1].reference_end == 5,
+            "reverse-molecule R2 projection is wrong");
+
+    const ReadLayout single_layout{6, 4, false};
+    const auto single = htsim::fragment_builder::build_fragment(
+        contig,
+        catalog,
+        1,
+        1,
+        0,
+        htsim::model::CaptureStrand::forward,
+        single_layout,
+        FragmentDetail::full,
+        true);
+    require(single.mates.size() == 1
+                && single.mates[0].mate_index == 0
+                && single.mates[0].template_start == 2
+                && single.mates[0].template_end == 6
+                && single.mates[0].reverse_complement
+                && single.mates[0].reference_start == 3
+                && single.mates[0].reference_end == 7,
+            "reverse-molecule single-end projection is wrong");
+}
+
 void test_single_end_and_payload_boundary()
 {
     const Contig contig = contig_for("AACGTTAA");
@@ -581,6 +636,7 @@ int main()
 {
     try {
         test_paired_fragment_and_overlap_projection();
+        test_reverse_molecule_geometry();
         test_single_end_and_payload_boundary();
         test_common_columns_fragment_detail();
         test_variant_projected_fragment_boundary();

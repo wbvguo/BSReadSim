@@ -31,6 +31,7 @@ def _arguments(core: Path, reference: Path, vcf: Path) -> list[str]:
         "--reference", str(reference),
         "--vcf", str(vcf),
         "--technology", "WGBS",
+        "--directional", "true",
         "--paired-end", "true",
         "--read-length-1", "12",
         "--read-length-2", "12",
@@ -48,7 +49,7 @@ def _arguments(core: Path, reference: Path, vcf: Path) -> list[str]:
         "--indel-extension-probability", "0.3",
         "--homozygous-only", "false",
         "--collect-non-cpg", "true",
-        "--cgmap-pool", "false",
+        "--pool-meth", "false",
         "--update-variant-boundaries", "true",
         "--beta-cg", "2,5",
         "--beta-chg", "3,4",
@@ -126,6 +127,30 @@ def _counts(stream: ProtocolStream) -> tuple:
     )
 
 
+def _library_orientation_counts(stream: ProtocolStream) -> dict[str, int]:
+    counts = {"OT": 0, "OB": 0, "CTOT": 0, "CTOB": 0}
+    signatures = {
+        (1, (0, 1)): "OT",
+        (2, (1, 0)): "OB",
+        (1, (1, 0)): "CTOT",
+        (2, (0, 1)): "CTOB",
+    }
+    for batch in stream.batches:
+        for fragment_index, capture_strand in enumerate(batch.capture_strands):
+            mate_begin = batch.mate_offsets[fragment_index]
+            mate_end = batch.mate_offsets[fragment_index + 1]
+            reverse = tuple(batch.mate_reverse_complements[mate_begin:mate_end])
+            orientation = signatures.get((capture_strand, reverse))
+            if orientation is None:
+                raise SystemExit(
+                    "core emitted an invalid library orientation: {!r}".format(
+                        (capture_strand, reverse)
+                    )
+                )
+            counts[orientation] += 1
+    return counts
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
         raise SystemExit("usage: check_core_stream.py CORE_EXECUTABLE")
@@ -171,6 +196,43 @@ def main(argv: list[str]) -> int:
         if len(without_annotations_bytes) >= len(full_bytes):
             raise SystemExit("no-Details stream did not remove provenance bytes")
 
+        directional_counts = _library_orientation_counts(full)
+        if (
+            directional_counts["OT"] == 0
+            or directional_counts["OB"] == 0
+            or directional_counts["CTOT"] != 0
+            or directional_counts["CTOB"] != 0
+        ):
+            raise SystemExit(
+                "directional WGBS did not contain only independent OT/OB fragments: "
+                "{!r}".format(directional_counts)
+            )
+
+        nondirectional_arguments = _replace(
+            full_arguments, "--directional", "false"
+        )
+        nondirectional_bytes = _require_success(
+            _run(nondirectional_arguments), "non-directional invocation"
+        )
+        nondirectional = read_stream(
+            nondirectional_bytes, core_exit_status=0
+        )
+        nondirectional_counts = _library_orientation_counts(nondirectional)
+        if any(count == 0 for count in nondirectional_counts.values()):
+            raise SystemExit(
+                "non-directional WGBS omitted a library orientation: {!r}".format(
+                    nondirectional_counts
+                )
+            )
+        nondirectional_rechunked = _require_success(
+            _run(_replace(nondirectional_arguments, "--chunk-size", "31")),
+            "non-directional rechunked invocation",
+        )
+        if nondirectional_rechunked != nondirectional_bytes:
+            raise SystemExit(
+                "non-directional library orientation changed with chunk size"
+            )
+
         variant_kinds = {
             int(event.kind)
             for batch in full.batches
@@ -191,6 +253,18 @@ def main(argv: list[str]) -> int:
             )
             if parallel != full_bytes:
                 raise SystemExit("core worker count changed protocol bytes")
+        large_chunk_arguments = _replace(
+            full_arguments, "--chunk-size", "257"
+        )
+        large_chunk_serial = _require_success(
+            _run(large_chunk_arguments), "large-chunk serial invocation"
+        )
+        large_chunk_parallel = _require_success(
+            _run(_replace(large_chunk_arguments, "--core-workers", "4")),
+            "large-chunk parallel invocation",
+        )
+        if large_chunk_parallel != large_chunk_serial:
+            raise SystemExit("parallel fragment construction changed protocol bytes")
         rechunked = _require_success(
             _run(_replace(full_arguments, "--chunk-size", "31")),
             "rechunked invocation",

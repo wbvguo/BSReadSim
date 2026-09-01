@@ -52,6 +52,11 @@ void require(bool condition, const std::string &message)
     if (!condition) {throw std::runtime_error(message);}
 }
 
+std::uint16_t q(float probability)
+{
+    return htsim::methdb::probability_to_u16(probability);
+}
+
 template <typename Operation>
 void require_error(Operation operation, const std::string &message)
 {
@@ -183,13 +188,13 @@ void verify_valid_profile(const std::vector<std::uint8_t> &input)
         chr1[0].reference_position == 1U
             && chr1[0].context == MethylationContext::cg_c
             && chr1[0].has_probability
-            && chr1[0].methylation_probability == 0.25F,
+            && chr1[0].probability_u16 == q(0.25F),
         "first CGmap record changed");
     require(
         chr1[1].reference_position == 2U
             && chr1[1].context == MethylationContext::cg_g
             && !chr1[1].has_probability
-            && chr1[1].methylation_probability == 0.0F,
+            && chr1[1].probability_u16 == 0U,
         "CGmap na record changed");
     require(
         chr1[2].context == MethylationContext::chg_c
@@ -201,7 +206,7 @@ void verify_valid_profile(const std::vector<std::uint8_t> &input)
         chr2.size() == 1U && chr2[0].reference_position == 2U
             && chr2[0].context == MethylationContext::cg_g
             && chr2[0].has_probability
-            && chr2[0].methylation_probability == 0.0F,
+            && chr2[0].probability_u16 == 0U,
         "chr2 CGmap record changed");
     require(
         profile.records(chr1_contig).size() == chr1.size(),
@@ -262,7 +267,7 @@ void verify_valid_bed_methyl(const std::vector<std::uint8_t> &input)
         chr1[0].reference_position == 1U
             && chr1[0].context == MethylationContext::cg_c
             && chr1[0].dinucleotide_second == 2U
-            && chr1[0].methylation_probability == 0.25F
+            && chr1[0].probability_u16 == q(0.25F)
             && chr1[1].context == MethylationContext::cg_g
             && chr1[2].context == MethylationContext::chg_c
             && chr1[3].context == MethylationContext::chh_c,
@@ -271,7 +276,7 @@ void verify_valid_bed_methyl(const std::vector<std::uint8_t> &input)
     require(
         chr2.size() == 1U
             && chr2[0].context == MethylationContext::cg_g
-            && chr2[0].methylation_probability == 0.0F,
+            && chr2[0].probability_u16 == 0U,
         "unstranded bedMethyl row did not resolve from the reference");
 }
 
@@ -330,6 +335,98 @@ void test_bed_methyl_fail_closed_boundaries()
         "chr1\t3\t4\tm\t4\t.\t3\t4\t255,0,0\t4\t25\n",
         true,
         "bedMethyl non-C/G target was accepted");
+}
+
+void verify_methbg(const std::vector<std::uint8_t> &input)
+{
+    TempFile file;
+    write_bytes(file.path(), input);
+    CgmapProfile profile(
+        file.path(), reference_catalog(), MethylationProfileFormat::methbg);
+    require(profile.row_count() == 4U, "MethBG row count changed");
+    require(
+        profile.defined_probability_count() == 4U,
+        "MethBG defined-probability count changed");
+    const auto records = profile.records(
+        make_contig(0U, "chr1", "ACGACAGCAATCG"));
+    require(
+        records.size() == 3U
+            && records[0].context == MethylationContext::cg_c
+            && records[0].probability_u16 == q(0.25F)
+            && records[1].context == MethylationContext::chg_c
+            && records[2].context == MethylationContext::chh_c,
+        "MethBG rows did not normalize from the reference");
+}
+
+void test_methbg_plain_gzip_and_boundaries()
+{
+    const std::string text =
+        "track type=bedGraph name=fixture\n"
+        "chr1\t1\t2\t0.25\n"
+        "chr1\t4\t5\t0.5\n"
+        "chr1\t7\t8\t1\n"
+        "chr2\t2\t3\t0\n";
+    verify_methbg(bytes_of(text));
+    verify_methbg(gzip_bytes(text));
+
+    TempFile invalid;
+    write_bytes(invalid.path(), bytes_of("chr1\t1\t3\t0.5\n"));
+    require_error(
+        [&] {
+            (void)CgmapProfile(
+                invalid.path(),
+                reference_catalog(),
+                MethylationProfileFormat::methbg);
+        },
+        "invalid MethBG interval was accepted");
+}
+
+void verify_methbed(const std::string &text)
+{
+    TempFile file;
+    write_bytes(file.path(), bytes_of(text));
+    CgmapProfile profile(
+        file.path(), reference_catalog(), MethylationProfileFormat::methbed);
+    require(profile.row_count() == 4U, "MethBED row count changed");
+    const auto records = profile.records(
+        make_contig(0U, "chr1", "ACGACAGCAATCG"));
+    require(
+        records.size() == 3U
+            && records[0].context == MethylationContext::cg_c
+            && records[0].probability_u16 == q(0.25F)
+            && records[1].context == MethylationContext::chg_c
+            && records[1].probability_u16 == q(0.5F)
+            && records[2].context == MethylationContext::chh_c
+            && records[2].probability_u16 == q(1.0F),
+        "MethBED rows did not normalize from the reference");
+}
+
+void test_methbed_widths_and_boundaries()
+{
+    verify_methbed(
+        "chr1\t1\t2\t.\t250\t+\n"
+        "chr1\t4\t5\t.\t500\t+\n"
+        "chr1\t7\t8\t.\t1000\t+\n"
+        "chr2\t2\t3\t.\t0\t-\n");
+    verify_methbed(
+        "browser position chr1:1-13\n"
+        "chr1\t1\t2\t.\t250\t+\t1\t4\tC\tCG\n"
+        "chr1\t4\t5\t.\t500\t+\t2\t4\tC\tCHG\n"
+        "chr1\t7\t8\t.\t1000\t+\t4\t4\tC\tCHH\n"
+        "chr2\t2\t3\t.\t0\t-\t0\t10\tG\tCG\n");
+
+    TempFile invalid;
+    write_bytes(
+        invalid.path(),
+        bytes_of("chr1\t1\t2\t.\t250\t+\t1\t4\tC\tCHH\n"));
+    CgmapProfile profile(
+        invalid.path(), reference_catalog(), MethylationProfileFormat::methbed);
+    require_error(
+        [&] {
+            (void)profile.records(
+                make_contig(0U, "chr1", "ACGACAGCAATCG"));
+        },
+        "MethBED context/reference mismatch was accepted");
 }
 
 void require_parse_error(const std::string &text, const std::string &message)
@@ -409,8 +506,8 @@ void test_reference_validation_boundaries()
             htsim::methdb::validate_cgmap_records(
                 bases,
                 {
-                    {2U, 0.2F, MethylationContext::cg_g, true, 2U},
-                    {1U, 0.2F, MethylationContext::cg_c, true, 2U},
+                    {2U, q(0.2F), MethylationContext::cg_g, true, 2U},
+                    {1U, q(0.2F), MethylationContext::cg_c, true, 2U},
                 });
         },
         "unsorted normalized CGmap records were accepted");
@@ -418,14 +515,14 @@ void test_reference_validation_boundaries()
         [&] {
             htsim::methdb::validate_cgmap_records(
                 bases,
-                {{1U, 0.2F, MethylationContext::chh_c, true, 0U}});
+                {{1U, q(0.2F), MethylationContext::chh_c, true, 0U}});
         },
         "wrong normalized CGmap context was accepted");
     require_error(
         [&] {
             htsim::methdb::validate_cgmap_records(
                 bases,
-                {{1U, 0.2F, MethylationContext::cg_c, false, 2U}});
+                {{1U, q(0.2F), MethylationContext::cg_c, false, 2U}});
         },
         "nonzero undefined CGmap probability was accepted");
 
@@ -453,6 +550,8 @@ int main()
         test_plain_and_gzip_profile();
         test_bed_methyl_plain_gzip_and_widths();
         test_bed_methyl_fail_closed_boundaries();
+        test_methbg_plain_gzip_and_boundaries();
+        test_methbed_widths_and_boundaries();
         test_strict_text_boundaries();
         test_reference_validation_boundaries();
         return EXIT_SUCCESS;

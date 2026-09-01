@@ -46,11 +46,12 @@ public:
     using std::runtime_error::runtime_error;
 };
 
-// Convert mean sequencing depth to an exact uint32 fragment/read-pair count.
-// The frozen evaluation order is:
-//   floor((double(effective_reference_bases) * depth)
-//         / (read_length * (paired_end ? 2 : 1)))
-// under round-to-nearest floating point. No wider integer is used.
+// Convert mean sequencing depth to an exact uint32 fragment count by first
+// resolving the required number of reads, then rounding up to a complete
+// fragment bundle. The frozen evaluation order is:
+//   raw_reads = (double(effective_reference_bases) * depth) / read_length
+//   ceil(raw_reads / (paired_end ? 2 : 1))
+// under round-to-nearest floating point.
 std::uint32_t fragments(
     double depth,
     std::uint64_t effective_reference_bases,
@@ -83,6 +84,9 @@ public:
         const Parameters &parameters);
 
     std::uint32_t sample(std::uint64_t candidate_ordinal) const;
+    std::uint32_t sample(
+        std::uint64_t candidate_ordinal,
+        std::uint64_t local_index) const;
 
 private:
     std::uint64_t key_ = 0;
@@ -156,7 +160,8 @@ model::Fragment build_fragment(
     std::uint8_t haplotype,
     model::CaptureStrand capture_strand,
     const ReadLayout &layout,
-    FragmentDetail detail = FragmentDetail::full);
+    FragmentDetail detail = FragmentDetail::full,
+    bool reverse_molecule = false);
 
 // Consume one typed haplotype projection and attach its diploid methylation
 // sites. This boundary performs no sampling or I/O. Passing by value allows a
@@ -168,7 +173,8 @@ model::Fragment build_fragment(
     std::uint64_t fragment_ordinal,
     model::CaptureStrand capture_strand,
     const ReadLayout &layout,
-    FragmentDetail detail = FragmentDetail::full);
+    FragmentDetail detail = FragmentDetail::full,
+    bool reverse_molecule = false);
 
 } // namespace htsim::fragment_builder
 

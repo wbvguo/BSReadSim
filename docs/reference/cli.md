@@ -1,619 +1,481 @@
-# Command-line reference
+# CLI reference
 
-BSReadSim uses explicit subcommands for simulations and reusable artifact
-construction. The current interface is path-based: provide input paths and
-BSReadSim computes, verifies, and records file identities internally. SHA-256
-digests are not command-line inputs.
+Use this page to look up the options accepted by each BSReadSim command. For
+runnable commands, see [Tutorials](../simulation/tutorials.md). For guidance on
+choosing settings, see [Customize](../simulation/customize.md). Input file
+syntax is documented in [Input file formats](formats.md).
 
-## Synopsis
+<div class="reference-jump" markdown>
 
-```text
-bsreadsim run wgbs [OPTIONS]
-bsreadsim run rrbs [OPTIONS]
-bsreadsim run tbs  [OPTIONS]
-bsreadsim run wgs  [OPTIONS]
-bsreadsim run wes  [OPTIONS]
-bsreadsim run ts   [OPTIONS]
+**Jump to:** [commands](#commands) · [run simulations](#run-simulations) ·
+[option combination rules](#option-combination-rules) · [build variants](#build-variants) ·
+[build MethDB](#build-methdb) · [build RRBS candidates](#build-rrbs-candidates) ·
+[export files](#export-files) · [core integration options](#core-integration-options)
 
-bsreadsim build variants [OPTIONS]
-bsreadsim build methdb   [OPTIONS]
-bsreadsim build rrbs     [OPTIONS]
+</div>
 
-bsreadsim export test-fasta -o PATH
-bsreadsim export methdb -i INPUT.methdb -o OUTPUT.bed.gz
-bsreadsim export methdb -i INPUT.methdb -o OUTPUT.bed --no-compression
-```
+## Commands
 
-Use `bsreadsim --help`, `bsreadsim COMMAND --help`, or
-`bsreadsim COMMAND SUBCOMMAND --help` to inspect the interface installed in
-the current environment.
-
-## Choose a command
-
-| Command | Use it for | Primary result |
+| Command form | Use it to | Result |
 | --- | --- | --- |
-| `run wgbs` | whole-genome fragment sampling | FASTQ or annotated BAM plus a manifest |
-| `run rrbs` | restriction-fragment sampling | FASTQ or annotated BAM plus a manifest |
-| `run tbs` | BED-targeted fragment sampling | FASTQ or annotated BAM plus a manifest |
-| `run wgs` | ordinary whole-genome sequencing | FASTQ or annotated BAM plus a manifest |
-| `run wes` | whole-exome capture from a target BED | FASTQ or annotated BAM plus a manifest |
-| `run ts` | ordinary targeted sequencing from a target BED | FASTQ or annotated BAM plus a manifest |
-| `build variants` | build a reusable prepared variant set | one BGZF-compressed `.vcf.gz` |
-| `build methdb` | build a reusable prepared methylation profile | one MethDB file |
-| `build rrbs` | export the exact RRBS candidate domain | one candidate BED |
-| `export test-fasta` | copy the bundled synthetic reference | one FASTA file |
-| `export methdb` | decode a MethDB methylation profile | one BED or BED.gz file |
+| `bsreadsim run ASSAY` | Simulate `wgbs`, `rrbs`, `tbs`, `wgs`, `wes`, or `ts` reads | Reads and a run manifest |
+| `bsreadsim build variants` | Generate variants or normalize and phase a VCF | Prepared VCF.gz |
+| `bsreadsim build methdb` | Prepare a reusable methylation and variant snapshot | MethDB |
+| `bsreadsim build rrbs` | Enumerate the RRBS candidate domain for external scoring | RRBS candidate BED |
+| `bsreadsim export test-fasta` | Copy the bundled example reference | FASTA |
+| `bsreadsim export methdb` | Decode a MethDB for inspection | Extended BED |
 
-`run` commands always require a technology subcommand. `build` commands do
-not generate reads or a run manifest.
+Only `run` creates a manifest. Use `bsreadsim --help`,
+`bsreadsim COMMAND --help`, or `bsreadsim COMMAND SUBCOMMAND --help` to inspect
+the interface installed in the current environment.
 
-## Value conventions
+## Conventions
 
-- A **probability** is a finite number in `[0, 1]`.
-- A **uint64 seed** is a decimal integer from `0` through
-  `18446744073709551615`.
-- A **flag** takes no value; its presence enables the behavior.
-- Relative paths are resolved from the working directory. Manifests record
-  resolved paths and input SHA-256 identities.
-- Run output directories are created as needed. Existing directories are
-  allowed, but an existing destination artifact is never overwritten.
-- Standalone `build` outputs require an existing parent directory and a new,
-  non-existing destination path.
+The **Default** column uses **Required** for mandatory options, **—** when no
+optional input is selected, and **Disabled** for flags that are off unless
+supplied.
 
-### Global options
+- A probability is a finite number from `0` to `1`, inclusive.
+- A uint64 seed is a decimal integer from `0` to `18446744073709551615`.
+- Relative paths are resolved from the working directory.
+- Existing destination artifacts are not overwritten.
 
-| Short | Long | Type | Default |
+### Help and version
+
+| Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| `-h` | `--help` | flag | show help and exit |
-| — | `--version` | flag | print the installed version and exit |
+| `-h`, `--help` | Flag | Disabled | Shows help for the current command level and exits |
+| `--version` | Flag | Disabled | Prints the version and exits; available only before a command |
 
-## `run`: shared options
+## Run simulations
 
-The general options in this section are shared by all six `run` commands.
-Methylation and bisulfite-chemistry options are exposed only by `run wgbs`,
-`run rrbs`, and `run tbs`; technology-specific options are documented below.
+Options in this section apply to all six assays unless a narrower set is
+stated. This table summarizes the assay-specific parts of each command:
 
-### Required inputs and dataset size
-
-| Short | Long | Type | Default |
+| Command | Fragment sampling | Required assay input | Bisulfite options |
 | --- | --- | --- | --- |
-| `-r` | `--reference` | FASTA path | required |
-| `-o` | `--output` | directory path | required |
-| `-n` | `--fragments` | integer `1..4294967295` | required unless `--depth` is used |
-| `-d` | `--depth` | finite number `> 0` | required unless `--fragments` is used |
+| `run wgbs` | `uniform` or `gc` | — | Yes |
+| `run rrbs` | `uniform` or `score` | —; `--cut-site` defaults to <code>C&#124;CGG</code> | Yes |
+| `run tbs` | `uniform` or `score` | `--targets` | Yes |
+| `run wgs` | `uniform` or `gc` | — | No |
+| `run wes` | `uniform` or `score` | `--targets` | No |
+| `run ts` | `uniform` or `score` | `--targets` | No |
 
-Choose exactly one of `--fragments` and `--depth`.
+### Required inputs and read count { #required-inputs-and-dataset-size }
 
-`--fragments` counts source DNA fragments, not individual FASTQ records. A
-paired-end run emits two reads per accepted fragment; `--single-end` emits one.
-
-`--depth D` resolves an exact requested fragment count as:
-
-```text
-ceil(effective_reference_bases * D / (read_length * emitted_mates))
-```
-
-The effective region is technology-specific: eligible contigs for WGBS/WGS,
-the union of eligible restriction-fragment envelopes for RRBS, and the union
-of target intervals for TBS/WES/TS. The requested depth and resolved fragment
-count are both retained in the manifest.
-
-### Random seeds
-
-| Short | Long | Type | Default |
+| Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| `-s` | `--seed` | uint64 | generated from OS entropy and recorded |
-| — | `--seed-mut` | uint64 | `0` |
-| — | `--seed-phase` | uint64 | `0` |
-| — | `--seed-meth` | uint64 | `0`; bisulfite modes only |
+| `-r`, `--reference` | FASTA path | Required | Loads the reference genome |
+| `-o`, `--output` | Directory path | Required | Sets the output directory |
+| `-n`, `--reads` | Positive integer | `1,000,000` | Sets the exact number of output read records |
+| `-d`, `--depth` | Number greater than `0` | — | Derives the read count from mean depth, effective-region size, and read length |
 
-The seeds address independent random domains:
+`--reads` and `--depth` are mutually exclusive. If neither is supplied,
+`--reads` defaults to `1,000,000` read records. In paired-end mode, `--reads`
+must be even and counts both mates: `--reads 1000` produces 500 read pairs. In
+single-end mode, it produces 1000 reads.
 
-| Seed | Controls |
-| --- | --- |
-| `--seed-mut` | de novo mutation generation |
-| `--seed-phase` | deterministic assignment of unphased VCF heterozygotes |
-| `--seed-meth` | generated methylation probabilities and empirical-pool draws in bisulfite modes |
-| `--seed` | fragment geometry and selection, qualities, and sequencing errors; also methylation states and conversion in bisulfite modes |
+??? info "Details"
 
-Fix all relevant seeds for a byte-reproducible run. Keep the focused
-biological seeds fixed while changing only `--seed` to draw a different read
-sample from the same prepared genome and, for bisulfite modes, methylome.
+    `--reads` accepts up to `4294967295` single-end records or an even number
+    up to `8589934590` in paired-end mode. Depth is resolved to complete
+    fragments:
 
-### Genetic variation
+    ```text
+    raw_reads = effective_reference_bases * D / read_length
+    resolved_reads = emitted_mates * ceil(raw_reads / emitted_mates)
+    resolved_fragments = resolved_reads / emitted_mates
+    ```
 
-| Short | Long | Type | Default |
+    The effective region is eligible contig sequence for WGBS and WGS,
+    eligible restriction-fragment envelopes for RRBS, and the union of target
+    intervals for TBS, WES, and TS.
+
+### Genome and variants { #genetic-variation }
+
+| Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| — | `--vcf` | one-sample diploid VCF path | none |
-| — | `--mutation-rate` | probability | conditional; see below |
-| — | `--indel-fraction` | probability | `0.15` |
-| — | `--indel-extension-probability` | probability | `0.15` |
-| — | `--homozygous-only` | flag | off |
+| `--vcf` | VCF path | — | Loads diploid variants and genotypes from VCF |
+| `--mutation-rate` | Float in `[0, 1]` | `0.001` | Sets the probability of a de novo mutation event at each non-`N` reference position |
+| `--indel-fraction` | Float in `[0, 1]` | `0.15` | Sets the proportion of generated mutation events that are indels |
+| `--indel-extension-probability` | Float in `[0, 1]` | `0.15` | Sets the probability that an indel extends by each additional base, up to four bases |
+| `--homozygous-only` | Flag | Disabled | Generates every de novo variant on both haplotypes |
 
-`--mutation-rate` is the total de novo mutation-event rate. Among generated
-events, `--indel-fraction` selects the fraction that are insertions or
-deletions; the remainder are SNVs. `--indel-extension-probability` controls
-extension of indels up to the supported four-base limit.
+??? info "Details"
 
-The run default is `0.001`, except that it becomes `0` when `--gc-profile` or
-`--rrbs-candidates` is supplied. `--vcf` selects predefined variants and
-automatically records an internal mutation rate of `0`; it is mutually
-exclusive with `--mutation-rate`. For auditable experiments without a VCF,
-specify `--mutation-rate` explicitly when the inferred default is not desired.
+    - By default, each generated event is homozygous with probability `1/3`.
+      Otherwise, it is assigned to either haplotype with equal probability.
+      `--homozygous-only` is still an active override in the current CLI: it
+      forces every generated event onto both haplotypes.
+    - When a VCF is provided, BSReadSim uses its diploid variant set instead
+      of generating de novo variants. `--vcf` cannot be combined with
+      `--mutation-rate`. Existing phasing is preserved; `--seed-phase`
+      assigns unphased heterozygous variants to haplotypes.
+    - VCF indels longer than four bases after normalization are rejected, as
+      are MNPs and complex replacements.
+    - The default mutation rate becomes `0` when `--gc-profile`,
+      `--rrbs-candidates`, or `--methdb` is supplied. The indel controls and
+      `--homozygous-only` affect only generated events; they do not modify
+      variants loaded from VCF or MethDB.
 
 ### Methylation inputs
 
-These options are available only for WGBS, RRBS, and TBS. WGS, WES, and TS do
-not construct or scan a methylome.
+Available only for WGBS, RRBS, and TBS.
 
-| Short | Long | Type | Default |
+| Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| — | `--cgmap` | CGmap path | none |
-| — | `--bed-methyl` | BED9+2 or BED9+9 path | none |
-| — | `--methdb` | MethDB path | none |
-| — | `--asm` | BSReadSim ASM path | none; requires `--vcf` |
-| — | `--asm-bed` | ASM BED6+6 path | none; requires `--vcf` |
+| `--methbg` | MethBG path | — | Loads methylation levels from MethBG |
+| `--methbed` | MethBED path | — | Loads methylation levels from MethBED |
+| `--bedmethyl` | bedMethyl path | — | Loads methylation levels from bedMethyl |
+| `--cgmap` | CGmap path | — | Loads methylation levels from CGmap |
+| `--methdb` | MethDB path | — | Reuses a methylation profile snapshot with embedded variants |
+| `--asm` | CGmapTools ASS path | — | Adds `cgmaptools asm -m ass` rows called `TRUE` |
+| `--asm-bed` | ASM BED path | — | Adds BED6+6 or BED6+10 ASM |
 
-`--cgmap`, `--bed-methyl`, and `--methdb` are mutually exclusive. `--asm` and
-`--asm-bed` are mutually exclusive. A loaded MethDB cannot be combined with a
-CGmap, bedMethyl, ASM overlay, or `--cgmap-pool`.
+See [Input file formats](formats.md#methylation-profile-inputs) for row contracts,
+[Customize](../simulation/customize.md#predefined-methylation) for profile
+behavior, and [Option combination rules](#option-combination-rules) for allowed
+combinations.
 
-### Methylation generation
+### Methylation profile and state model
 
-These options are available only for WGBS, RRBS, and TBS.
+Available only for WGBS, RRBS, and TBS.
 
-| Short | Long | Type | Default |
+| Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| — | `--beta-cg` | positive floats as `ALPHA,BETA` | `0.5,0.5` |
-| — | `--beta-chg` | positive floats as `ALPHA,BETA` | `0.01,0.05` |
-| — | `--beta-chh` | positive floats as `ALPHA,BETA` | `0.01,0.05` |
-| — | `--cpg-only` | flag | off; retain CG, CHG, and CHH |
-| — | `--cgmap-pool` | flag | off |
-| — | `--methylation-model` | `bernoulli` or `bilstm` | `bernoulli` |
-| — | `--no-update-variant-boundaries` | flag | off; update affected contexts |
+| `--beta-cg` | Positive floats as `a,b` | `0.5,0.5` | Sets the CG-site Beta parameters |
+| `--beta-chg` | Positive floats as `a,b` | `0.01,0.05` | Sets the CHG-site Beta parameters |
+| `--beta-chh` | Positive floats as `a,b` | `0.01,0.05` | Sets the CHH-site Beta parameters |
+| `--meth-model` | `bernoulli` | `bernoulli` | Selects the fragment-level methylation state model |
+| `--cpg-only` | Flag | Disabled | Omits CHG and CHH sites from the prepared profile |
+| `--pool-meth` | Flag | Disabled | Resamples input values within each contig and cytosine context |
 
-Without a methylation input, probabilities are generated from the three Beta
-distributions. Missing CGmap or bedMethyl positions also use these fallbacks.
-`--cgmap-pool` requires `--cgmap` or `--bed-methyl` and samples values by
-contig and context instead of preserving their input coordinates.
+`--pool-meth` requires one of the four text profile inputs; it cannot be used
+with a generated profile or MethDB.
 
-Variant-aware runs require boundary updates, so
-`--no-update-variant-boundaries` is rejected with `--vcf` or a positive
-mutation rate. `bilstm` is reserved but currently warns and executes the
-released Bernoulli state model.
+See [Customize](../simulation/customize.md#methylation) for probability
+generation, profile fallback, pooling, and fragment-level state realization.
 
-### Fragment geometry
+### Fragment length { #fragment-geometry }
 
-| Short | Long | Type | Default |
+| Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| — | `--single-end` | flag | paired-end |
-| `-l` | `--read-length` | integer `1..10000` | `100` |
-| — | `--insert-min` | positive integer | `100` |
-| — | `--insert-mean` | positive integer | `400` |
-| — | `--insert-max` | positive integer | `1000` |
-| — | `--insert-sd` | non-negative float | `25`; `0` for TBS/WES/TS |
-| — | `--max-ambiguous-fraction` | probability | `0.05` |
+| `--insert-min` | Positive integer | `100` | Sets the minimum fragment length |
+| `--insert-mean` | Positive integer | `400` | Sets the mean fragment length |
+| `--insert-max` | Positive integer | `1000` | Sets the maximum fragment length |
+| `--insert-sd` | Non-negative number | `25` | Sets the fragment-length standard deviation |
 
-Set `--insert-mean N --insert-sd 0` to use one fixed insert length for WGBS,
-WGS, TBS, WES, or TS. If min/max are omitted in that mode, both resolve to the
-mean. All
-normalized configurations satisfy:
+??? info "Details"
 
-```text
-insert_min <= insert_mean <= insert_max
-```
+    - Fragment settings must satisfy
+      `insert_min <= insert_mean <= insert_max`.
+    - For whole-genome and targeted assays, `--insert-mean N --insert-sd 0`
+      selects a fixed fragment length of `N`.
+    - RRBS fragment lengths are determined by restriction sites; the minimum
+      and maximum values define the retained length range. Its mean and SD do
+      not reshape those restriction fragments.
+    - Each read length must be no greater than `--insert-min`, except that a
+      fixed-length whole-genome or targeted run compares it with
+      `--insert-mean`.
 
-For fixed whole-genome or targeted sampling, each read must fit `insert_mean`.
-A positive WGBS/WGS SD uses a clamped-normal distribution and each read must
-fit `insert_min`. For RRBS,
-restriction sites determine realized fragment lengths and `--insert-min` /
-`--insert-max` define the retained size window; mean and SD do not resample
-restriction fragments. TBS, WES, and TS use and default to `--insert-sd 0`.
+### Read layout { #read-layout }
 
-`--max-ambiguous-fraction` is checked independently for each emitted mate.
-
-### Chemistry, quality, and error
-
-| Short | Long | Type | Default |
+| Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| — | `--conversion-rate` | probability | `0.998`; bisulfite modes only |
-| — | `--undirectional` | flag | off; directional library; bisulfite modes only |
-| `-q` | `--phred` | integer `0..93` | `40` |
-| — | `--quality-model` | quality Markov JSON path | none |
-| `-e` | `--error-rate` | probability | `0.005` |
-| — | `--error-model` | quality-confusion JSON path | none |
+| `-l`, `--read-length` | Integer from `1` to `10000` | `100` | Sets the number of bases in each read |
+| `--max-ambiguous-fraction` | Float in `[0, 1]` | `0.05` | Sets the maximum allowed fraction of `N` bases per read |
+| `--single-end` | Flag | Disabled | Selects single-end sequencing |
 
-`--conversion-rate` is the probability that an unmethylated convertible base
-is converted. It and `--undirectional` apply only to WGBS, RRBS, and TBS.
-WGS, WES, and TS bypass both methylation realization and bisulfite conversion.
-`--quality-model` replaces uniform `--phred`; the two cannot be combined.
-`--error-model` replaces uniform `--error-rate`; those two also cannot be
-combined. Model files are hashed automatically and their identities are
-recorded in the manifest.
+### Bisulfite conversion
 
-### Read output and simulation truth
-
-| Short | Long | Type | Default |
+| Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| `-p` | `--prefix` | `[A-Za-z0-9._-]+`, at most 128 characters | `sim` |
-| `-f` | `--format` | `fastq`, `fastq.gz`, or `bam` | `fastq.gz` |
-| — | `--gzip-level` | integer `0..9` | `6` |
-| — | `--fragment-summary` | flag | off; BAM only |
-| — | `--fragment-realization` | flag | off; BAM and bisulfite modes only, implies summary |
-| — | `--save-methdb` | flag | off; bisulfite modes only |
-| — | `--save-vcf` | flag | off |
-| — | `--save-truth` | flag | off; enables all applicable truth flags |
+| `--conversion-rate` | Float in `[0, 1]` | `0.998` | Sets the probability that each unmethylated cytosine is converted |
+| `--undirectional` | Flag | Disabled | Selects an undirectional bisulfite library |
 
-`--format` selects exactly one read representation. BAM replaces FASTQ rather
-than accompanying it. `--gzip-level` controls compressed FASTQ or BAM output;
-it has no byte-level effect on uncompressed FASTQ.
+Available only for WGBS, RRBS, and TBS. See
+[Bisulfite conversion](../simulation/customize.md#bisulfite-conversion)
+for molecule types and fragment-level conversion behavior.
 
-The reusable biological state has two consistent names throughout the user
-documentation: the **prepared variant set** and, in bisulfite modes, the
-**prepared methylation profile**. The save flags publish these as simulation
-truth artifacts with predictable names:
+### Base quality and sequencing errors
 
-```text
-OUTPUT/
-├── PREFIX.R1.fastq.gz       # or .fastq, or PREFIX.bam
-├── PREFIX.R2.fastq.gz       # paired FASTQ only
-├── truth/
-│   ├── PREFIX.methdb
-│   └── PREFIX.variants.vcf.gz
-└── PREFIX.manifest.json
-```
-
-With no variants, `--save-vcf` writes the prepared variant set as a valid
-header-only VCF.gz. With an input VCF, it writes the normalized and
-deterministically phased set used by the run. With an input MethDB,
-`--save-methdb` verifies and copies that exact methylation profile into the new
-truth directory. In WGS, WES, and TS, `--save-truth` publishes only the saved
-variant set because those modes have no methylation profile.
-
-### Execution controls
-
-| Short | Long | Type | Default |
+| Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| — | `--workers` | integer `1..1024` | `1` Python processing/output worker |
-| — | `--core-workers` | integer `1..64` | `1` fragment-generation worker |
-| — | `--chunk-size` | integer `1..10000000` | `10000` fragments per core sampling chunk |
-| — | `--max-in-flight-fragments` | integer `1..1000000` | `4096` |
-| — | `--core` | executable path | bundled `htsim-core` |
+| `-q`, `--phred` | Integer from `0` to `93` | `40` | Sets a fixed Phred score for every base |
+| `--quality-model` | Quality-model JSON path | — | Samples each cycle's Phred score from a quality Markov model |
+| `-e`, `--error-rate` | Float in `[0, 1]` | `0.005` | Sets a uniform substitution probability for every base |
+| `--error-model` | Error-model JSON path | — | Samples each final base call from a Phred-specific base transition model |
 
-The worker and batching options change resource use, not fixed-seed results.
-Reduce `--max-in-flight-fragments` first when memory pressure comes from
-queued work. `--core` is primarily a development and testing override.
+The JSON inputs follow the [sequencing-model formats](formats.md#sequencing-model-inputs);
+exclusive option pairs are listed under
+[Option combination rules](#option-combination-rules).
 
-## Technology-specific `run` options
+### Read output
 
-### `run wgbs`
-
-| Short | Long | Type | Default |
+| Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| — | `--gc-profile` | target-GC TSV path | uniform sampling |
+| `-p`, `--prefix` | `[A-Za-z0-9._-]+`, up to 128 characters | `sim` | Sets the output filename prefix |
+| `-f`, `--format` | `fastq`, `fastq.gz`, or `bam` | `fastq.gz` | Selects the read output format |
+| `--gzip-level` | Integer from `0` to `9` | `6` | Sets the compression level for `fastq.gz` output |
 
-Supplying `--gc-profile` requests an output fragment-GC distribution. A fixed
-insert supports reference-only, VCF, and de novo-variant runs. A variable
-insert with a GC profile currently supports only a reference-only genome and
-uses mean-insert calibration.
+FASTQ supports single- and paired-end reads; R2 is written only in paired-end
+mode. BAM replaces FASTQ when `--format bam` is selected. `--gzip-level` has
+no effect with uncompressed FASTQ or BAM. See
+[Outputs](../outputs/index.md) for filenames, annotations, and completion
+rules.
 
-```bash
-bsreadsim run wgbs \
-  -r reference.fa \
-  -o runs/wgbs \
-  -n 1000000 \
-  -l 150 \
-  --insert-mean 300 \
-  --insert-sd 0 \
-  --mutation-rate 0.001 \
-  --seed-mut 11 \
-  --seed-meth 12 \
-  -s 42 \
-  -f bam \
-  --save-truth
-```
+### BAM truth annotations
 
-### `run wgs`
-
-WGS uses the same whole-genome opportunity and optional GC-profile sampler as
-WGBS, but emits ordinary reads: no methylome is constructed and no bisulfite
-conversion is applied.
-
-| Short | Long | Type | Default |
+| Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| — | `--gc-profile` | target-GC TSV path | uniform sampling |
+| `--fragment-summary` | Flag | Disabled | Adds compact fragment metadata to BAM records |
+| `--fragment-realization` | Flag | Disabled | Adds complete-fragment methylation and conversion states to BAM records |
 
-```bash
-bsreadsim run wgs \
-  -r reference.fa \
-  -o runs/wgs \
-  -n 1000000 \
-  -l 150 \
-  --insert-mean 300 \
-  --insert-sd 0 \
-  --mutation-rate 0 \
-  -s 42 \
-  -f bam \
-  --save-truth
-```
+Both options require BAM. Fragment realization is available only for
+bisulfite assays and implies fragment summaries. See
+[Annotated BAM](../outputs/index.md#annotated-bam) for tag contracts.
 
-### `run rrbs`
+### Save and reuse simulation truth
 
-| Short | Long | Type | Default |
+| Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| — | `--cut-site` | motif; repeatable | required |
-| — | `--rrbs-candidates` | candidate BED path | discover candidates internally |
-| — | `--sampling` | `uniform` or `score` | `uniform` |
+| `--save-methdb` | Flag | Disabled | Writes the methylation profile to MethDB with embedded variants |
+| `--save-vcf` | Flag | Disabled | Writes the prepared, phased variant set to VCF |
+| `--save-truth` | Flag | Disabled | Writes the variant set and, for bisulfite assays, the methylation profile to disk |
 
-A motif places one `|` at the cut boundary, for example `C|CGG`. Repeat
-`--cut-site` for multi-enzyme libraries. `--sampling score` requires
-`--rrbs-candidates`; BSReadSim regenerates the candidate domain and permits an
-external tool to change only the score column.
+`--save-methdb` is available only for bisulfite assays. For non-bisulfite
+assays, `--save-truth` exports only the prepared, phased variant set as VCF.
+Reuse a saved VCF with `--vcf`, or reuse the prepared methylation profile and
+its embedded variant set with `--methdb`. See
+[Ground truth in simulation](../simulation/tutorials.md#ground-truth-in-simulation)
+for runnable Save and Reuse examples.
 
-When changing the RRBS size window, keep `--insert-mean` inside that window
-because the shared geometry contract still requires
-`min <= mean <= max`. Candidate eligibility itself depends on min/max, not SD.
+### Random seeds
 
-```bash
-bsreadsim run rrbs \
-  -r reference.fa \
-  -o runs/rrbs \
-  -n 1000000 \
-  --cut-site 'C|CGG' \
-  -l 100 \
-  --insert-min 100 \
-  --insert-mean 250 \
-  --insert-max 500 \
-  --insert-sd 25 \
-  --mutation-rate 0 \
-  -s 42
-```
-
-### `run tbs`
-
-| Short | Long | Type | Default |
+| Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| — | `--targets` | BED6 path | required |
-| — | `--sampling` | `uniform` or `score` | `uniform` |
-| — | `--fragment-center-stddev` | non-negative float | `50` |
+| `-s`, `--seed` | uint64 | Generated and recorded | Sets the master seed for the simulation |
+| `--seed-mut` | uint64 | Generated and recorded | Sets the seed for generating de novo variants |
+| `--seed-phase` | uint64 | Generated and recorded | Sets the seed for assigning unphased variants to haplotypes |
+| `--seed-meth` | uint64 | Generated and recorded | Sets the seed for preparing methylation probabilities |
 
-TBS uses and defaults to `--insert-sd 0`, with `--insert-mean` as its fixed length.
-`--fragment-center-stddev 0` centers every fragment exactly; larger values add
-deterministic normal displacement. With `--sampling score`, BED column 5
-supplies relative target mass.
+`--seed-meth` is available only for WGBS, RRBS, and TBS. When omitted,
+`--seed` is generated and each stage seed exposed by the assay is derived
+independently from it. The manifest records every resolved seed. Explicit
+stage seeds override derivation for their respective stages.
 
-```bash
-bsreadsim run tbs \
-  -r reference.fa \
-  -o runs/tbs \
-  -n 1000000 \
-  --targets targets.bed \
-  --sampling score \
-  -l 150 \
-  --insert-mean 300 \
-  --insert-sd 0 \
-  --fragment-center-stddev 50 \
-  --mutation-rate 0 \
-  -s 42
-```
+Fix all relevant seeds for byte-identical output. Keeping the biological seeds
+fixed while changing only `--seed` draws different reads from the same
+prepared snapshot.
 
-### `run wes`
+### Execution
 
-WES uses the BED capture sampler without methylation or bisulfite chemistry.
-Provide exon or other exome intervals as strand-aware BED6 targets. Target
-scores and placement controls have the same meaning as in TBS.
+| Option | Value | Default | Description |
+| --- | --- | --- | --- |
+| `-t`, `--threads` | Integer from `1` to `256` | `1` | Sets the total CPU thread budget |
 
-```bash
-bsreadsim run wes \
-  -r reference.fa \
-  -o runs/wes \
-  -n 1000000 \
-  --targets exome.bed \
-  --sampling uniform \
-  -l 150 \
-  --insert-mean 300 \
-  --insert-sd 0 \
-  --mutation-rate 0 \
-  -s 42
-```
+Thread count changes resource use, not fixed-seed output bytes.
 
-### `run ts`
+### Assay-specific fragment generation and sampling
 
-TS is the general ordinary targeted-sequencing mode. It shares the WES/TBS
-BED capture sampler and differs from WES by its recorded technology identity
-and intended target set.
+#### Whole-genome assays
 
-```bash
-bsreadsim run ts \
-  -r reference.fa \
-  -o runs/ts \
-  -n 1000000 \
-  --targets panel.bed \
-  --sampling score \
-  -l 150 \
-  --insert-mean 300 \
-  --insert-sd 0 \
-  --fragment-center-stddev 50 \
-  --mutation-rate 0 \
-  -s 42
-```
+Available for whole-genome bisulfite sequencing (`run wgbs`) and whole-genome
+sequencing (`run wgs`).
 
-## Compatibility rules worth checking first
+| Option | Value | Default | Description |
+| --- | --- | --- | --- |
+| `--sampling` | `uniform` or `gc` | `uniform` | Selects uniform or GC-profile sampling |
+| `--gc-profile` | Target-GC profile path | — | Supplies the distribution profile used by `--sampling gc` |
 
-- `--vcf` and `--mutation-rate` are mutually exclusive; `--vcf` automatically
-  selects an internal mutation rate of `0`.
-- `--asm` and `--asm-bed` require `--vcf`.
-- `--methdb` excludes methylation overlays and pooling.
-- `--cgmap-pool` requires `--cgmap` or `--bed-methyl`.
+#### Reduced representation bisulfite sequencing (RRBS)
+
+Available for `run rrbs`.
+
+| Option | Value | Default | Description |
+| --- | --- | --- | --- |
+| `--sampling` | `uniform` or `score` | `uniform` | Selects uniform or score-weighted fragment sampling |
+| `--cut-site` | Restriction-enzyme cut site | <code>C&#124;CGG</code> | Accepts a DNA motif with <code>&#124;</code> marking the cut position |
+| `--rrbs-candidates` | RRBS candidate BED path | — | Supplies RRBS candidate scores for non-uniform fragment sampling |
+
+`--cut-site` is case-insensitive and accepts one or more unique motifs in a
+single comma-separated value, for example `--cut-site 'C|CGG,G|ANTC'`. Do not
+repeat the option. Each motif must contain exactly one `|`, with only `A`, `C`,
+`G`, `T`, or `N` on either side and at least one base after the cut.
+`--sampling score` requires `--rrbs-candidates`; the candidate file must match
+the run's candidate-defining settings.
+
+#### Targeted assays
+
+Available for targeted bisulfite sequencing (`run tbs`), whole-exome
+sequencing (`run wes`), and targeted sequencing (`run ts`).
+
+| Option | Value | Default | Description |
+| --- | --- | --- | --- |
+| `--sampling` | `uniform` or `score` | `uniform` | Selects uniform or score-weighted target sampling |
+| `--targets` | Capture target BED path | Required | Loads strand-aware capture targets from BED6 |
+| `--center-sd` | Non-negative number | `50` | Sets the SD of fragment-center displacement, in bases |
+
+## Option combination rules { #option-combination-rules }
+
+**Genome and methylation inputs**
+
+- Choose no more than one baseline methylation input and no more than one ASM
+  representation.
+- `--vcf` excludes `--mutation-rate`; ASM excludes nonzero de novo mutation
+  generation but does not require a VCF.
+- `--methdb` excludes VCF, de novo mutations, ASM, and methylation-value
+  pooling.
+- `--pool-meth` requires `--cgmap`, `--bedmethyl`, `--methbg`, or `--methbed`.
+- With MethDB, beta parameters and `--cpg-only` do not alter the stored
+  profile. `--meth-model` still controls read-level state realization.
+
+**Read generation and truth output**
+
 - `--quality-model` excludes `--phred`; `--error-model` excludes
   `--error-rate`.
-- `--fragment-summary` and `--fragment-realization` require `--format bam`.
-- WGBS variable-insert GC-profile sampling does not support variants.
-- RRBS score sampling requires a matching candidate BED.
-- TBS, WES, and TS default to and require `--insert-sd 0`; `--insert-mean` is their fixed length.
-- WGS, WES, and TS reject methylation inputs and bisulfite-only truth or
-  realization controls.
+- Fragment summaries and realization require BAM; realization is
+  bisulfite-only.
+- `--gzip-level` affects only `--format fastq.gz`.
 
-Invalid combinations fail before the final read artifacts and manifest are
-published.
+**Fragment sampling**
 
-## `build variants`
+- `--sampling gc` and `--gc-profile` must be supplied together.
+- Variable-length GC-profile sampling does not support variants.
+- RRBS score-weighted sampling requires `--rrbs-candidates`, and the candidate
+  identities must match the current candidate domain.
 
-Build a deterministic de novo variant set, a header-only no-variant set, or a
-normalized and phased copy of an input VCF.
+**Assay availability**
 
-| Short | Long | Type | Default |
+- WGS, WES, and TS reject methylation inputs and bisulfite-only truth options.
+
+Invalid combinations fail before final artifacts are written.
+
+## Build reusable artifacts
+
+All three `build` subcommands share the genome and variant controls below.
+Unlike `run`, they have no master seed: their stage seeds default to `0`.
+Build destinations must be new files in existing parent directories.
+
+| Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| `-r` | `--reference` | FASTA path | required |
-| `-o` | `--output` | new `.vcf.gz` path | required |
-| — | `--vcf` | one-sample diploid VCF path | none |
-| — | `--mutation-rate` | probability | `0.001`; mutually exclusive with `--vcf` |
-| — | `--indel-fraction` | probability | `0.15` |
-| — | `--indel-extension-probability` | probability | `0.15` |
-| — | `--homozygous-only` | flag | off |
-| — | `--seed-mut` | uint64 | `0` |
-| — | `--seed-phase` | uint64 | `0` |
-| — | `--core` | executable path | bundled `htsim-core` |
+| `-r`, `--reference` | FASTA path | Required | Loads the reference genome |
+| `--vcf` | VCF path | — | Loads variants instead of generating them |
+| `--mutation-rate` | Float in `[0, 1]` | `0.001`; `0` for `build rrbs` | Sets the de novo event probability at each non-`N` reference position |
+| `--indel-fraction` | Float in `[0, 1]` | `0.15` | Sets the proportion of generated events that are indels |
+| `--indel-extension-probability` | Float in `[0, 1]` | `0.15` | Sets extension probability for generated indels, up to four bases |
+| `--seed-mut` | uint64 | `0` | Sets the de novo mutation seed |
+| `--seed-phase` | uint64 | `0` | Sets the seed for unphased VCF heterozygotes |
+| `--homozygous-only` | Flag | Disabled | Forces every generated event onto both haplotypes |
 
-Generated variant set:
+`--vcf` and `--mutation-rate` are mutually exclusive. Indel controls,
+`--seed-mut`, and `--homozygous-only` affect generated events only. The
+[genome and variant rules](#genetic-variation) describe the generated genotype
+model and accepted VCF variants.
 
-```bash
-bsreadsim build variants \
-  -r reference.fa \
-  -o truth.variants.vcf.gz \
-  --mutation-rate 0.001 \
-  --indel-fraction 0.15 \
-  --seed-mut 11
-```
+### Build variants
 
-Normalize and phase an input VCF:
+`build variants` generates a reusable de novo variant set or normalizes and
+phases variants from an existing VCF.
 
-```bash
-bsreadsim build variants \
-  -r reference.fa \
-  -o sample.phased.vcf.gz \
-  --vcf sample.vcf.gz \
-  --seed-phase 12
-```
-
-Supplying `--vcf` automatically selects an internal mutation rate of `0`. Set
-`--mutation-rate 0` without `--vcf` to create a valid header-only VCF.gz.
-Output is deterministic BGZF and is never appended to or overwritten.
-
-## `build methdb`
-
-Build one reusable prepared methylation profile as a MethDB file. This command
-accepts the following options; unlike `run`, it has no master read-sampling
-seed and does not accept `--methdb` as an input.
-
-| Short | Long | Type | Default |
+| Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| `-r` | `--reference` | FASTA path | required |
-| `-o` | `--output` | new path | required |
-| — | `--vcf` | one-sample diploid VCF path | none |
-| — | `--cgmap` | CGmap path | none |
-| — | `--bed-methyl` | bedMethyl path | none |
-| — | `--asm` | ASM path | none; requires `--vcf` |
-| — | `--asm-bed` | ASM BED path | none; requires `--vcf` |
-| — | `--mutation-rate` | probability | `0.001`; mutually exclusive with `--vcf` |
-| — | `--indel-fraction` | probability | `0.15` |
-| — | `--indel-extension-probability` | probability | `0.15` |
-| — | `--homozygous-only` | flag | off |
-| — | `--seed-mut` | uint64 | `0` |
-| — | `--seed-phase` | uint64 | `0` |
-| — | `--seed-meth` | uint64 | `0` |
-| — | `--beta-cg` | positive floats as `ALPHA,BETA` | `0.5,0.5` |
-| — | `--beta-chg` | positive floats as `ALPHA,BETA` | `0.01,0.05` |
-| — | `--beta-chh` | positive floats as `ALPHA,BETA` | `0.01,0.05` |
-| — | `--cpg-only` | flag | off |
-| — | `--cgmap-pool` | flag | off |
-| — | `--methylation-model` | `bernoulli` or `bilstm` | `bernoulli` |
-| — | `--no-update-variant-boundaries` | flag | off |
-| — | `--core` | executable path | bundled `htsim-core` |
+| `-o`, `--output` | New `.vcf.gz` path | Required | Sets the VCF output path |
 
-```bash
-bsreadsim build methdb \
-  -r reference.fa \
-  -o sample.methdb \
-  --mutation-rate 0 \
-  --beta-cg 2,2 \
-  --beta-chg 1,9 \
-  --beta-chh 1,19 \
-  --seed-meth 12
-```
+Without a VCF, `--mutation-rate 0` creates a valid header-only VCF.gz. Output
+is deterministic BGZF and is never appended to or overwritten.
 
-MethDB stores probabilities, not read-level Bernoulli realizations. Therefore
-the state-model choice does not change the stored probability values.
+### Build MethDB
 
-## `build rrbs`
+`build methdb` prepares a reusable methylation profile and embedded prepared
+variant set without generating reads. It accepts the shared build controls and
+these additional options:
 
-Export the exact RRBS candidate domain for external scoring. The final
-`run rrbs` command must repeat every domain-defining option.
-
-| Short | Long | Type | Default |
+| Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| `-r` | `--reference` | FASTA path | required |
-| `-o` | `--output` | new candidate BED path | required |
-| — | `--cut-site` | motif; repeatable | required |
-| — | `--vcf` | one-sample diploid VCF path | none |
-| — | `--single-end` | flag | paired-end |
-| `-l` | `--read-length` | integer `1..10000` | `100` |
-| — | `--insert-min` | positive integer | `100` |
-| — | `--insert-mean` | positive integer | `400` |
-| — | `--insert-max` | positive integer | `1000` |
-| — | `--insert-sd` | non-negative float | `25` |
-| — | `--max-ambiguous-fraction` | probability | `0.05` |
-| — | `--mutation-rate` | probability | `0`; mutually exclusive with `--vcf` |
-| — | `--indel-fraction` | probability | `0.15` |
-| — | `--indel-extension-probability` | probability | `0.15` |
-| — | `--homozygous-only` | flag | off |
-| — | `--seed-mut` | uint64 | `0` |
-| — | `--seed-phase` | uint64 | `0` |
-| — | `--core` | executable path | bundled `htsim-core` |
+| `-o`, `--output` | New MethDB path | Required | Sets the MethDB output path |
+| `--methbg` | MethBG path | — | Loads methylation levels from MethBG |
+| `--methbed` | MethBED path | — | Loads methylation levels from MethBED |
+| `--bedmethyl` | bedMethyl path | — | Loads methylation levels from bedMethyl |
+| `--cgmap` | CGmap path | — | Loads methylation levels from CGmap |
+| `--asm` | CGmapTools ASS path | — | Adds `cgmaptools asm -m ass` rows called `TRUE` |
+| `--asm-bed` | ASM BED path | — | Adds BED6+6 or BED6+10 ASM |
+| `--beta-cg` | Positive floats as `a,b` | `0.5,0.5` | Sets the CG-site Beta parameters |
+| `--beta-chg` | Positive floats as `a,b` | `0.01,0.05` | Sets the CHG-site Beta parameters |
+| `--beta-chh` | Positive floats as `a,b` | `0.01,0.05` | Sets the CHH-site Beta parameters |
+| `--meth-model` | `bernoulli` | `bernoulli` | Shares the build/run configuration field but does not change MethDB output |
+| `--seed-meth` | uint64 | `0` | Sets the methylation-probability seed |
+| `--cpg-only` | Flag | Disabled | Omits CHG and CHH sites from the prepared profile |
+| `--pool-meth` | Flag | Disabled | Resamples text-profile values by contig and context |
 
-```bash
-bsreadsim build rrbs \
-  -r reference.fa \
-  -o candidates.bed \
-  --cut-site 'C|CGG' \
-  -l 100 \
-  --insert-min 100 \
-  --insert-mean 250 \
-  --insert-max 500 \
-  --mutation-rate 0
-```
+Choose at most one baseline methylation input and at most one ASM input.
+`--pool-meth` requires a text profile. `build methdb` does not accept MethDB as
+an input. Because a snapshot stores probabilities rather than fragment-level
+states, `--meth-model` has no effect on this command and should normally be
+omitted. See [Option combination rules](#option-combination-rules) for input
+combinations and
+[Input file formats](formats.md#methdb) for the snapshot contract.
 
-After an external program changes only the score column, consume the file with
-`run rrbs --rrbs-candidates candidates.scored.bed --sampling score`.
+### Build RRBS candidates
 
-## `export`
+`build rrbs` generates the exact candidate domain used by reduced
+representation bisulfite sequencing (RRBS). It accepts the shared build
+controls and these additional options:
 
-`export` has two kinds of source. `test-fasta` reads a release-bundled file,
-so it needs only a destination. `methdb` decodes a user-supplied binary
-methylation profile, so it requires both an input and an output.
+| Option | Value | Default | Description |
+| --- | --- | --- | --- |
+| `-o`, `--output` | New candidate BED path | Required | Sets the candidate BED output path |
+| `--cut-site` | Comma-separated cut sites | <code>C&#124;CGG</code> | Sets one or more unique restriction motifs |
+| `-l`, `--read-length` | Integer from `1` to `10000` | `100` | Sets the read length used to validate candidates |
+| `--insert-min` | Positive integer | `100` | Sets the minimum retained restriction-fragment length |
+| `--insert-mean` | Positive integer | `400` | Participates in shared geometry validation but does not change the candidate BED |
+| `--insert-max` | Positive integer | `1000` | Sets the maximum retained restriction-fragment length |
+| `--insert-sd` | Non-negative number | `25` | Is accepted for consistency but does not change the candidate BED |
+| `--max-ambiguous-fraction` | Float in `[0, 1]` | `0.05` | Sets the maximum allowed `N` fraction in each candidate read |
+| `--single-end` | Flag | Disabled | Validates one read per candidate instead of two |
 
-| Target | Short | Long | Type | Default |
-| --- | --- | --- | --- | --- |
-| `test-fasta` | `-o` | `--output` | new FASTA path | required |
-| `methdb` | `-i` | `--input` | existing MethDB path | required |
-| `methdb` | `-o` | `--output` | new `.bed.gz` or `.bed` path | required |
-| `methdb` | — | `--no-compression` | flag | off; write deterministic BGZF |
-| `methdb` | — | `--core` | executable path | bundled `htsim-core` |
+The reference, variant source and focused seeds, cut sites, read layout and
+length, insert bounds, and ambiguity threshold define candidate identities.
+`--insert-mean` must still lie between the bounds because all fragment settings
+share one validation contract; neither it nor `--insert-sd` needs to match the
+later RRBS run. After external scoring, load the file with
+`--sampling score --rrbs-candidates PATH` without changing any identity field.
 
-```bash
-bsreadsim export test-fasta -o test.fa
-bsreadsim export methdb -i sample.methdb -o sample.bed.gz
-bsreadsim export methdb -i sample.methdb -o sample.bed --no-compression
-```
+## Export files
 
-`export test-fasta` verifies the bundled bytes against the release registry
-and refuses to overwrite its destination. `export methdb` writes deterministic
-BGZF by default and therefore requires a `.bed.gz` destination. With
-`--no-compression`, it writes the same decoded bytes as plain text and requires
-a `.bed` destination. Missing parent directories are created; existing output
-files are never overwritten. The decoder streams both modes with bounded
-buffers.
+### Test FASTA
 
-See [File formats](formats.md) for input contracts and
-[Outputs](../outputs/index.md) for publication, manifest, and truth-file
-details.
+`export test-fasta` writes the bundled example reference and verifies its
+bytes.
+
+| Option | Value | Default | Description |
+| --- | --- | --- | --- |
+| `-o`, `--output` | New FASTA path | Required | Sets the new FASTA output path |
+
+### MethDB inspection
+
+`export methdb` decodes a MethDB snapshot as a human-readable extended BED.
+
+| Option | Value | Default | Description |
+| --- | --- | --- | --- |
+| `-i`, `--input` | MethDB path | Required | Loads the source MethDB |
+| `-o`, `--output` | New `.bed.gz` or `.bed` path | Required | Sets the new extended BED output path |
+| `--no-compression` | Flag | Disabled | Writes plain extended BED |
+
+??? info "Details"
+
+    Compressed output must end in `.bed.gz` and is deterministic BGZF. With
+    `--no-compression`, the output must end in `.bed`. Missing parent
+    directories are created, but an existing destination is never
+    overwritten. This export is intended for inspection; use the original
+    MethDB to reuse the complete snapshot in another simulation.
+
+## Core integration options { #core-integration-options }
+
+These low-level options are intended for core integration and development.
+Normal simulations and artifact builds should omit them.
+
+| Option | Value | Default | Description |
+| --- | --- | --- | --- |
+| `--core` | Executable path | Bundled `htsim-core` | Overrides the core for every `run` and `build` command and for `export methdb` |
+| `--no-update-variant-boundaries` | Flag | Disabled | Disables context updates; variant-aware bisulfite preparation rejects it |

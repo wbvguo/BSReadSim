@@ -22,7 +22,7 @@ from bsreadsim.run.manifest import (
 )
 from bsreadsim.output import OutputConfig, OutputSession
 from tests.helpers.process_support import UniformProcessConfig, process_fragment
-from bsreadsim.run.prepare import prepare_run
+from bsreadsim.run.prepare import SEED_DERIVATION_CONTRACT, prepare_run
 from bsreadsim.htsim.protocol import (
     AmbiguityPolicy,
     BaseEncoding,
@@ -141,6 +141,17 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(
             details["contracts"]["read_name"], READ_NAME_CONTRACT
         )
+        self.assertEqual(
+            details["contracts"]["seed_derivation"],
+            SEED_DERIVATION_CONTRACT,
+        )
+        self.assertEqual(
+            details["models"]["library_orientation"],
+            {
+                "effective": "directional-ot-ob-equal",
+                "rng_stage": "library-orientation",
+            },
+        )
         self.assertEqual(manifest.document["summary"]["fragment_count"], 1)
         self.assertEqual(manifest.document["summary"]["read_count"], 1)
         self.assertEqual(
@@ -201,6 +212,13 @@ class ManifestTests(unittest.TestCase):
         )
 
         command = manifest.document["command"]
+        randomness = manifest.document["details"]["randomness"]
+        self.assertEqual(randomness["master_seed"], "7")
+        self.assertEqual(randomness["mutation_seed"], "2733103450960537321")
+        self.assertEqual(randomness["phasing_seed"], "2804315605335997954")
+        self.assertEqual(
+            randomness["methylation_seed"], "10899005925968392862"
+        )
         self.assertEqual(command["interface"], "cli")
         self.assertEqual(shlex.split(command["user_command"]), list(argv))
         self.assertEqual(
@@ -215,7 +233,7 @@ class ManifestTests(unittest.TestCase):
         for option in (
             "--reference",
             "--output",
-            "--fragments",
+            "--reads",
             "--seed-mut",
             "--seed-phase",
             "--seed-meth",
@@ -231,14 +249,11 @@ class ManifestTests(unittest.TestCase):
             "--beta-cg",
             "--beta-chg",
             "--beta-chh",
-            "--methylation-model",
+            "--meth-model",
             "--conversion-rate",
             "--phred",
             "--error-rate",
-            "--workers",
-            "--core-workers",
-            "--chunk-size",
-            "--max-in-flight-fragments",
+            "--threads",
             "--prefix",
             "--format",
             "--gzip-level",
@@ -262,7 +277,8 @@ class ManifestTests(unittest.TestCase):
             "-r",
             "reference.fa",
             "-n",
-            "1",
+            "2",
+            "--single-end",
             "-s7",
         )
         manifest = build_complete_manifest(
@@ -289,7 +305,7 @@ class ManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ManifestError, "command"):
             verify_complete_manifest(tampered)
 
-    def test_standard_manifest_disables_methylation_model_and_sites(self) -> None:
+    def test_standard_manifest_disables_meth_model_and_sites(self) -> None:
         document = base_config()
         document["reference"] = "reference.fa"
         document["seed"] = "7"
@@ -315,6 +331,10 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(
             manifest.document["details"]["models"]["methylation_state"],
             {"effective": "disabled", "requested": "disabled"},
+        )
+        self.assertEqual(
+            manifest.document["details"]["models"]["library_orientation"],
+            {"effective": "disabled"},
         )
         with self.assertRaisesRegex(ManifestError, "methylation sites"):
             build_complete_manifest(

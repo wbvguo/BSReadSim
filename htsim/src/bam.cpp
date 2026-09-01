@@ -20,13 +20,17 @@ void close_ignoring_errors(samFile *stream) noexcept
 void sam_to_bam(
     const std::string &input_path,
     const std::string &output_path,
-    int compression_level)
+    int compression_level,
+    int compression_threads)
 {
     if (input_path.empty() || output_path.empty()) {
         throw BamStreamError("SAM/BAM stream paths must be non-empty");
     }
     if (compression_level < 0 || compression_level > 9) {
         throw BamStreamError("BAM compression level must be in [0, 9]");
+    }
+    if (compression_threads < 0 || compression_threads > 64) {
+        throw BamStreamError("BAM compression threads must be in [0, 64]");
     }
 
     samFile *input = sam_open(input_path.c_str(), "r");
@@ -42,6 +46,10 @@ void sam_to_bam(
         output = sam_open(output_path.c_str(), output_mode.c_str());
         if (output == nullptr) {
             throw BamStreamError("failed to open the BAM output stream");
+        }
+        if (compression_threads > 0
+            && hts_set_threads(output, compression_threads) < 0) {
+            throw BamStreamError("failed to start BAM compression threads");
         }
         header = sam_hdr_read(input);
         if (header == nullptr) {

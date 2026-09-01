@@ -637,11 +637,66 @@ append_u16_summary_values(SamBuffer *buffer, const unsigned char *summary)
 
 
 static int
+append_bisulfite_tags(SamBuffer *buffer, const MateAlignment *alignment)
+{
+    const uint16_t flags = load_u16_le_bytes(alignment->read_summary);
+    const unsigned int strand = (unsigned int)((flags >> 2) & UINT16_C(0x3));
+    const unsigned int conversion =
+        (unsigned int)((flags >> 4) & UINT16_C(0x7));
+    unsigned int first_conversion;
+    const char *genome_conversion;
+    const char *read_conversion;
+    const char *library_strand;
+
+    if (strand == 0U && conversion == 2U) {
+        return 0;
+    }
+    if ((strand != 1U && strand != 2U) || conversion > 1U) {
+        PyErr_SetString(
+            PyExc_ValueError,
+            "SAM summary has invalid bisulfite strand/conversion bits"
+        );
+        return -1;
+    }
+    if (alignment->mate_index == 0) {
+        first_conversion = conversion;
+    } else if (alignment->mate_index == 1) {
+        first_conversion = conversion ^ 1U;
+    } else {
+        PyErr_SetString(
+            PyExc_ValueError, "SAM mate index cannot define library strand"
+        );
+        return -1;
+    }
+
+    read_conversion = conversion == 0U ? "CT" : "GA";
+    if (strand == 1U) {
+        genome_conversion = "CT";
+        library_strand = first_conversion == 0U ? "OT" : "CTOT";
+    } else {
+        genome_conversion = "GA";
+        library_strand = first_conversion == 0U ? "OB" : "CTOB";
+    }
+    return sam_buffer_append_literal(buffer, "\tXG:Z:") < 0
+        || sam_buffer_append_literal(buffer, genome_conversion) < 0
+        || sam_buffer_append_literal(buffer, "\tXR:Z:") < 0
+        || sam_buffer_append_literal(buffer, read_conversion) < 0
+        || sam_buffer_append_literal(buffer, "\tYS:Z:") < 0
+        || sam_buffer_append_literal(buffer, library_strand) < 0
+        ? -1
+        : 0;
+}
+
+
+static int
 append_columnar_annotation_tags(SamBuffer *buffer, const MateAlignment *alignment)
 {
     Py_ssize_t offset;
     if (alignment->base_state_codes == NULL || alignment->read_summary == NULL) {
         PyErr_SetString(PyExc_ValueError, "SAM record has no ZT/ZR tags");
+        return -1;
+    }
+    if (append_bisulfite_tags(buffer, alignment) < 0) {
         return -1;
     }
     if (sam_buffer_append_literal(buffer, "\tzt:Z:") < 0) {

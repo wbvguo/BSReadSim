@@ -22,8 +22,10 @@ using htsim::methdb::AsmProfile;
 using htsim::methdb::AsmProfileError;
 using htsim::methdb::AsmProfileFormat;
 using htsim::methdb::AsmRecord;
+using htsim::methdb::variants_from_asm;
 using htsim::model::Bases;
 using htsim::model::MethylationContext;
+using htsim::model::VariantSource;
 using htsim::reference::Contig;
 using htsim::reference::ContigMetadata;
 
@@ -50,6 +52,11 @@ private:
 void require(bool condition, const std::string &message)
 {
     if (!condition) {throw std::runtime_error(message);}
+}
+
+std::uint16_t q(float probability)
+{
+    return htsim::methdb::probability_to_u16(probability);
 }
 
 template <typename Operation>
@@ -153,36 +160,41 @@ Contig make_contig(
 
 std::string row(
     const std::string &chromosome,
-    const std::string &nucleotide,
-    const std::string &position,
-    const std::string &context,
-    const std::string &dinucleotide,
-    const std::string &total,
-    const std::string &variant_position,
+    const std::string &snp_position,
     const std::string &reference,
-    const std::string &alternate,
-    const std::string &reference_methylation,
-    const std::string &alternate_methylation,
-    const std::string &fold_change = "2",
+    const std::string &allele_1,
+    const std::string &allele_2,
+    const std::string &cytosine_position,
+    const std::string &allele_1_support,
+    const std::string &allele_2_support,
+    const std::string &allele_1_methylation,
+    const std::string &allele_2_methylation,
     const std::string &p_value = "0.01",
-    const std::string &comment = "1/2;1/2;1/2")
+    const std::string &fdr = "0.02",
+    const std::string &called = "TRUE")
 {
-    return chromosome + '\t' + nucleotide + '\t' + position + '\t'
-        + context + '\t' + dinucleotide + '\t' + total + '\t'
-        + variant_position + '\t' + reference + '\t' + alternate + '\t'
-        + reference_methylation + '\t' + alternate_methylation + '\t'
-        + fold_change + '\t' + p_value + '\t' + comment + '\n';
+    return chromosome + '\t' + snp_position + '\t' + reference + '\t'
+        + allele_1 + '\t' + allele_2 + '\t' + cytosine_position + '\t'
+        + allele_1_support + '\t' + allele_2_support + '\t'
+        + allele_1_methylation + '\t' + allele_2_methylation + '\t'
+        + p_value + '\t' + fdr + '\t' + called + '\n';
 }
 
 std::string valid_text()
 {
     return
-        "# htsim ASM fixture\n\n"
-        + row("chr1", "C", "2", "CG", "CG", "0.5", "4", "A", "T", "0.25", "0.75")
-        + row("chr1", "G", "3", "CG", "CG", "na", "4", "A", "T", "0", "1", "na", "na")
-        + row("chr1", "C", "5", "CHG", "CA", "0.4", "10", "A", "G", "0.2", "0.8")
-        + row("chr1", "C", "8", "CHH", "CA", "0.3", "10", "A", "C", "0.1", "0.9")
-        + row("chr2", "G", "3", "CG", "CG", "0.6", "1", "T", "A", "0.4", "0.6");
+        "# CGmapTools asm -m ass fixture\n"
+        "Chr\tSNP_Pos\tRef\tAllele1\tAllele2\tC_Pos\t"
+        "Allele1_linked_C\tAllele2_linked_C\tAllele1_linked_C_met\t"
+        "Allele2_linked_C_met\tpvalue\tfdr\tASM\n"
+        // CGmapTools writes rows by SNP, not necessarily by C_Pos. Allele1
+        // and Allele2 also follow GT order rather than REF/ALT order.
+        + row("chr1", "10", "A", "G", "A", "5", "4-1", "1-4", "0.8", "0.2")
+        + row("chr1", "4", "A", "T", "A", "2", "3-1", "1-3", "0.75", "0.25")
+        + row("chr1", "6", "A", "A", "C", "8", "1-9", "9-1", "0.1", "0.9")
+        + row("chr1", "4", "A", "A", "T", "3", "0-4", "4-0", "0", "1")
+        + row("chr1", "4", "A", "A", "T", "12", "2-2", "2-2", "0.5", "0.5", "1", "1", "FALSE")
+        + row("chr2", "1", "T", "A", "T", "3", "3-2", "2-3", "0.6", "0.4");
 }
 
 void verify_valid_profile(const std::vector<std::uint8_t> &input)
@@ -202,15 +214,15 @@ void verify_valid_profile(const std::vector<std::uint8_t> &input)
         chr1[0].target_reference_position == 1U
             && chr1[0].linked_variant_position == 3U
             && chr1[0].context == MethylationContext::cg_c
-            && chr1[0].reference_methylation_probability == 0.25F
-            && chr1[0].alternate_methylation_probability == 0.75F
+            && chr1[0].reference_probability_u16 == q(0.25F)
+            && chr1[0].alternate_probability_u16 == q(0.75F)
             && chr1[0].linked_reference_base == 0U
             && chr1[0].linked_alternate_base == 3U,
         "first ASM record changed");
     require(
         chr1[1].context == MethylationContext::cg_g
-            && chr1[1].reference_methylation_probability == 0.0F
-            && chr1[1].alternate_methylation_probability == 1.0F,
+            && chr1[1].reference_probability_u16 == q(0.0F)
+            && chr1[1].alternate_probability_u16 == q(1.0F),
         "reverse ASM record changed");
     require(
         chr1[2].context == MethylationContext::chg_c
@@ -227,6 +239,31 @@ void verify_valid_profile(const std::vector<std::uint8_t> &input)
     require(
         profile.records(chr1_contig).size() == chr1.size(),
         "repeated per-contig ASM spool read changed");
+
+    const auto inferred = variants_from_asm(chr1_contig, chr1, 17U);
+    const auto repeated = variants_from_asm(chr1_contig, chr1, 17U);
+    require(
+        inferred.size() == 3U
+            && inferred[0].reference_start == 3U
+            && inferred[0].ref_bases == Bases({0U})
+            && inferred[0].alt_bases == Bases({3U})
+            && inferred[1].reference_start == 5U
+            && inferred[2].reference_start == 9U,
+        "ASM inferred SNVs were not sorted and deduplicated");
+    for (std::size_t index = 0U; index < inferred.size(); ++index) {
+        require(
+            inferred[index].source == VariantSource::asm_profile
+                && inferred[index].alt_haplotypes
+                    == repeated[index].alt_haplotypes,
+            "ASM inferred SNV provenance or phasing changed");
+    }
+    auto conflicting = chr1;
+    conflicting[1].linked_variant_position = 3U;
+    conflicting[1].linked_reference_base = 0U;
+    conflicting[1].linked_alternate_base = 2U;
+    require_error(
+        [&] {(void)variants_from_asm(chr1_contig, conflicting, 17U);},
+        "conflicting ASM-linked alleles were accepted");
 
     profile.validate_contig(chr1_contig);
     profile.validate_contig(chr2_contig);
@@ -245,11 +282,11 @@ std::string valid_asm_bed_text()
 {
     return
         "track type=bed name=asm-fixture\n"
-        "chr1\t1\t2\tasm-1\t0\t+\t3\t4\tA\tT\t0.25\t0.75\n"
-        "chr1\t2\t3\tasm-2\t0\t-\t3\t4\tA\tT\t0\t1\n"
-        "chr1\t4\t5\tasm-3\t0\t+\t9\t10\tA\tG\t0.2\t0.8\n"
-        "chr1\t7\t8\tasm-4\t0\t+\t9\t10\tA\tC\t0.1\t0.9\n"
-        "chr2\t2\t3\tasm-5\t0\t.\t0\t1\tT\tA\t0.4\t0.6\n";
+        "chr1\t1\t2\tasm-1\t500\t+\t3\t4\tA\tT\t0.25\t0.75\t1-3\t3-1\t0.01\t0.02\n"
+        "chr1\t2\t3\tasm-2\t1000\t-\t3\t4\tA\tT\t0\t1\t0-4\t4-0\t0.001\t0.004\n"
+        "chr1\t4\t5\tasm-3\t600\t+\t9\t10\tA\tG\t0.2\t0.8\t1-4\t4-1\t0.01\t0.02\n"
+        "chr1\t7\t8\tasm-4\t800\t+\t9\t10\tA\tC\t0.1\t0.9\t1-9\t9-1\t0.001\t0.004\n"
+        "chr2\t2\t3\tasm-5\t200\t.\t0\t1\tT\tA\t0.4\t0.6\t2-3\t3-2\t0.01\t0.02\n";
 }
 
 void verify_valid_asm_bed(const std::vector<std::uint8_t> &input)
@@ -270,8 +307,8 @@ void verify_valid_asm_bed(const std::vector<std::uint8_t> &input)
             && chr1[0].linked_variant_position == 3U
             && chr1[0].context == MethylationContext::cg_c
             && chr1[0].dinucleotide_second == 2U
-            && chr1[0].reference_methylation_probability == 0.25F
-            && chr1[0].alternate_methylation_probability == 0.75F
+            && chr1[0].reference_probability_u16 == q(0.25F)
+            && chr1[0].alternate_probability_u16 == q(0.75F)
             && chr1[1].context == MethylationContext::cg_g
             && chr1[2].context == MethylationContext::chg_c
             && chr1[3].context == MethylationContext::chh_c,
@@ -289,6 +326,14 @@ void test_asm_bed_plain_and_gzip()
 {
     verify_valid_asm_bed(bytes_of(valid_asm_bed_text()));
     verify_valid_asm_bed(gzip_bytes(valid_asm_bed_text()));
+
+    const std::string minimal =
+        "chr1\t1\t2\tasm-1\t500\t+\t3\t4\tA\tT\t0.25\t0.75\n"
+        "chr1\t2\t3\tasm-2\t1000\t-\t3\t4\tA\tT\t0\t1\n"
+        "chr1\t4\t5\tasm-3\t600\t+\t9\t10\tA\tG\t0.2\t0.8\n"
+        "chr1\t7\t8\tasm-4\t800\t+\t9\t10\tA\tC\t0.1\t0.9\n"
+        "chr2\t2\t3\tasm-5\t200\t.\t0\t1\tT\tA\t0.4\t0.6\n";
+    verify_valid_asm_bed(bytes_of(minimal));
 }
 
 void require_asm_bed_error(
@@ -324,6 +369,12 @@ void test_asm_bed_fail_closed_boundaries()
         "chr1\t1\t2\tasm\t0\t+\t3\t4\tA\tA\t0.2\t0.8\n",
         "chr1\t1\t2\tasm\t0\t+\t3\t4\tA\tT\tna\t0.8\n",
         "chr1\t1\t2\tasm\t0\t+\t3\t5\tA\tT\t0.2\t0.8\n",
+        "chr1\t1\t2\tasm\t0\t+\t3\t4\tA\tT\t0.2\t0.8\t4\n",
+        "chr1\t1\t2\tasm\t0\t+\t3\t4\tA\tT\t0.2\t0.8\t.\t4\n",
+        "chr1\t1\t2\tasm\t0\t+\t3\t4\tA\tT\t0.2\t0.8\t4\t2-2\t0.01\t0.02\n",
+        "chr1\t1\t2\tasm\t0\t+\t3\t4\tA\tT\t0.2\t0.8\t2-2\t2-2\t1.1\t0.02\n",
+        "chr1\t1\t2\ta\t0\t+\t3\t4\tA\tT\t0.2\t0.8\n"
+        "chr1\t2\t3\tb\t0\t-\t3\t4\tA\tT\t0.2\t0.8\t2-2\t2-2\t0.01\t0.02\n",
     };
     for (const std::string &text : parse_invalid) {
         require_asm_bed_error(
@@ -346,8 +397,9 @@ void require_parse_error(const std::string &text, const std::string &message)
     write_bytes(file.path(), bytes);
     require_error(
         [&] {
-            (void)AsmProfile(
-                file.path(), reference_catalog());
+            AsmProfile profile(file.path(), reference_catalog());
+            (void)profile.records(
+                make_contig(0U, "chr1", "ACGACAGCAATCG"));
         },
         message);
 }
@@ -355,44 +407,44 @@ void require_parse_error(const std::string &text, const std::string &message)
 void test_strict_text_boundaries()
 {
     const std::vector<std::pair<std::string, std::string>> invalid = {
-        {"# no data\n\n", "empty ASM was accepted"},
-        {"chr1\tC\t2\tCG\tCG\t0.5\t4\tA\tT\t0.2\t0.8\t2\t0.01\n",
-         "thirteen fields were accepted"},
-        {row("missing", "C", "2", "CG", "CG", "0.5", "4", "A", "T", "0.2", "0.8"),
+        {"# no data\n\n", "empty CGmapTools ASS was accepted"},
+        {row("chr1", "4", "A", "A", "T", "2", "2-2", "2-2", "0.5", "0.5", "1", "1", "FALSE"),
+         "CGmapTools ASS with no TRUE calls was accepted"},
+        {"chr1\t4\tA\tA\tT\t2\t2-2\t2-2\t0.5\t0.5\t0.01\t0.02\n",
+         "twelve CGmapTools fields were accepted"},
+        {row("missing", "4", "A", "A", "T", "2", "2-2", "2-2", "0.2", "0.8"),
          "unknown contig was accepted"},
-        {row("chr1", "C", "0", "CG", "CG", "0.5", "4", "A", "T", "0.2", "0.8"),
+        {row("chr1", "4", "A", "A", "T", "0", "2-2", "2-2", "0.2", "0.8"),
          "target position zero was accepted"},
-        {row("chr1", "C", "2", "CG", "CG", "0.5", "0", "A", "T", "0.2", "0.8"),
+        {row("chr1", "0", "A", "A", "T", "2", "2-2", "2-2", "0.2", "0.8"),
          "linked position zero was accepted"},
-        {row("chr1", "C", "14", "CG", "CG", "0.5", "4", "A", "T", "0.2", "0.8"),
+        {row("chr1", "4", "A", "A", "T", "14", "2-2", "2-2", "0.2", "0.8"),
          "outside target was accepted"},
-        {row("chr1", "A", "2", "CG", "CG", "0.5", "4", "A", "T", "0.2", "0.8"),
-         "non-C/G target was accepted"},
-        {row("chr1", "C", "2", "CX", "CG", "0.5", "4", "A", "T", "0.2", "0.8"),
-         "unknown context was accepted"},
-        {row("chr1", "C", "2", "CG", "CA", "0.5", "4", "A", "T", "0.2", "0.8"),
-         "wrong context dinucleotide was accepted"},
-        {row("chr1", "C", "2", "CG", "CG", "NaN", "4", "A", "T", "0.2", "0.8"),
-         "NaN total was accepted"},
-        {row("chr1", "C", "2", "CG", "CG", "0.5", "4", "N", "T", "0.2", "0.8"),
+        {row("chr1", "4", "N", "A", "T", "2", "2-2", "2-2", "0.2", "0.8"),
          "non-ACGT REF was accepted"},
-        {row("chr1", "C", "2", "CG", "CG", "0.5", "4", "A", "A", "0.2", "0.8"),
-         "equal REF and ALT were accepted"},
-        {row("chr1", "C", "2", "CG", "CG", "0.5", "4", "A", "T", "na", "0.8"),
-         "missing REF_METH was accepted"},
-        {row("chr1", "C", "2", "CG", "CG", "0.5", "4", "A", "T", "0.2", "1.1"),
-         "ALT_METH over one was accepted"},
-        {row("chr1", "C", "2", "CG", "CG", "0.5", "4", "A", "T", "0.2", "0.8", "inf"),
-         "infinite fold change was accepted"},
-        {row("chr1", "C", "2", "CG", "CG", "0.5", "4", "A", "T", "0.2", "0.8", "2", "1.1"),
+        {row("chr1", "4", "A", "T", "T", "2", "2-2", "2-2", "0.2", "0.8"),
+         "equal alleles were accepted"},
+        {row("chr1", "4", "A", "C", "T", "2", "2-2", "2-2", "0.2", "0.8"),
+         "alleles without Ref were accepted"},
+        {row("chr1", "4", "A", "A", "T", "2", "4", "2-2", "0.2", "0.8"),
+         "malformed support counts were accepted"},
+        {row("chr1", "4", "A", "A", "T", "2", "0-0", "2-2", "0.2", "0.8"),
+         "zero support was accepted"},
+        {row("chr1", "4", "A", "A", "T", "2", "2-2", "2-2", "na", "0.8"),
+         "missing allele methylation was accepted"},
+        {row("chr1", "4", "A", "A", "T", "2", "2-2", "2-2", "0.2", "1.1"),
+         "allele methylation over one was accepted"},
+        {row("chr1", "4", "A", "A", "T", "2", "2-2", "2-2", "0.2", "0.8", "1.1"),
          "p-value over one was accepted"},
-        {row("chr1", "C", "2", "CG", "CG", "0.5", "4", "A", "T", "0.2", "0.8", "2", "0.1", ""),
-         "empty comment was accepted"},
-        {row("chr1", "C", "2", "CG", "CG", "0.5", "4", "A", "T", "0.2", "0.8")
-             + row("chr1", "G", "2", "CG", "CG", "0.5", "4", "A", "T", "0.2", "0.8"),
+        {row("chr1", "4", "A", "A", "T", "2", "2-2", "2-2", "0.2", "0.8", "0.1", "1.1"),
+         "FDR over one was accepted"},
+        {row("chr1", "4", "A", "A", "T", "2", "2-2", "2-2", "0.2", "0.8", "0.1", "0.2", "YES"),
+         "unknown ASM call was accepted"},
+        {row("chr1", "4", "A", "A", "T", "2", "2-2", "2-2", "0.2", "0.8")
+             + row("chr1", "10", "A", "A", "G", "2", "2-2", "2-2", "0.2", "0.8"),
          "duplicate target was accepted"},
-        {row("chr2", "G", "3", "CG", "CG", "0.5", "1", "T", "A", "0.2", "0.8")
-             + row("chr1", "C", "2", "CG", "CG", "0.5", "4", "A", "T", "0.2", "0.8"),
+        {row("chr2", "1", "T", "T", "A", "3", "2-2", "2-2", "0.2", "0.8")
+             + row("chr1", "4", "A", "A", "T", "2", "2-2", "2-2", "0.2", "0.8"),
          "returning contig was accepted"},
     };
     for (const auto &fixture : invalid) {
@@ -429,8 +481,10 @@ void test_reference_validation_boundaries()
             htsim::methdb::validate_asm_records(
                 bases,
                 {
-                    {2U, 3U, 0.2F, 0.8F, MethylationContext::cg_g, 2U, 0U, 3U},
-                    {1U, 3U, 0.2F, 0.8F, MethylationContext::cg_c, 2U, 0U, 3U},
+                    {2U, 3U, q(0.2F), q(0.8F),
+                     MethylationContext::cg_g, 2U, 0U, 3U},
+                    {1U, 3U, q(0.2F), q(0.8F),
+                     MethylationContext::cg_c, 2U, 0U, 3U},
                 });
         },
         "unsorted normalized ASM records were accepted");
@@ -438,14 +492,16 @@ void test_reference_validation_boundaries()
         [&] {
             htsim::methdb::validate_asm_records(
                 bases,
-                {{1U, 3U, 0.2F, 0.8F, MethylationContext::chh_c, 0U, 0U, 3U}});
+                {{1U, 3U, q(0.2F), q(0.8F),
+                  MethylationContext::chh_c, 0U, 0U, 3U}});
         },
         "wrong normalized ASM context was accepted");
     require_error(
         [&] {
             htsim::methdb::validate_asm_records(
                 bases,
-                {{1U, 3U, 0.2F, 0.8F, MethylationContext::cg_c, 2U, 1U, 3U}});
+                {{1U, 3U, q(0.2F), q(0.8F),
+                  MethylationContext::cg_c, 2U, 1U, 3U}});
         },
         "wrong normalized linked REF was accepted");
 }
