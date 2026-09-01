@@ -61,6 +61,23 @@ def public_short_options(parser: argparse.ArgumentParser) -> set[str]:
 
 
 class DocumentationContractTests(unittest.TestCase):
+    def test_overview_keeps_complete_html_sections(self) -> None:
+        overview = (DOCS_ROOT / "index.md").read_text(encoding="utf-8")
+
+        for fragment in (
+            '<div class="docs-hero" markdown>',
+            '<img class="docs-hero__logo"',
+            "# BSReadSim",
+            '<div class="docs-actions" markdown>',
+            "## Supported assays",
+            '<div class="technology-grid" markdown>',
+            "## Citation",
+            "@article{guo2024bsreadsim,",
+        ):
+            self.assertIn(fragment, overview)
+        self.assertEqual(overview.count("<div"), overview.count("</div>"))
+        self.assertEqual(overview.count('<div class="technology-card'), 4)
+
     def test_customize_uses_the_cli_option_table_schema(self) -> None:
         lines = (DOCS_ROOT / "simulation" / "customize.md").read_text(
             encoding="utf-8"

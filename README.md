@@ -1,3 +1,5 @@
+<img src="docs/img/BSReadSim.png" alt="BSReadSim logo" width="180" align="right">
+
 # BSReadSim
 
 BSReadSim generates reproducible synthetic reads for bisulfite sequencing
@@ -45,7 +47,7 @@ python3 -m pip install --group docs
 python3 -m mkdocs serve
 ```
 
-Then open <http://127.0.0.1:8700/> in a browser. MkDocs automatically reloads
+Then open [http://127.0.0.1:8700/](http://127.0.0.1:8700/) in a browser. MkDocs automatically reloads
 the site when documentation files change; press `Ctrl+C` to stop the server.
 
 </details>
@@ -101,9 +103,17 @@ bsreadsim run wgs \
 
 ## Citation
 
-If BSReadSim contributes to research, cite the
-[BSReadSim preprint](https://doi.org/10.1101/2024.12.24.627620) and report the
-software version used. Machine-readable metadata is provided in
-[`CITATION.cff`](CITATION.cff).
+If BSReadSim contributes to your research,  please cite the [BSReadSim preprint](https://doi.org/10.1101/2024.12.24.627620):
+
+```bibtex
+@article{guo2024bsreadsim,
+  title = {BSReadSim: a versatile and efficient simulator to generate realistic bisulfite sequencing reads},
+  author = {Guo, Wenbin and Pellegrini, Matteo},
+  journal = {bioRxiv},
+  year = {2024},
+  publisher = {Cold Spring Harbor Laboratory},
+  doi = {10.1101/2024.12.24.627620}
+}
+```
 
 BSReadSim is available under the MIT license.

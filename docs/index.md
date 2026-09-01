@@ -4,7 +4,7 @@
 
 # BSReadSim
 
-BSReadSim is a versatile and efficient read simulator for genomic sequencing, supporting both conventional and bisulfite-based assays. 
+BSReadSim is a versatile and efficient read simulator for genomic sequencing, supporting both conventional and bisulfite-based assays.
 It combines configurable biological and technical models to produce realistic reads with traceable ground truth.
 The resulting datasets can be used to guide experimental design, develop bioinformatics tools, and benchmark their performance under controlled conditions.
 Learn more in the [BSReadSim preprint](https://doi.org/10.1101/2024.12.24.627620).
@@ -83,3 +83,18 @@ Each run produces reads as FASTQ files or an origin-annotated BAM, together with
 
 [Explore outputs](outputs/index.md){ .md-button }
 [View input formats](reference/formats.md){ .md-button }
+
+## Citation
+
+If BSReadSim contributes to your research, please cite the [BSReadSim preprint](https://doi.org/10.1101/2024.12.24.627620):
+
+```bibtex
+@article{guo2024bsreadsim,
+  title = {BSReadSim: a versatile and efficient simulator to generate realistic bisulfite sequencing reads},
+  author = {Guo, Wenbin and Pellegrini, Matteo},
+  journal = {bioRxiv},
+  year = {2024},
+  publisher = {Cold Spring Harbor Laboratory},
+  doi = {10.1101/2024.12.24.627620}
+}
+```
