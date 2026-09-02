@@ -122,12 +122,14 @@ class DocumentationContractTests(unittest.TestCase):
                 )
                 row += 1
 
-    def test_flags_follow_valued_options_in_option_tables(self) -> None:
+    def test_valueless_flags_follow_valued_options_in_option_tables(self) -> None:
         for path in (
             DOCS_ROOT / "simulation" / "customize.md",
             DOCS_ROOT / "reference" / "cli.md",
         ):
-            lines = path.read_text(encoding="utf-8").splitlines()
+            content = path.read_text(encoding="utf-8")
+            self.assertNotIn("| Flag |", content)
+            lines = content.splitlines()
             for start, line in enumerate(lines):
                 if line != "| Option | Value | Default | Description |":
                     continue
@@ -136,7 +138,7 @@ class DocumentationContractTests(unittest.TestCase):
                 while row < len(lines) and lines[row].startswith("|"):
                     columns = lines[row].strip("|").split("|")
                     value = columns[1].strip()
-                    if value == "Flag":
+                    if value == "—":
                         seen_flag = True
                     else:
                         self.assertFalse(

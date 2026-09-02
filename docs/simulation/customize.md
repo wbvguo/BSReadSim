@@ -35,7 +35,7 @@ indels at the rate set by `--mutation-rate`.
 | `--indel-fraction` | Float in `[0, 1]` | `0.15` | Sets the proportion of generated mutation events that are indels |
 | `--indel-extension-probability` | Float in `[0, 1]` | `0.15` | Sets the probability that an indel extends by each additional base, up to four bases |
 | `--seed-mut` | uint64 | Randomly generated | Sets the seed for generating de novo variants |
-| `--homozygous-only` | Flag | Off | Generates every de novo variant on both haplotypes |
+| `--homozygous-only` | — | Off | Generates every de novo variant on both haplotypes |
 
 By default, each generated event is placed on both haplotypes with probability
 `1/3`; the remaining events are assigned to either haplotype with equal
@@ -101,7 +101,7 @@ For a generated methylation profile, BSReadSim draws each eligible cytosine's me
 | `--beta-chg` | `a,b` | `0.01,0.05` | Sets the CHG-site Beta parameters |
 | `--beta-chh` | `a,b` | `0.01,0.05` | Sets the CHH-site Beta parameters |
 | `--seed-meth` | uint64 | Randomly generated | Sets the seed for generating methylation probabilities |
-| `--cpg-only` | Flag | Off | Omits CHG and CHH sites from the prepared profile |
+| `--cpg-only` | — | Off | Omits CHG and CHH sites from the prepared profile |
 
 These defaults define a general synthetic profile rather than one specific to
 a tissue or species.
@@ -124,7 +124,7 @@ profile snapshot from a previous BSReadSim simulation.
 | `--methbg` | MethBG path | — | Loads methylation levels from MethBG |
 | `--methdb` | MethDB path | — | Reuses a methylation profile snapshot with embedded variants |
 | `--seed-meth` | uint64 | Randomly generated | Sets the seed for fallback generation and pooled-value resampling |
-| `--pool-meth` | Flag | Off | Resamples input values within each contig and cytosine context |
+| `--pool-meth` | — | Off | Resamples input values within each contig and cytosine context |
 
 ??? info "How methylation profiles are applied"
 
@@ -338,7 +338,7 @@ Configure the library orientation and conversion rate for WGBS, RRBS, and TBS.
 | Option | Value | Default | Description |
 | --- | --- | --- | --- |
 | `--conversion-rate` | Float in `[0, 1]` | `0.998` | Sets the probability that each unmethylated cytosine is converted |
-| `--undirectional` | Flag | Off | Selects an undirectional bisulfite library |
+| `--undirectional` | — | Off | Selects an undirectional bisulfite library |
 
 ??? info "How the bisulfite library and conversion are applied"
 
@@ -383,7 +383,7 @@ Choose single- or paired-end sequencing and set the read length.
 | --- | --- | --- | --- |
 | `-l`,<br>`--read-length` | Integer from `1` to `10000` | `100` | Sets the number of bases in each read |
 | `--max-ambiguous-fraction` | Float in `[0, 1]` | `0.05` | Sets the maximum allowed fraction of `N` bases per read |
-| `--single-end` | Flag | Off | Selects single-end sequencing |
+| `--single-end` | — | Off | Selects single-end sequencing |
 
 ??? info "How read layout is applied"
 
@@ -459,11 +459,11 @@ methylation profile snapshots.
 
 | Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| `--fragment-summary` | Flag | Off | Adds compact fragment metadata to BAM records |
-| `--fragment-realization` | Flag | Off | Adds complete-fragment methylation and conversion states to BAM records |
-| `--save-methdb` | Flag | Off | Writes the methylation profile to MethDB with embedded variants |
-| `--save-vcf` | Flag | Off | Writes the prepared, phased variant set to VCF |
-| `--save-truth` | Flag | Off | Writes the variant set and, for bisulfite assays, the methylation profile to disk |
+| `--fragment-summary` | — | Off | Adds compact fragment metadata to BAM records |
+| `--fragment-realization` | — | Off | Adds complete-fragment methylation and conversion states to BAM records |
+| `--save-methdb` | — | Off | Writes the methylation profile to MethDB with embedded variants |
+| `--save-vcf` | — | Off | Writes the prepared, phased variant set to VCF |
+| `--save-truth` | — | Off | Writes the variant set and, for bisulfite assays, the methylation profile to disk |
 
 ??? info "BAM annotations and reusable truth"
 
