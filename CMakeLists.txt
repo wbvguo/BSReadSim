@@ -259,6 +259,12 @@ if(BUILD_TESTING AND EXISTS "${TEST_ROOT}")
     bsreadsim_add_python_test(
         technology_outputs_cross_language check_technology_outputs.py
     )
+    bsreadsim_add_python_test(
+        example_data_cross_language check_example_data.py
+    )
+    bsreadsim_add_python_test(
+        validate_cross_language check_validate.py
+    )
 endif()
 
 if(

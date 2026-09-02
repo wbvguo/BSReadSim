@@ -121,28 +121,6 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="bsreadsim-installed-") as temporary:
         directory = Path(temporary).resolve()
-        bundled_reference = directory / "test.fa"
-        copied = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "bsreadsim",
-                "export",
-                "test-fasta",
-                "-o",
-                str(bundled_reference),
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if copied.returncode != 0 or copied.stderr:
-            raise SystemExit("installed resource copy failed: {!r}".format(copied.stderr))
-        if Path(copied.stdout.strip()) != bundled_reference:
-            raise SystemExit("installed resource copy reported the wrong path")
-        if not bundled_reference.read_bytes().startswith(b">chr10\n"):
-            raise SystemExit("installed wheel lost the bundled test FASTA")
-
         (directory / "tiny.fa").write_bytes(b">chr1\nACGTCGTAA\n")
         profile_bytes = b"0.5\n0.5\n"
         (directory / "coverage.tsv").write_bytes(profile_bytes)

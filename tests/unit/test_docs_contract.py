@@ -205,7 +205,7 @@ class DocumentationContractTests(unittest.TestCase):
             "### Set read layout { #read-layout }",
             "### Configure base quality and sequencing errors { #quality-and-error }",
             "## Output and reproducibility { #reproducibility }",
-            "### Choose read output { #output-format }",
+            "### Configure execution and output { #output-format }",
             "### Save simulation truth { #truth-artifacts }",
             "### Control random variation { #random-seeds }",
         )
@@ -308,10 +308,11 @@ class DocumentationContractTests(unittest.TestCase):
             encoding="utf-8"
         )
         command_match = re.search(
-            r"```bash\n(bsreadsim run wgbs [^\n]+)\n```", quickstart
+            r"```bash\n(bsreadsim run wgbs(?:[^\n]*\\\n)*[^\n]*)\n```",
+            quickstart,
         )
         self.assertIsNotNone(command_match)
-        command = command_match.group(1)
+        command = command_match.group(1).replace("\\\n", " ")
         argv = shlex.split(command)
 
         arguments = build_parser().parse_args(argv[1:])
@@ -324,7 +325,15 @@ class DocumentationContractTests(unittest.TestCase):
         self.assertEqual(document["fragments"]["insert_mean"], 400)
         self.assertEqual(document["fragments"]["insert_sd"], 25.0)
         self.assertEqual(document["sequencing"]["conversion_rate"], 0.998)
-        for option in ("`run wgbs`", "`-r`", "`-o`", "`-n`", "`-s`"):
+        self.assertEqual(document["execution"]["threads"], 4)
+        for option in (
+            "`run wgbs`",
+            "`-r`",
+            "`-o`",
+            "`-n`",
+            "`-t`",
+            "`--seed`",
+        ):
             self.assertIn(option, quickstart)
 
     def test_inline_long_option_references_are_public(self) -> None:
@@ -376,10 +385,20 @@ class DocumentationContractTests(unittest.TestCase):
         self.assertNotIn(-1, positions)
         self.assertEqual(positions, sorted(positions))
         for current_rule in (
+            "### `bsreadsim` is not found",
+            "bsreadsim validate \\",
+            "only a subset of FASTA contigs",
+            "Use `--strict`",
             "`--sampling gc` and `--gc-profile PATH`",
-            "VCF, ASM, or de novo variants",
+            (
+                "VCF, ASM, nonzero de novo mutation, or a MethDB containing "
+                "embedded variants"
+            ),
+            "drops unreachable\npositive mass and renormalizes",
             "do not need to match the later run",
             "the parent directory must already exist",
+            "has enough free\nspace",
+            "Compare `-t 1`, `-t 2`, and `-t 4`",
         ):
             self.assertIn(current_rule, troubleshoot)
         self.assertNotIn("the fixed fragment and read lengths", troubleshoot)
@@ -473,17 +492,17 @@ class DocumentationContractTests(unittest.TestCase):
         for term in ("exported vcf", "exported methdb"):
             self.assertIn(term, outputs.lower())
 
-    def test_input_format_contracts_live_on_one_central_page(self) -> None:
+    def test_file_format_contracts_live_on_one_central_page(self) -> None:
         formats = (DOCS_ROOT / "reference" / "formats.md").read_text(
             encoding="utf-8"
         )
         headings = (
-            "# Input file formats",
-            "## Genome and variant inputs",
-            "## Methylation profile inputs",
-            "## Allele-specific methylation inputs",
-            "## Fragment generation and sampling inputs",
-            "## Sequencing-model inputs",
+            "# File formats",
+            "## Genome and variants { #genome-and-variant-inputs }",
+            "## Methylation profiles { #methylation-profile-inputs }",
+            "## Allele-specific methylation { #allele-specific-methylation-inputs }",
+            "## Fragment generation and sampling { #fragment-sampling-inputs }",
+            "## Sequencing models { #sequencing-model-inputs }",
         )
 
         positions = [formats.find(heading) for heading in headings]
@@ -495,7 +514,7 @@ class DocumentationContractTests(unittest.TestCase):
         )
         self.assertNotIn("## Generated files", formats)
 
-    def test_input_format_contracts_cover_parser_boundaries(self) -> None:
+    def test_file_format_contracts_cover_parser_boundaries(self) -> None:
         formats = (DOCS_ROOT / "reference" / "formats.md").read_text(
             encoding="utf-8"
         )
@@ -503,16 +522,32 @@ class DocumentationContractTests(unittest.TestCase):
         for text in (
             "| RRBS candidate BED | Plain text only |",
             "| Quality and error models | Uncompressed JSON only |",
+            "For input files, the",
             "Plain and gzip-compressed FASTA are",
-            "A header-only VCF is valid and represents an empty variant set.",
+            "contig length representable as uint32",
+            "A header-only VCF is valid\nand represents an empty variant set.",
+            "they are skipped before exact\nREF matching",
+            "repeated IDs are\ndisambiguated",
             "Every row must use the same supported width: 6, 8, 9, or 10 fields.",
             "#chrom\tchromStart\tchromEnd\tprobability",
             "#CHR\tNUC\tPOS\tCONTEXT\tDINUC\tMETH\tMC\tNC",
+            "Only `percentModified` determines",
+            "`METH` is the authoritative",
+            "not the `--methbed` input format",
+            "Exactly one of `Allele1` and `Allele2`",
+            "none accepts\n`.` or `na`",
             "For fixed-insert runs, positive probability",
             "variable-insert runs instead drop unreachable",
-            "Every count is an unsigned 32-bit integer",
+            "Rows may appear in any order;",
+            "Every count is uint32",
+            "does not accept MethDB",
         ):
             self.assertIn(text, formats)
+
+        self.assertEqual(
+            formats.count("| Column | Name | Requirement |"),
+            8,
+        )
 
         self.assertNotIn(
             "A requested bin with no eligible fragments is rejected.",
@@ -567,18 +602,19 @@ class DocumentationContractTests(unittest.TestCase):
 
         self.assertNotIn("bsreadsim export test-fasta", quickstart)
         self.assertIn(
-            "https://github.com/wbvguo/BSReadSim/blob/main/data/example/test.fa",
+            "https://github.com/wbvguo/BSReadSim/blob/main/data/examples/test.fa",
             quickstart,
         )
         self.assertNotIn("--insert-size", quickstart)
         command_match = re.search(
-            r"```bash\n(bsreadsim run wgbs [^\n]+)\n```", quickstart
+            r"```bash\n(bsreadsim run wgbs(?:[^\n]*\\\n)*[^\n]*)\n```",
+            quickstart,
         )
         self.assertIsNotNone(command_match)
-        command = command_match.group(1)
+        command = command_match.group(1).replace("\\\n", " ")
         arguments = build_parser().parse_args(shlex.split(command)[1:])
         document = build_run_document(arguments, REPOSITORY_ROOT)
-        fasta = REPOSITORY_ROOT / "data" / "example" / "test.fa"
+        fasta = REPOSITORY_ROOT / "data" / "examples" / "test.fa"
         reference_length = sum(
             len(line.strip())
             for line in fasta.read_text(encoding="ascii").splitlines()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 from pathlib import Path
 import sys
 from collections.abc import Mapping, Sequence
@@ -140,7 +141,6 @@ def _add_seed_arguments(
     seeds = parser.add_argument_group("random seeds")
     if include_master:
         seeds.add_argument(
-            "-s",
             "--seed",
             help="master unsigned 64-bit seed; omit to generate and record one",
         )
@@ -387,7 +387,7 @@ def _add_direct_run_arguments(
         type=int,
         default=1,
         metavar="N",
-        help="total CPU thread budget for the simulation pipeline (default: 1)",
+        help="number of threads to use (default: 1)",
     )
 
     output = parser.add_argument_group("output")
@@ -505,6 +505,45 @@ def _add_methdb_build_arguments(parser: argparse.ArgumentParser) -> None:
     _add_runtime_options(parser)
 
 
+def _add_validate_arguments(parser: argparse.ArgumentParser) -> None:
+    required = parser.add_argument_group("required input")
+    required.add_argument(
+        "-r", "--reference", type=Path, required=True, help="reference FASTA"
+    )
+    variants = parser.add_argument_group("variants")
+    variants.add_argument(
+        "--vcf", type=Path, help="one-sample diploid VCF input"
+    )
+    _add_methylation_input_arguments(parser, include_methdb=False)
+    methylation = parser.add_argument_group("methylation validation")
+    methylation.add_argument(
+        "--cpg-only",
+        action="store_true",
+        help="validate ASM targets under a CG-only methylation domain",
+    )
+    methylation.add_argument(
+        "--pool-meth",
+        dest="cgmap_pool",
+        action="store_true",
+        help="require a defined value in the text methylation profile",
+    )
+    parser.add_argument(
+        "--seed-phase",
+        default="0",
+        help="seed for phasing unphased VCF/ASM heterozygotes (default: 0)",
+    )
+    output = parser.add_argument_group("output")
+    output.add_argument(
+        "--json", action="store_true", help="write the validation summary as JSON"
+    )
+    output.add_argument(
+        "--strict",
+        action="store_true",
+        help="fail when unsupported VCF records would be skipped",
+    )
+    _add_runtime_options(parser)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the public command-line parser without importing heavy runtime modules."""
     parser = argparse.ArgumentParser(
@@ -515,6 +554,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "-v",
         "--version",
         action="version",
         version="%(prog)s {}".format(__version__),
@@ -541,6 +581,16 @@ def build_parser() -> argparse.ArgumentParser:
         technology_parser = run_commands.add_parser(name, help=help_text)
         _add_direct_run_arguments(technology_parser, technology)
         _add_runtime_options(technology_parser)
+
+    validate_parser = commands.add_parser(
+        "validate",
+        help="validate reference-coordinate inputs without generating output",
+        description=(
+            "Validate a reference and optional VCF, methylation profile, and ASM "
+            "inputs through the same native boundaries used for generation."
+        ),
+    )
+    _add_validate_arguments(validate_parser)
 
     build_parser = commands.add_parser(
         "build", help="build a reusable truth or sampling artifact"
@@ -571,17 +621,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     export_parser = commands.add_parser(
         "export",
-        help="export bundled data or decode a BSReadSim artifact",
+        help="decode a BSReadSim artifact",
     )
     export_commands = export_parser.add_subparsers(
         dest="export_target", required=True
-    )
-    test_fasta_export = export_commands.add_parser(
-        "test-fasta",
-        help="export the bundled example test FASTA",
-    )
-    test_fasta_export.add_argument(
-        "-o", "--output", type=Path, required=True, help="new FASTA path"
     )
     methdb_export = export_commands.add_parser(
         "methdb",
@@ -942,6 +985,139 @@ def build_methdb_document(
     return document
 
 
+def build_validate_document(
+    arguments: argparse.Namespace,
+    base_directory: Path,
+) -> dict[str, object]:
+    """Project ``validate`` arguments into an in-memory core config."""
+    if arguments.command != "validate":
+        raise CommandLineError("validate arguments are required")
+
+    base = base_directory.expanduser().resolve(strict=False)
+    document: dict[str, object] = {
+        "reference": str(arguments.reference.expanduser()),
+        "inputs": {},
+        "technology": "WGBS",
+        "reads": {"count": 1},
+        "mutation": {
+            "rate": 0,
+            "indel_fraction": 0.15,
+            "indel_extension_probability": 0.15,
+            "homozygous_only": False,
+        },
+        "seeds": {
+            "mutation": "0",
+            "phasing": arguments.seed_phase,
+            "methylation": "0",
+        },
+        "fragments": {
+            "paired_end": False,
+            "read_length_1": 1,
+            "insert_min": 1,
+            "insert_mean": 1,
+            "insert_max": 1,
+            "insert_sd": 0,
+            "max_ambiguous_fraction": 0,
+        },
+        "methylation": {
+            "state_model": "bernoulli",
+            "collect_non_cpg": not arguments.cpg_only,
+            "cgmap_pool": arguments.cgmap_pool,
+            "update_variant_boundaries": True,
+            "beta": {
+                "CG": [0.5, 0.5],
+                "CHG": [0.01, 0.05],
+                "CHH": [0.01, 0.05],
+            },
+        },
+        "coverage": {"kind": "uniform"},
+        "sequencing": {
+            "conversion_rate": 1,
+            "directional": True,
+            "quality": {"kind": "uniform", "phred": 40},
+            "error": {"kind": "uniform", "rate": 0},
+        },
+        "execution": {},
+        "output": {
+            "directory": str(base),
+            "prefix": "validate",
+            "format": "fastq",
+        },
+    }
+    inputs = document["inputs"]
+    if not isinstance(inputs, dict):
+        raise CommandLineError("internal validation input projection failed")
+    for name in (
+        "vcf",
+        "cgmap",
+        "bed_methyl",
+        "methbg",
+        "methbed",
+        "asm",
+        "asm_bed",
+    ):
+        value = getattr(arguments, name)
+        if value is not None:
+            inputs[name] = str(value.expanduser())
+    return document
+
+
+def _format_validation_summary(summary: Mapping[str, object]) -> str:
+    reference = summary["reference"]
+    if not isinstance(reference, Mapping):
+        raise CommandLineError("validation summary has no reference object")
+    reference_contigs = reference["contigs"]
+    lines = [
+        "status: valid",
+        "reference: {} contigs, {} bases".format(
+            reference_contigs, reference["bases"]
+        ),
+    ]
+    vcf = summary.get("vcf")
+    if isinstance(vcf, Mapping):
+        skipped = vcf.get("skipped")
+        if not isinstance(skipped, Mapping):
+            raise CommandLineError("validation summary has no VCF skipped object")
+        lines.append(
+            "VCF: {} rows on {}/{} contigs; {} retained, {} reference-genotype, "
+            "{} unsupported skipped".format(
+                vcf["rows"],
+                vcf["contigs"],
+                reference_contigs,
+                vcf["retained"],
+                vcf["reference_genotypes"],
+                skipped["total"],
+            )
+        )
+        if skipped["total"]:
+            lines.append(
+                "  skipped: {} MNP, {} complex replacement, {} >4 bp indel".format(
+                    skipped["mnp"],
+                    skipped["complex_replacement"],
+                    skipped["long_indel"],
+                )
+            )
+    methylation = summary.get("methylation")
+    if isinstance(methylation, Mapping):
+        lines.append(
+            "{}: {} rows on {}/{} contigs; {} defined probabilities".format(
+                methylation["format"],
+                methylation["rows"],
+                methylation["contigs"],
+                reference_contigs,
+                methylation["defined_probabilities"],
+            )
+        )
+    asm = summary.get("asm")
+    if isinstance(asm, Mapping):
+        lines.append(
+            "{}: {} rows on {}/{} contigs".format(
+                asm["format"], asm["rows"], asm["contigs"], reference_contigs
+            )
+        )
+    return "\n".join(lines)
+
+
 def build_run_document(
     arguments: argparse.Namespace,
     base_directory: Path,
@@ -1114,7 +1290,12 @@ def build_run_document(
 
     if gc_profile is not None:
         variable_insert = fragments["insert_sd"] != 0
-        if variable_insert and (arguments.vcf is not None or mutation_rate != 0):
+        if variable_insert and (
+            arguments.vcf is not None
+            or asm is not None
+            or asm_bed is not None
+            or mutation_rate != 0
+        ):
             raise CommandLineError(
                 "variable-insert --sampling gc does not yet support variants"
             )
@@ -1175,16 +1356,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.print_help()
         return 2
 
-    if arguments.command == "export" and arguments.export_target == "test-fasta":
-        from .resources import ResourceError, copy_resource
-
-        try:
-            print(copy_resource("test-fasta", arguments.output))
-        except ResourceError as error:
-            print("bsreadsim: error: {}".format(error), file=sys.stderr)
-            return 1
-        return 0
-
     # Keep artifact building independent from optional array/runtime modules.
     from .run.config import ConfigError
     from .run.catalog import (
@@ -1193,9 +1364,46 @@ def main(argv: Sequence[str] | None = None) -> int:
         build_methdb_snapshot,
         export_rrbs_catalog,
         export_variant_catalog,
+        validate_inputs,
     )
     from .htsim.launch import CoreArgvError
     from .run.prepare import PreparationError
+
+    if arguments.command == "validate":
+        try:
+            summary = validate_inputs(
+                build_validate_document(arguments, Path.cwd()),
+                base_directory=Path.cwd(),
+                core_executable=arguments.core,
+            )
+            print(
+                json.dumps(summary, indent=2, sort_keys=True)
+                if arguments.json
+                else _format_validation_summary(summary)
+            )
+            vcf = summary.get("vcf")
+            skipped_total = 0
+            if isinstance(vcf, Mapping):
+                skipped = vcf.get("skipped")
+                if isinstance(skipped, Mapping):
+                    skipped_total = int(skipped.get("total", 0))
+            if arguments.strict and skipped_total:
+                print(
+                    "bsreadsim: error: strict validation failed: {} unsupported "
+                    "VCF records would be skipped".format(skipped_total),
+                    file=sys.stderr,
+                )
+                return 1
+            return 0
+        except (
+            CatalogError,
+            CommandLineError,
+            ConfigError,
+            CoreArgvError,
+            PreparationError,
+        ) as error:
+            print("bsreadsim: error: {}".format(error), file=sys.stderr)
+            return 1
 
     if arguments.command == "build":
         try:
@@ -1288,5 +1496,6 @@ __all__ = [
     "build_rrbs_document",
     "build_run_document",
     "build_variant_document",
+    "build_validate_document",
     "main",
 ]

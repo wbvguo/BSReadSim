@@ -236,7 +236,11 @@ def main() -> int:
         (root / "input.vcf").write_text(
             "##fileformat=VCFv4.3\n"
             "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tsample\n"
-            "chr1\t2\t.\tC\tT\t.\tPASS\t.\tGT\t0/1\n",
+            "chr1\t2\t.\tC\tT\t.\tPASS\t.\tGT\t0/1\n"
+            "chr1\t5\t.\tA\tAACGTA\t.\tPASS\t.\tGT\t0/1\n"
+            "chr1\t9\t.\tACGTAC\tA\t.\tPASS\t.\tGT\t1/1\n"
+            "chr1\t20\t.\tT\tACGA\t.\tPASS\t.\tGT\t0/1\n"
+            "chr1\t25\t.\tACG\tTTA\t.\tPASS\t.\tGT\t1/1\n",
             encoding="ascii",
         )
         normalized = _build_from_vcf(root, core)
