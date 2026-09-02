@@ -8,8 +8,9 @@ and when to use them. See [Tutorials](tutorials.md) for runnable examples and
 the [CLI reference](../reference/cli.md) for full syntax and option combination
 rules.
 
-In the **Default** column, `—` means the option is unused by default, while
-**Off** means a flag must be included in the command to enable it.
+In the **Argument** column, `—` marks a switch that takes no argument. In the
+**Default** column, `—` means the option is unused by default, while **Off**
+means a switch must be included in the command to enable it.
 
 ## Genome { #genetic-variation }
 
@@ -17,7 +18,7 @@ BSReadSim resolves the reference genome into two haplotypes before it identifies
 methylatable cytosines, methylation contexts, restriction sites, or eligible
 fragment positions.
 
-| Option | Value | Default | Description |
+| Option | Argument | Default | Description |
 | --- | --- | --- | --- |
 | `-r`,<br>`--reference` | FASTA path | Required | Loads the reference genome to construct haplotypes |
 
@@ -29,7 +30,7 @@ All coordinate-based inputs must use the same reference build. See the
 When preparing the haplotypes, BSReadSim can randomly introduce de novo SNVs and
 indels at the rate set by `--mutation-rate`.
 
-| Option | Value | Default | Description |
+| Option | Argument | Default | Description |
 | --- | --- | --- | --- |
 | `--mutation-rate` | Float in `[0, 1]` | `0.001` | Sets the probability of a de novo mutation event at each non-`N` reference position |
 | `--indel-fraction` | Float in `[0, 1]` | `0.15` | Sets the proportion of generated mutation events that are indels |
@@ -63,7 +64,7 @@ places every generated event on both haplotypes.
 Use a one-sample diploid VCF when the simulation should incorporate a predefined
 variant set.
 
-| Option | Value | Default | Description |
+| Option | Argument | Default | Description |
 | --- | --- | --- | --- |
 | `--vcf` | VCF path | — | Loads diploid variants and genotypes from VCF |
 | `--seed-phase` | uint64 | Randomly generated | Sets the seed for assigning unphased variants to haplotypes |
@@ -95,7 +96,7 @@ unmethylated states are then drawn separately for each physical fragment.
 
 For a generated methylation profile, BSReadSim draws each eligible cytosine's methylation probability independently. The draw uses the Beta distribution specified for that cytosine's context (CG, CHG, or CHH).
 
-| Option | Value | Default | Description |
+| Option | Argument | Default | Description |
 | --- | --- | --- | --- |
 | `--beta-cg` | `a,b` | `0.5,0.5` | Sets the CG-site Beta parameters |
 | `--beta-chg` | `a,b` | `0.01,0.05` | Sets the CHG-site Beta parameters |
@@ -116,7 +117,7 @@ a tissue or species.
 Load site-level methylation values from an existing profile, or reuse a MethDB
 profile snapshot from a previous BSReadSim simulation.
 
-| Option | Value | Default | Description |
+| Option | Argument | Default | Description |
 | --- | --- | --- | --- |
 | `--cgmap` | CGmap path | — | Loads methylation levels from CGmap |
 | `--bedmethyl` | bedMethyl path | — | Loads methylation levels from bedMethyl |
@@ -151,7 +152,7 @@ profile snapshot from a previous BSReadSim simulation.
 BSReadSim also supports site-level allele-specific methylation (ASM) in ASM or
 ASM BED format.
 
-| Option | Value | Default | Description |
+| Option | Argument | Default | Description |
 | --- | --- | --- | --- |
 | `--asm` | ASM path | — | Loads an ASM profile |
 | `--asm-bed` | ASM BED path | — | Loads an ASM BED profile |
@@ -177,7 +178,7 @@ ASM BED format.
 A methylation profile assigns a methylation probability to each site. On a
 sampled fragment, each site is realized as either methylated or unmethylated.
 
-| Option | Value | Default | Description |
+| Option | Argument | Default | Description |
 | --- | --- | --- | --- |
 | `--meth-model` | `bernoulli` or `bilstm` | `bernoulli` | Selects the requested fragment-level methylation state model |
 
@@ -210,7 +211,7 @@ with lengths drawn from the configured distribution.
 Restriction-enzyme cut sites generate the candidate fragments;
 `--insert-min` and `--insert-max` apply size selection.
 
-| Option | Value | Default | Description |
+| Option | Argument | Default | Description |
 | --- | --- | --- | --- |
 | `--cut-site` | Restriction-enzyme cut site | <code>C&#124;CGG</code> | Accepts a DNA motif with <code>&#124;</code> marking the cut position |
 
@@ -233,7 +234,7 @@ Probe-enriched regions are supplied with `--targets`. For each selected
 target, the fragment center is displaced according to `--center-sd`, and its
 length is drawn from the configured distribution.
 
-| Option | Value | Default | Description |
+| Option | Argument | Default | Description |
 | --- | --- | --- | --- |
 | `--targets` | Capture target BED path | Required | Loads strand-aware capture targets from BED6 |
 | `--center-sd` | Non-negative number | `50` | Sets the SD of fragment-center displacement, in bases |
@@ -250,7 +251,7 @@ length is drawn from the configured distribution.
 
 Configure the length of each physical fragment.
 
-| Option | Value | Default | Description |
+| Option | Argument | Default | Description |
 | --- | --- | --- | --- |
 | `--insert-min` | uint32 | `100` | Sets the minimum fragment length |
 | `--insert-mean` | uint32 | `400` | Sets the mean fragment length |
@@ -287,7 +288,7 @@ non-uniform sampling.
 `--sampling gc` enables non-uniform sampling to match the fragment-GC
 distribution supplied by `--gc-profile`.
 
-| Option | Value | Default | Description |
+| Option | Argument | Default | Description |
 | --- | --- | --- | --- |
 | `--sampling` | `uniform` or `gc` | `uniform` | Selects uniform or GC-profile sampling |
 | `--gc-profile` | Target-GC profile path | — | Supplies the distribution profile used by `--sampling gc` |
@@ -304,7 +305,7 @@ distribution supplied by `--gc-profile`.
 `--sampling score` uses the candidate BED `score` column to set relative
 sampling probabilities. The scores can be generated by an external model.
 
-| Option | Value | Default | Description |
+| Option | Argument | Default | Description |
 | --- | --- | --- | --- |
 | `--sampling` | `uniform` or `score` | `uniform` | Selects uniform or score-weighted candidate sampling |
 | `--rrbs-candidates` | RRBS candidate BED path | — | Supplies RRBS candidate scores for non-uniform fragment sampling |
@@ -321,7 +322,7 @@ sampling probabilities. The scores can be generated by an external model.
 
 `--sampling score` samples targets in proportion to the values in BED column 5.
 
-| Option | Value | Default | Description |
+| Option | Argument | Default | Description |
 | --- | --- | --- | --- |
 | `--sampling` | `uniform` or `score` | `uniform` | Selects uniform or score-weighted target sampling |
 
@@ -335,7 +336,7 @@ sampling probabilities. The scores can be generated by an external model.
 
 Configure the library orientation and conversion rate for WGBS, RRBS, and TBS.
 
-| Option | Value | Default | Description |
+| Option | Argument | Default | Description |
 | --- | --- | --- | --- |
 | `--conversion-rate` | Float in `[0, 1]` | `0.998` | Sets the probability that each unmethylated cytosine is converted |
 | `--undirectional` | — | Off | Selects an undirectional bisulfite library |
@@ -360,7 +361,7 @@ errors.
 
 Set the output read count directly or derive it from sequencing depth:
 
-| Option | Value | Default | Description |
+| Option | Argument | Default | Description |
 | --- | --- | --- | --- |
 | `-n`,<br>`--reads` | Positive integer | `1,000,000` | Sets the exact number of output read records |
 | `-d`,<br>`--depth` | Number greater than `0` | — | Derives the read count from mean depth, effective-region size, and read length |
@@ -379,7 +380,7 @@ Set the output read count directly or derive it from sequencing depth:
 
 Choose single- or paired-end sequencing and set the read length.
 
-| Option | Value | Default | Description |
+| Option | Argument | Default | Description |
 | --- | --- | --- | --- |
 | `-l`,<br>`--read-length` | Integer from `1` to `10000` | `100` | Sets the number of bases in each read |
 | `--max-ambiguous-fraction` | Float in `[0, 1]` | `0.05` | Sets the maximum allowed fraction of `N` bases per read |
@@ -397,7 +398,7 @@ Choose single- or paired-end sequencing and set the read length.
 
 Use constant per-base settings or models estimated from sequencing data.
 
-| Option | Value | Default | Description |
+| Option | Argument | Default | Description |
 | --- | --- | --- | --- |
 | `-q`,<br>`--phred` | Integer from `0` to `93` | `40` | Sets a fixed Phred score for every base |
 | `--quality-model` | Quality-model JSON path | — | Samples each cycle's Phred score from a quality Markov model |
@@ -429,7 +430,7 @@ manifest is written automatically for every successful run.
 
 ### Configure execution and output { #output-format }
 
-| Option | Value | Default | Description |
+| Option | Argument | Default | Description |
 | --- | --- | --- | --- |
 | `-o`,<br>`--output` | Directory path | Required | Sets the output directory |
 | `-p`,<br>`--prefix` | `[A-Za-z0-9._-]+`, up to 128 characters | `sim` | Sets the output filename prefix |
@@ -457,7 +458,7 @@ manifest is written automatically for every successful run.
 Optionally add fragment-level truth to BAM or save reusable variant sets and
 methylation profile snapshots.
 
-| Option | Value | Default | Description |
+| Option | Argument | Default | Description |
 | --- | --- | --- | --- |
 | `--fragment-summary` | — | Off | Adds compact fragment metadata to BAM records |
 | `--fragment-realization` | — | Off | Adds complete-fragment methylation and conversion states to BAM records |
@@ -481,7 +482,7 @@ methylation profile snapshots.
 Separate seeds control preparation of the biological state and subsequent
 fragment and read generation.
 
-| Option | Value | Default | Description |
+| Option | Argument | Default | Description |
 | --- | --- | --- | --- |
 | `--seed-mut` | uint64 | Randomly generated | Sets the seed for generating de novo variants |
 | `--seed-phase` | uint64 | Randomly generated | Sets the seed for assigning unphased variants to haplotypes |

@@ -103,7 +103,7 @@ class DocumentationContractTests(unittest.TestCase):
         lines = (DOCS_ROOT / "simulation" / "customize.md").read_text(
             encoding="utf-8"
         ).splitlines()
-        header = "| Option | Value | Default | Description |"
+        header = "| Option | Argument | Default | Description |"
         separator = "| --- | --- | --- | --- |"
         table_starts = [index for index, line in enumerate(lines) if line == header]
 
@@ -129,21 +129,25 @@ class DocumentationContractTests(unittest.TestCase):
         ):
             content = path.read_text(encoding="utf-8")
             self.assertNotIn("| Flag |", content)
+            self.assertNotIn(
+                "| Option | Value | Default | Description |", content
+            )
             lines = content.splitlines()
             for start, line in enumerate(lines):
-                if line != "| Option | Value | Default | Description |":
+                if line != "| Option | Argument | Default | Description |":
                     continue
                 seen_flag = False
                 row = start + 2
                 while row < len(lines) and lines[row].startswith("|"):
                     columns = lines[row].strip("|").split("|")
-                    value = columns[1].strip()
-                    if value == "—":
+                    argument = columns[1].strip()
+                    if argument == "—":
                         seen_flag = True
                     else:
                         self.assertFalse(
                             seen_flag,
-                            msg="{}:{} places a valued option after a flag".format(
+                            msg="{}:{} places an option with an argument after a "
+                            "valueless switch".format(
                                 path.relative_to(REPOSITORY_ROOT), row + 1
                             ),
                         )
