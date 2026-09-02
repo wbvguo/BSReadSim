@@ -61,6 +61,27 @@ def public_short_options(parser: argparse.ArgumentParser) -> set[str]:
 
 
 class DocumentationContractTests(unittest.TestCase):
+    def test_readme_keeps_distinguishing_highlights(self) -> None:
+        readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
+
+        for fragment in (
+            "versatile and efficient read simulator",
+            "realistic reads with\ntraceable ground truth",
+            "guide\nexperimental design",
+            "Supports profile-based simulation",
+            "site-level methylation and allele-specific methylation",
+            "matched WGS, WES, and TS controls",
+            "haplotype-aware diploid genome and methylome",
+            "restriction-aware RRBS",
+            "origin-annotated BAM",
+            "manifest recording the effective configuration",
+        ):
+            self.assertIn(fragment, readme)
+
+        self.assertNotIn("| Capability |", readme)
+        self.assertNotIn("Sherman", readme)
+        self.assertNotIn("site-site dependency", readme.lower())
+
     def test_overview_keeps_complete_html_sections(self) -> None:
         overview = (DOCS_ROOT / "index.md").read_text(encoding="utf-8")
 
