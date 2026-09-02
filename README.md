@@ -32,7 +32,7 @@ Repository versions of the main entry points are also available directly:
 - [Other assays](docs/simulation/other-assays.md)
 - [Outputs](docs/outputs/index.md)
 - [CLI parameters and defaults](docs/reference/cli.md)
-- [Input file formats](docs/reference/formats.md)
+- [File formats](docs/reference/formats.md)
 
 The complete site starts at [docs/index.md](docs/index.md).
 
@@ -103,7 +103,7 @@ bsreadsim run wgs \
 
 ## Citation
 
-If BSReadSim contributes to your research,  please cite the [BSReadSim preprint](https://doi.org/10.1101/2024.12.24.627620):
+If you use BSReadSim in your research, please cite the [BSReadSim preprint](https://doi.org/10.1101/2024.12.24.627620):
 
 ```bibtex
 @article{guo2024bsreadsim,

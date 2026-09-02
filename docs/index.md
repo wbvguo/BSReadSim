@@ -82,11 +82,11 @@ Tailor models and parameters to your study in **Customize**. For complete comman
 Each run produces reads as FASTQ files or an origin-annotated BAM, together with a manifest. The underlying variant set and methylation profile can optionally be saved as VCF and MethDB files for reuse.
 
 [Explore outputs](outputs/index.md){ .md-button }
-[View input formats](reference/formats.md){ .md-button }
+[View file formats](reference/formats.md){ .md-button }
 
 ## Citation
 
-If BSReadSim contributes to your research, please cite the [BSReadSim preprint](https://doi.org/10.1101/2024.12.24.627620):
+If you use BSReadSim in your research, please cite the [BSReadSim preprint](https://doi.org/10.1101/2024.12.24.627620):
 
 ```bibtex
 @article{guo2024bsreadsim,

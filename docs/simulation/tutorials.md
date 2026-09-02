@@ -28,10 +28,11 @@ bsreadsim run wgbs \
   -r test.fa \
   -o test/wgbs-denovo \
   -n 100000 \
+  -t 4 \
   --mutation-rate 0.001 \
   --seed-mut 7 \
   --seed-meth 11 \
-  -s 42
+  --seed 42
 ```
 
 With the default paired-end mode and `fastq.gz` format, the output directory
@@ -70,11 +71,12 @@ bsreadsim run wgbs \
   -r test.fa \
   -o test/wgbs-profile \
   -n 100000 \
+  -t 4 \
   --vcf test.vcf.gz \
-  --cgmap test.cgmap.gz \
+  --cgmap test.CGmap.gz \
   --seed-phase 7 \
   --seed-meth 11 \
-  -s 42
+  --seed 42
 ```
 
 ??? info "How it works"
@@ -89,7 +91,7 @@ bsreadsim run wgbs \
 
     See [Load variants from a VCF](customize.md#vcf-genome),
     [Load methylation profiles](customize.md#predefined-methylation),
-    and the [input file formats](../reference/formats.md).
+    and the [file-format reference](../reference/formats.md).
 
 ## Allele-specific methylation
 
@@ -102,11 +104,12 @@ bsreadsim run wgbs \
   -r test.fa \
   -o test/wgbs-asm \
   -n 100000 \
-  --cgmap test.cgmap.gz \
+  -t 4 \
+  --cgmap test.CGmap.gz \
   --asm test.asm.gz \
   --seed-phase 7 \
   --seed-meth 11 \
-  -s 42
+  --seed 42
 ```
 
 ??? info "How it works"
@@ -119,7 +122,7 @@ bsreadsim run wgbs \
     methylation probabilities.
 
     See [Add allele-specific methylation](customize.md#allele-specific-methylation)
-    and the [ASM input formats](../reference/formats.md#allele-specific-methylation-inputs).
+    and the [ASM formats](../reference/formats.md#allele-specific-methylation-inputs).
 
 ## Enrichment-based assays
 
@@ -134,11 +137,12 @@ bsreadsim run rrbs \
   -r test.fa \
   -o test/rrbs \
   -n 100000 \
+  -t 4 \
   --cut-site 'C|CGG' \
   --insert-min 100 \
   --insert-max 500 \
   --mutation-rate 0 \
-  -s 42
+  --seed 42
 ```
 
 ??? info "How it works"
@@ -166,11 +170,12 @@ bsreadsim run tbs \
   -r test.fa \
   -o test/tbs \
   -n 100000 \
+  -t 4 \
   --targets targets.bed \
   --insert-mean 300 \
   --center-sd 50 \
   --mutation-rate 0 \
-  -s 42
+  --seed 42
 ```
 
 ??? info "How it works"
@@ -204,10 +209,11 @@ bsreadsim run wgbs \
   -r test.fa \
   -o runs/benchmark \
   -n 100000 \
+  -t 4 \
   --mutation-rate 0.001 \
   --seed-mut 7 \
   --seed-meth 11 \
-  -s 42 \
+  --seed 42 \
   --format bam \
   --save-truth
 ```
@@ -247,8 +253,9 @@ bsreadsim run wgbs \
   -r test.fa \
   -o test/wgbs-reuse \
   -n 100000 \
+  -t 4 \
   --methdb runs/benchmark/truth/sim.methdb \
-  -s 43
+  --seed 43
 ```
 
 `--methdb` loads the saved snapshot directly. Changing the master seed draws

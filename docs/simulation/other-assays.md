@@ -37,8 +37,9 @@ bsreadsim run wgs \
   -r reference.fa \
   -o runs/wgs \
   -n 100000 \
+  -t 4 \
   --mutation-rate 0 \
-  -s 42
+  --seed 42
 ```
 
 See [Generate fragments](customize.md#generate-fragments) and
@@ -55,11 +56,12 @@ bsreadsim run wes \
   -r reference.fa \
   -o runs/wes \
   -n 100000 \
+  -t 4 \
   --targets exome.bed \
   --insert-mean 300 \
   --center-sd 50 \
   --mutation-rate 0 \
-  -s 42
+  --seed 42
 ```
 
 ### TS { #ts }
@@ -72,12 +74,13 @@ bsreadsim run ts \
   -r reference.fa \
   -o runs/ts \
   -n 100000 \
+  -t 4 \
   --sampling score \
   --targets panel.bed \
   --insert-mean 300 \
   --center-sd 50 \
   --mutation-rate 0 \
-  -s 42
+  --seed 42
 ```
 
 ## Shared simulation controls
@@ -98,9 +101,11 @@ The following controls also apply to non-bisulfite assays:
 
 ??? info "How depth is calculated"
 
-    WGS depth uses eligible whole-genome sequence. WES and TS depth use the
-    union of eligible target intervals. Use `--reads` instead when an exact
-    output record count is required.
+    WGS depth uses the full length of every contig with positive fragment-
+    allocation weight. WES and TS depth use the union of all validated target
+    intervals, including intervals whose individual geometry or score prevents
+    selection. Use `--reads` instead when an exact output record count is
+    required.
 
 ## Outputs and simulation truth
 
@@ -118,11 +123,12 @@ OUTPUT/
 ```
 
 Single-end FASTQ omits `sim.R2.fastq.gz`. BAM output replaces the FASTQ files
-with `sim.bam` and omits methylation and conversion annotations. For
-non-bisulfite assays, `--save-truth` exports only the prepared, phased variant
-set as VCF.
+with `sim.bam` and omits bisulfite-specific `XG`, `XR`, and `YS` annotations.
+The required generic `zt` and `zr` fields remain present but contain no
+methylation or conversion events. For non-bisulfite assays, `--save-truth`
+exports only the prepared, phased variant set as VCF.
 
-See [Choose read output](customize.md#output-format),
+See [Configure output](customize.md#output-format),
 [Save simulation truth](customize.md#truth-artifacts), and
 [Outputs](../outputs/index.md) for the available representations, artifact
 names, and completion rules.

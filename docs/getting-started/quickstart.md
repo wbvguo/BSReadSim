@@ -3,7 +3,7 @@
 ## 1. Prepare a reference genome
 
 Obtain a reference genome in FASTA format. This demo uses the repository's
-bundled [test.fa](https://github.com/wbvguo/BSReadSim/blob/main/data/example/test.fa).
+bundled [test.fa](https://github.com/wbvguo/BSReadSim/blob/main/data/examples/test.fa).
 For real analyses, prepare or download a reference genome from
 [Ensembl](https://www.ensembl.org/info/data/ftp/index.html?redirect=no) or
 [GENCODE](https://www.gencodegenes.org/) that matches the species and build in your study.
@@ -11,7 +11,12 @@ For real analyses, prepare or download a reference genome from
 ## 2. Run a WGBS simulation
 
 ```bash
-bsreadsim run wgbs -r test.fa -o test/ -n 1000 -s 42
+bsreadsim run wgbs \
+  -r test.fa \
+  -o test/ \
+  -n 1000 \
+  -t 4 \
+  --seed 42
 ```
 
 ??? info "Command options"
@@ -20,7 +25,8 @@ bsreadsim run wgbs -r test.fa -o test/ -n 1000 -s 42
     - `-r` specifies the reference FASTA;
     - `-o` specifies the output directory;
     - `-n` specifies the total number of reads to generate (n/2 read pairs);
-    - `-s` specifies the master seed;
+    - `-t` sets the number of threads;
+    - `--seed` specifies the master seed;
 
     All other parameters use the WGBS defaults. See
     [Customize](../simulation/customize.md) for more configuration options.

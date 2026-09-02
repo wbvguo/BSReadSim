@@ -9,7 +9,7 @@ the [CLI reference](../reference/cli.md) for full syntax and option combination
 rules.
 
 In the **Default** column, `—` means the option is unused by default, while
-**Disabled** means a flag must be included in the command to enable it.
+**Off** means a flag must be included in the command to enable it.
 
 ## Genome { #genetic-variation }
 
@@ -19,7 +19,7 @@ fragment positions.
 
 | Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| `--reference` | FASTA path | Required | Loads the reference genome to construct haplotypes |
+| `-r`,<br>`--reference` | FASTA path | Required | Loads the reference genome to construct haplotypes |
 
 All coordinate-based inputs must use the same reference build. See the
 [Reference FASTA contract](../reference/formats.md#fasta).
@@ -34,8 +34,8 @@ indels at the rate set by `--mutation-rate`.
 | `--mutation-rate` | Float in `[0, 1]` | `0.001` | Sets the probability of a de novo mutation event at each non-`N` reference position |
 | `--indel-fraction` | Float in `[0, 1]` | `0.15` | Sets the proportion of generated mutation events that are indels |
 | `--indel-extension-probability` | Float in `[0, 1]` | `0.15` | Sets the probability that an indel extends by each additional base, up to four bases |
-| `--seed-mut` | uint64 | Generated and recorded | Sets the seed for generating de novo variants |
-| `--homozygous-only` | Flag | Disabled | Generates every de novo variant on both haplotypes |
+| `--seed-mut` | uint64 | Randomly generated | Sets the seed for generating de novo variants |
+| `--homozygous-only` | Flag | Off | Generates every de novo variant on both haplotypes |
 
 By default, each generated event is placed on both haplotypes with probability
 `1/3`; the remaining events are assigned to either haplotype with equal
@@ -66,7 +66,7 @@ variant set.
 | Option | Value | Default | Description |
 | --- | --- | --- | --- |
 | `--vcf` | VCF path | — | Loads diploid variants and genotypes from VCF |
-| `--seed-phase` | uint64 | Generated and recorded | Sets the seed for assigning unphased variants to haplotypes |
+| `--seed-phase` | uint64 | Randomly generated | Sets the seed for assigning unphased variants to haplotypes |
 
 ??? info "How VCF phasing is handled"
 
@@ -100,8 +100,8 @@ For a generated methylation profile, BSReadSim draws each eligible cytosine's me
 | `--beta-cg` | `a,b` | `0.5,0.5` | Sets the CG-site Beta parameters |
 | `--beta-chg` | `a,b` | `0.01,0.05` | Sets the CHG-site Beta parameters |
 | `--beta-chh` | `a,b` | `0.01,0.05` | Sets the CHH-site Beta parameters |
-| `--seed-meth` | uint64 | Generated and recorded | Sets the seed for generating methylation probabilities |
-| `--cpg-only` | Flag | Disabled | Omits CHG and CHH sites from the prepared profile |
+| `--seed-meth` | uint64 | Randomly generated | Sets the seed for generating methylation probabilities |
+| `--cpg-only` | Flag | Off | Omits CHG and CHH sites from the prepared profile |
 
 These defaults define a general synthetic profile rather than one specific to
 a tissue or species.
@@ -123,8 +123,8 @@ profile snapshot from a previous BSReadSim simulation.
 | `--methbed` | MethBED path | — | Loads methylation levels from MethBED |
 | `--methbg` | MethBG path | — | Loads methylation levels from MethBG |
 | `--methdb` | MethDB path | — | Reuses a methylation profile snapshot with embedded variants |
-| `--seed-meth` | uint64 | Generated and recorded | Sets the seed for fallback generation and pooled-value resampling |
-| `--pool-meth` | Flag | Disabled | Resamples input values within each contig and cytosine context |
+| `--seed-meth` | uint64 | Randomly generated | Sets the seed for fallback generation and pooled-value resampling |
+| `--pool-meth` | Flag | Off | Resamples input values within each contig and cytosine context |
 
 ??? info "How methylation profiles are applied"
 
@@ -169,7 +169,7 @@ ASM BED format.
     - **Requirements:** The linked SNV must be heterozygous. The ASM target must
       remain present with the same CG, CHG, or CHH context on both haplotypes.
       See
-      [ASM input formats](../reference/formats.md#allele-specific-methylation-inputs)
+      [ASM formats](../reference/formats.md#allele-specific-methylation-inputs)
       for complete input requirements.
 
 ### Realize methylation states { #methylation-states }
@@ -179,7 +179,7 @@ sampled fragment, each site is realized as either methylated or unmethylated.
 
 | Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| `--meth-model` | `bernoulli` | `bernoulli` | Selects how fragment-level methylation states are drawn |
+| `--meth-model` | `bernoulli` or `bilstm` | `bernoulli` | Selects the requested fragment-level methylation state model |
 
 ??? info "How methylation states are realized"
 
@@ -187,6 +187,10 @@ sampled fragment, each site is realized as either methylated or unmethylated.
     bisulfite sequencing, methylation states are sampled for each fragment.
     The same site may have different states across fragments, but overlapping
     mates from one fragment share the sampled state.
+
+    `bilstm` is accepted as a requested model. The current runtime emits an
+    explicit warning, records both requested and effective models in the
+    manifest, and falls back to Bernoulli state realization.
 
 ## Fragment sampling { #supported-technologies }
 
@@ -248,16 +252,19 @@ Configure the length of each physical fragment.
 
 | Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| `--insert-min` | Positive integer | `100` | Sets the minimum fragment length |
-| `--insert-mean` | Positive integer | `400` | Sets the mean fragment length |
-| `--insert-max` | Positive integer | `1000` | Sets the maximum fragment length |
+| `--insert-min` | uint32 | `100` | Sets the minimum fragment length |
+| `--insert-mean` | uint32 | `400` | Sets the mean fragment length |
+| `--insert-max` | uint32 | `1000` | Sets the maximum fragment length |
 | `--insert-sd` | Non-negative number | `25` | Sets the fragment-length standard deviation |
 
 ??? info "How fragment length is determined"
 
-    - **Length distribution:** For WGBS, TBS, WGS, WES, and TS, fragment
-      lengths follow a normal distribution controlled by `--insert-mean` and
-      `--insert-sd`, bounded by `--insert-min` and `--insert-max`.
+    - **Length distribution:** For WGBS, TBS, WGS, WES, and TS, BSReadSim draws
+      a normal deviate controlled by `--insert-mean` and `--insert-sd`, truncates
+      its offset toward zero to obtain an integer length, and clamps values
+      outside `--insert-min` and `--insert-max` to the nearest bound. It does not
+      redraw out-of-range values, so the two bounds can carry extra probability
+      mass.
     - **RRBS size selection:** RRBS lengths come from restriction sites;
       `--insert-min` and `--insert-max` define the retained size window.
       `--insert-sd 0` does not make RRBS fragments equal in length.
@@ -331,7 +338,7 @@ Configure the library orientation and conversion rate for WGBS, RRBS, and TBS.
 | Option | Value | Default | Description |
 | --- | --- | --- | --- |
 | `--conversion-rate` | Float in `[0, 1]` | `0.998` | Sets the probability that each unmethylated cytosine is converted |
-| `--undirectional` | Flag | Disabled | Selects an undirectional bisulfite library |
+| `--undirectional` | Flag | Off | Selects an undirectional bisulfite library |
 
 ??? info "How the bisulfite library and conversion are applied"
 
@@ -355,8 +362,8 @@ Set the output read count directly or derive it from sequencing depth:
 
 | Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| `--reads` | Positive integer | `1,000,000` | Sets the exact number of output read records |
-| `--depth` | Number greater than `0` | — | Derives the read count from mean depth, effective-region size, and read length |
+| `-n`,<br>`--reads` | Positive integer | `1,000,000` | Sets the exact number of output read records |
+| `-d`,<br>`--depth` | Number greater than `0` | — | Derives the read count from mean depth, effective-region size, and read length |
 
 ??? info "How the number of reads is resolved"
 
@@ -374,9 +381,9 @@ Choose single- or paired-end sequencing and set the read length.
 
 | Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| `--read-length` | Integer from `1` to `10000` | `100` | Sets the number of bases in each read |
+| `-l`,<br>`--read-length` | Integer from `1` to `10000` | `100` | Sets the number of bases in each read |
 | `--max-ambiguous-fraction` | Float in `[0, 1]` | `0.05` | Sets the maximum allowed fraction of `N` bases per read |
-| `--single-end` | Flag | Disabled | Selects single-end sequencing |
+| `--single-end` | Flag | Off | Selects single-end sequencing |
 
 ??? info "How read layout is applied"
 
@@ -392,9 +399,9 @@ Use constant per-base settings or models estimated from sequencing data.
 
 | Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| `--phred` | Integer from `0` to `93` | `40` | Sets a fixed Phred score for every base |
+| `-q`,<br>`--phred` | Integer from `0` to `93` | `40` | Sets a fixed Phred score for every base |
 | `--quality-model` | Quality-model JSON path | — | Samples each cycle's Phred score from a quality Markov model |
-| `--error-rate` | Float in `[0, 1]` | `0.005` | Sets a uniform substitution probability for every base |
+| `-e`,<br>`--error-rate` | Float in `[0, 1]` | `0.005` | Sets a uniform substitution probability for every base |
 | `--error-model` | Error-model JSON path | — | Samples each final base call from a Phred-specific base transition model |
 
 ??? info "How estimated sequencing models are applied"
@@ -417,17 +424,18 @@ Use constant per-base settings or models estimated from sequencing data.
 
 ## Output and reproducibility { #reproducibility }
 
-Configure the read output, optional truth artifacts, and random seeds. A
+Configure output, optional truth artifacts, and random seeds. A
 manifest is written automatically for every successful run.
 
-### Choose read output { #output-format }
+### Configure execution and output { #output-format }
 
 | Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| `--output` | Directory path | Required | Sets the output directory |
-| `--prefix` | `[A-Za-z0-9._-]+`, up to 128 characters | `sim` | Sets the output filename prefix |
-| `--format` | `fastq`, `fastq.gz`, or `bam` | `fastq.gz` | Selects the read output format |
+| `-o`,<br>`--output` | Directory path | Required | Sets the output directory |
+| `-p`,<br>`--prefix` | `[A-Za-z0-9._-]+`, up to 128 characters | `sim` | Sets the output filename prefix |
+| `-f`,<br>`--format` | `fastq`, `fastq.gz`, or `bam` | `fastq.gz` | Selects the read output format |
 | `--gzip-level` | Integer from `0` to `9` | `6` | Sets the compression level for `fastq.gz` output |
+| `-t`,<br>`--threads` | Integer, `1`–`256` | `1` | Sets the number of threads |
 
 ??? info "FASTQ and BAM output"
 
@@ -436,6 +444,14 @@ manifest is written automatically for every successful run.
     paired-end reads. `bam` also supports both layouts and is written instead
     of FASTQ.
 
+??? info "Threads"
+
+    BSReadSim uses the requested threads across fragment generation, read
+    processing, output ordering, and BAM compression when applicable. The best
+    value depends on available CPUs, memory, output format, and storage speed.
+    Thread count changes resource use but not fixed-seed output bytes. See
+    [Performance](../help/troubleshoot.md#performance) when tuning a run.
+
 ### Save simulation truth { #truth-artifacts }
 
 Optionally add fragment-level truth to BAM or save reusable variant sets and
@@ -443,11 +459,11 @@ methylation profile snapshots.
 
 | Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| `--fragment-summary` | Flag | Disabled | Adds compact fragment metadata to BAM records |
-| `--fragment-realization` | Flag | Disabled | Adds complete-fragment methylation and conversion states to BAM records |
-| `--save-methdb` | Flag | Disabled | Writes the methylation profile to MethDB with embedded variants |
-| `--save-vcf` | Flag | Disabled | Writes the prepared, phased variant set to VCF |
-| `--save-truth` | Flag | Disabled | Writes the variant set and, for bisulfite assays, the methylation profile to disk |
+| `--fragment-summary` | Flag | Off | Adds compact fragment metadata to BAM records |
+| `--fragment-realization` | Flag | Off | Adds complete-fragment methylation and conversion states to BAM records |
+| `--save-methdb` | Flag | Off | Writes the methylation profile to MethDB with embedded variants |
+| `--save-vcf` | Flag | Off | Writes the prepared, phased variant set to VCF |
+| `--save-truth` | Flag | Off | Writes the variant set and, for bisulfite assays, the methylation profile to disk |
 
 ??? info "BAM annotations and reusable truth"
 
@@ -467,10 +483,10 @@ fragment and read generation.
 
 | Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| `--seed-mut` | uint64 | Generated and recorded | Sets the seed for generating de novo variants |
-| `--seed-phase` | uint64 | Generated and recorded | Sets the seed for assigning unphased variants to haplotypes |
-| `--seed-meth` | uint64 | Generated and recorded | Sets the seed for preparing methylation probabilities |
-| `--seed` | uint64 | Generated and recorded | Sets the master seed for the simulation |
+| `--seed-mut` | uint64 | Randomly generated | Sets the seed for generating de novo variants |
+| `--seed-phase` | uint64 | Randomly generated | Sets the seed for assigning unphased variants to haplotypes |
+| `--seed-meth` | uint64 | Randomly generated | Sets the seed for preparing methylation probabilities |
+| `--seed` | uint64 | Randomly generated | Sets the master seed for the simulation |
 
 ??? info "How to reproduce or vary a run"
 
