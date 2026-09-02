@@ -48,8 +48,8 @@ supplied.
 
 | Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| `-h`,<br>`--help` | Flag | Off | Shows help for the current command level and exits |
-| `-v`,<br>`--version` | Flag | Off | Prints the version and exits; available only before a command |
+| `-h`,<br>`--help` | — | Off | Shows help for the current command level and exits |
+| `-v`,<br>`--version` | — | Off | Prints the version and exits; available only before a command |
 
 ## Run simulations
 
@@ -106,7 +106,7 @@ single-end mode, it produces 1000 reads.
 | `--mutation-rate` | Float in `[0, 1]` | `0.001` | Sets the probability of a de novo mutation event at each non-`N` reference position |
 | `--indel-fraction` | Float in `[0, 1]` | `0.15` | Sets the proportion of generated mutation events that are indels |
 | `--indel-extension-probability` | Float in `[0, 1]` | `0.15` | Sets the probability that an indel extends by each additional base, up to four bases |
-| `--homozygous-only` | Flag | Off | Generates every de novo variant on both haplotypes |
+| `--homozygous-only` | — | Off | Generates every de novo variant on both haplotypes |
 
 ??? info "Details"
 
@@ -153,8 +153,8 @@ Available only for WGBS, RRBS, and TBS.
 | `--beta-chg` | `a,b` | `0.01,0.05` | Sets the CHG-site Beta parameters |
 | `--beta-chh` | `a,b` | `0.01,0.05` | Sets the CHH-site Beta parameters |
 | `--meth-model` | `bernoulli` or `bilstm` | `bernoulli` | Selects the requested fragment-level methylation state model |
-| `--cpg-only` | Flag | Off | Omits CHG and CHH sites from the prepared profile |
-| `--pool-meth` | Flag | Off | Resamples input values within each contig and cytosine context |
+| `--cpg-only` | — | Off | Omits CHG and CHH sites from the prepared profile |
+| `--pool-meth` | — | Off | Resamples input values within each contig and cytosine context |
 
 `--pool-meth` requires one of the four text profile inputs; it cannot be used
 with a generated profile or MethDB.
@@ -192,14 +192,14 @@ back to the Bernoulli model.
 | --- | --- | --- | --- |
 | `-l`,<br>`--read-length` | Integer from `1` to `10000` | `100` | Sets the number of bases in each read |
 | `--max-ambiguous-fraction` | Float in `[0, 1]` | `0.05` | Sets the maximum allowed fraction of `N` bases per read |
-| `--single-end` | Flag | Off | Selects single-end sequencing |
+| `--single-end` | — | Off | Selects single-end sequencing |
 
 ### Bisulfite conversion
 
 | Option | Value | Default | Description |
 | --- | --- | --- | --- |
 | `--conversion-rate` | Float in `[0, 1]` | `0.998` | Sets the probability that each unmethylated cytosine is converted |
-| `--undirectional` | Flag | Off | Selects an undirectional bisulfite library |
+| `--undirectional` | — | Off | Selects an undirectional bisulfite library |
 
 Available only for WGBS, RRBS, and TBS. See
 [Bisulfite conversion](../simulation/customize.md#bisulfite-conversion)
@@ -236,8 +236,8 @@ rules.
 
 | Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| `--fragment-summary` | Flag | Off | Adds compact fragment metadata to BAM records |
-| `--fragment-realization` | Flag | Off | Adds complete-fragment methylation and conversion states to BAM records |
+| `--fragment-summary` | — | Off | Adds compact fragment metadata to BAM records |
+| `--fragment-realization` | — | Off | Adds complete-fragment methylation and conversion states to BAM records |
 
 Both options require BAM. Fragment realization is available only for
 bisulfite assays and implies fragment summaries. See
@@ -247,9 +247,9 @@ bisulfite assays and implies fragment summaries. See
 
 | Option | Value | Default | Description |
 | --- | --- | --- | --- |
-| `--save-methdb` | Flag | Off | Writes the methylation profile to MethDB with embedded variants |
-| `--save-vcf` | Flag | Off | Writes the prepared, phased variant set to VCF |
-| `--save-truth` | Flag | Off | Writes the variant set and, for bisulfite assays, the methylation profile to disk |
+| `--save-methdb` | — | Off | Writes the methylation profile to MethDB with embedded variants |
+| `--save-vcf` | — | Off | Writes the prepared, phased variant set to VCF |
+| `--save-truth` | — | Off | Writes the variant set and, for bisulfite assays, the methylation profile to disk |
 
 `--save-methdb` is available only for bisulfite assays. For non-bisulfite
 assays, `--save-truth` exports only the prepared, phased variant set as VCF.
@@ -384,10 +384,10 @@ bsreadsim validate \
 | `--asm` | CGmapTools ASS path | — | Validates ASS rows and their linked variants and targets |
 | `--asm-bed` | ASM BED path | — | Validates ASM BED rows and their linked variants and targets |
 | `--seed-phase` | uint64 | `0` | Sets deterministic phase for unphased VCF or inferred ASM heterozygotes |
-| `--cpg-only` | Flag | Off | Checks ASM targets under a CG-only methylation domain |
-| `--pool-meth` | Flag | Off | Requires a selected text profile with at least one defined probability |
-| `--json` | Flag | Off | Emits the validation summary as JSON instead of text |
-| `--strict` | Flag | Off | Exits nonzero if an MNP, complex replacement, or indel over four bases would be skipped |
+| `--cpg-only` | — | Off | Checks ASM targets under a CG-only methylation domain |
+| `--pool-meth` | — | Off | Requires a selected text profile with at least one defined probability |
+| `--json` | — | Off | Emits the validation summary as JSON instead of text |
+| `--strict` | — | Off | Exits nonzero if an MNP, complex replacement, or indel over four bases would be skipped |
 
 A VCF, methylation profile, or ASM file may cover any subset of reference
 contigs. For example, two covered contigs in a 25-contig FASTA are reported as
@@ -424,7 +424,7 @@ Build destinations must be new files in existing parent directories.
 | `--indel-extension-probability` | Float in `[0, 1]` | `0.15` | Sets extension probability for generated indels, up to four bases |
 | `--seed-mut` | uint64 | `0` | Sets the de novo mutation seed |
 | `--seed-phase` | uint64 | `0` | Sets the seed for unphased VCF heterozygotes |
-| `--homozygous-only` | Flag | Off | Forces every generated event onto both haplotypes |
+| `--homozygous-only` | — | Off | Forces every generated event onto both haplotypes |
 
 `--vcf` and `--mutation-rate` are mutually exclusive. Indel controls,
 `--seed-mut`, and `--homozygous-only` affect generated events only. The
@@ -463,8 +463,8 @@ these additional options:
 | `--beta-chh` | `a,b` | `0.01,0.05` | Sets the CHH-site Beta parameters |
 | `--meth-model` | `bernoulli` or `bilstm` | `bernoulli` | Is accepted for configuration compatibility but does not change MethDB output |
 | `--seed-meth` | uint64 | `0` | Sets the methylation-probability seed |
-| `--cpg-only` | Flag | Off | Omits CHG and CHH sites from the prepared profile |
-| `--pool-meth` | Flag | Off | Resamples text-profile values by contig and context |
+| `--cpg-only` | — | Off | Omits CHG and CHH sites from the prepared profile |
+| `--pool-meth` | — | Off | Resamples text-profile values by contig and context |
 
 Choose at most one baseline methylation input and at most one ASM input.
 `--pool-meth` requires a text profile. `build methdb` does not accept MethDB as
@@ -490,7 +490,7 @@ controls and these additional options:
 | `--insert-max` | uint32 | `1000` | Sets the maximum retained restriction-fragment length |
 | `--insert-sd` | Non-negative number | `25` | Is accepted for consistency but does not change the candidate BED |
 | `--max-ambiguous-fraction` | Float in `[0, 1]` | `0.05` | Sets the maximum allowed `N` fraction in each candidate read |
-| `--single-end` | Flag | Off | Validates one read per candidate instead of two |
+| `--single-end` | — | Off | Validates one read per candidate instead of two |
 
 The reference, variant source and focused seeds, cut sites, read layout and
 length, insert bounds, and ambiguity threshold define candidate identities.
@@ -509,7 +509,7 @@ later RRBS run. After external scoring, load the file with
 | --- | --- | --- | --- |
 | `-i`,<br>`--input` | MethDB path | Required | Loads the source MethDB |
 | `-o`,<br>`--output` | New `.bed.gz` or `.bed` path | Required | Sets the new extended BED output path |
-| `--no-compression` | Flag | Off | Writes plain extended BED |
+| `--no-compression` | — | Off | Writes plain extended BED |
 
 ??? info "Details"
 
@@ -527,7 +527,7 @@ Normal simulations and artifact builds should omit them.
 | Option | Value | Default | Description |
 | --- | --- | --- | --- |
 | `--core` | Executable path | Bundled `htsim-core` | Overrides the core for every `run`, `validate`, and `build` command and for `export methdb` |
-| `--no-update-variant-boundaries` | Flag | Off | Disables context updates; variant-aware bisulfite preparation rejects it |
+| `--no-update-variant-boundaries` | — | Off | Disables context updates; variant-aware bisulfite preparation rejects it |
 
 `--no-update-variant-boundaries` is available only for `run wgbs`, `run rrbs`,
 `run tbs`, and `build methdb`. It is not accepted by the non-bisulfite run
