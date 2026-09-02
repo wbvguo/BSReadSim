@@ -23,7 +23,7 @@ htmlcov/
 
 # Human-owned local development material (durable; requires backup outside Git)
 /dev/
-/data/run/
+/data/runs/
 
 # Agent-owned experiments, worktrees, runs, and generated artifacts
 /workspace/
