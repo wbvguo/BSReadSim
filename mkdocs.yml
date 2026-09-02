@@ -70,7 +70,7 @@ nav:
   - Outputs: outputs/index.md
   - Reference:
       - CLI reference: reference/cli.md
-      - Input formats: reference/formats.md
+      - File formats: reference/formats.md
       - Troubleshoot: help/troubleshoot.md
 
 # Exact contracts and advanced guides stay outside the global navigation.

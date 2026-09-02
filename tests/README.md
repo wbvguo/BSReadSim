@@ -10,8 +10,9 @@ Everything here is a maintained correctness contract for the current product.
 C++ unit tests owned by the native core live under `htsim/tests/` and use the
 same root CMake/CTest entry point as these suites.
 
-Exploratory tests, retired fixtures, and large test data belong under `dev/`,
-not in this directory.
+Human-maintained exploratory tests and large source data belong under `dev/`.
+Agent experiments and their generated data belong in a dated Git worktree
+under `workspace/worktree/`, not in this directory.
 
 ## Running the tests
 
@@ -25,5 +26,7 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-Individual test modules assume the package under test is already importable;
-they never modify `sys.path` themselves.
+Individual test modules assume the package under test is already importable.
+Some cross-language integration scripts also add the repository root to
+`sys.path` so they can import shared helpers from `tests/`; the package itself
+still comes from the isolated `PYTHONPATH` configured by CMake/CTest.

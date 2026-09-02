@@ -15,6 +15,7 @@ from bsreadsim.cli import (
     build_parser,
     build_rrbs_document,
     build_run_document,
+    build_validate_document,
     build_variant_document,
 )
 from bsreadsim.run.config import normalize_run_config
@@ -55,18 +56,39 @@ def run_module_without_site_packages(*arguments: str) -> subprocess.CompletedPro
 
 class CommandLineTests(unittest.TestCase):
     def test_version_and_top_level_help_are_lightweight(self) -> None:
-        result = run_module_without_site_packages("--version")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), "bsreadsim {}".format(__version__))
+        for option in ("-v", "--version"):
+            with self.subTest(option=option):
+                result = run_module_without_site_packages(option)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(
+                    result.stdout.strip(), "bsreadsim {}".format(__version__)
+                )
 
         help_result = run_module("--help")
         self.assertEqual(help_result.returncode, 0, help_result.stderr)
         self.assertIn("run", help_result.stdout)
+        self.assertIn("validate", help_result.stdout)
         self.assertIn("build", help_result.stdout)
         self.assertIn("export", help_result.stdout)
         self.assertNotIn("get", help_result.stdout)
         self.assertNotIn("resources", help_result.stdout)
         self.assertNotIn("catalog", help_result.stdout)
+
+    def test_master_seed_uses_only_the_long_option(self) -> None:
+        accepted = build_parser().parse_args(
+            [
+                "run", "wgbs", "-r", "reference.fa", "-o", "output",
+                "-n", "2", "--seed", "42",
+            ]
+        )
+        self.assertEqual(accepted.seed, "42")
+
+        rejected = run_module_without_site_packages(
+            "run", "wgbs", "-r", "reference.fa", "-o", "output",
+            "-n", "2", "-s", "42",
+        )
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn("unrecognized arguments: -s 42", rejected.stderr)
 
     def test_public_help_uses_consistent_prepared_truth_terms(self) -> None:
         wgbs = run_module("run", "wgbs", "--help")
@@ -84,19 +106,9 @@ class CommandLineTests(unittest.TestCase):
         self.assertNotIn("variant catalog", help_text)
         self.assertNotIn("methylation catalog", help_text)
 
-    def test_export_test_fasta_copies_exact_resource_bytes(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            output = Path(temporary) / "test.fa"
-            copied = run_module_without_site_packages(
-                "export", "test-fasta", "-o", str(output)
-            )
-            self.assertEqual(copied.returncode, 0, copied.stderr)
-            self.assertTrue(output.read_bytes().startswith(b">chr10\n"))
-
     def test_export_requires_a_target_and_its_paths(self) -> None:
         for arguments in (
             ("export",),
-            ("export", "test-fasta"),
             ("export", "methdb"),
             ("export", "methdb", "-i", "sample.methdb"),
             ("export", "methdb", "-o", "sample.bed.gz"),
@@ -266,6 +278,30 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(document["mutation"]["rate"], 0)
         self.assertEqual(document["seeds"]["phasing"], "23")
         self.assertEqual(document["inputs"]["vcf"], "input.vcf.gz")
+
+    def test_validate_projects_only_supplied_coordinate_inputs(self) -> None:
+        arguments = build_parser().parse_args(
+            [
+                "validate", "-r", "reference.fa.gz",
+                "--vcf", "input.vcf.gz", "--cgmap", "input.CGmap.gz",
+                "--asm", "input.ass.gz", "--seed-phase", "23",
+                "--cpg-only", "--json", "--strict",
+            ]
+        )
+        document = build_validate_document(arguments, REPOSITORY_ROOT)
+        self.assertEqual(
+            document["inputs"],
+            {
+                "vcf": "input.vcf.gz",
+                "cgmap": "input.CGmap.gz",
+                "asm": "input.ass.gz",
+            },
+        )
+        self.assertEqual(document["mutation"]["rate"], 0)
+        self.assertEqual(document["seeds"]["phasing"], "23")
+        self.assertFalse(document["methylation"]["collect_non_cpg"])
+        self.assertTrue(arguments.json)
+        self.assertTrue(arguments.strict)
 
     def test_vcf_and_mutation_rate_are_mutually_exclusive(self) -> None:
         cases = (
@@ -564,6 +600,27 @@ class CommandLineTests(unittest.TestCase):
             CommandLineError, "--gc-profile requires --sampling gc"
         ):
             build_run_document(implicit_profile, REPOSITORY_ROOT)
+
+    def test_variable_gc_sampling_rejects_explicit_variant_sources(self) -> None:
+        common = [
+            "run", "wgbs", "-r", "reference.fa", "-o", "output", "-n", "10",
+            "--sampling", "gc", "--gc-profile", "gc.tsv",
+        ]
+        for variant_source in (
+            ("--vcf", "variants.vcf"),
+            ("--asm", "profile.ass"),
+            ("--asm-bed", "profile.asm.bed"),
+            ("--mutation-rate", "0.01"),
+        ):
+            with self.subTest(variant_source=variant_source):
+                arguments = build_parser().parse_args(
+                    [*common, *variant_source]
+                )
+                with self.assertRaisesRegex(
+                    CommandLineError,
+                    "variable-insert --sampling gc does not yet support variants",
+                ):
+                    build_run_document(arguments, REPOSITORY_ROOT)
 
     def test_rrbs_and_tbs_sampling_modes_are_unambiguous(self) -> None:
         rrbs_common = [

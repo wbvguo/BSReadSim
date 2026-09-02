@@ -21,9 +21,12 @@ htmlcov/
 *.so
 *.so.*
 
-# Product-development material and private working data
+# Human-owned local development material (durable; requires backup outside Git)
 /dev/
+
+# Agent-owned experiments, worktrees, runs, and generated artifacts
 /workspace/
+AGENTS.md
 
 # Notebook and editor state created outside the development workspace
 .ipynb_checkpoints/

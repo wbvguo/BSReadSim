@@ -26,11 +26,10 @@ controls do not change a BED row's relative score mass.
 
 ## Sampling
 
-In this mode every score must be an exact integer from `0` through
-`4,294,967,295`. Decimal forms such as `1.0` and `1e3` are accepted when they
-represent an integer exactly. A score of zero keeps the row valid but prevents
-it from being selected. The eligible score total on each contig must also fit
-that range.
+In this mode every score must represent a uint32 value. Decimal forms such as
+`1.0` and `1e3` are accepted when they represent an integer exactly. A score of
+zero keeps the row valid but prevents it from being selected. The eligible
+score total on each contig must also fit uint32.
 
 Scores are relative and need not sum to one. Multiplying all positive scores
 by the same constant leaves the distribution unchanged. At least one eligible

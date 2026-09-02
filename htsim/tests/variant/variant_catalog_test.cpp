@@ -226,6 +226,52 @@ void test_equal_vcf_positions_are_allowed_for_distinct_normalized_events()
             "equal-POS VCF rows did not normalize into canonical order");
 }
 
+void test_unsupported_variant_shapes_are_skipped()
+{
+    const std::string text =
+        "##fileformat=VCFv4.3\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n"
+        "chr1\t2\tkept-1\tC\tT\t.\tPASS\t.\tGT\t0|1\n"
+        "chr1\t5\tcomplex-insertion\tC\tTCGA\t.\tPASS\t.\tGT\t0|1\n"
+        "chr1\t9\tmnp\tAC\tGT\t.\tPASS\t.\tGT\t1|1\n"
+        "chr1\t13\tlong-insertion\tA\tACGTAC\t.\tPASS\t.\tGT\t0|1\n"
+        "chr1\t14\tlong-deletion\tCAAAAA\tC\t.\tPASS\t.\tGT\t1|1\n"
+        "chr1\t20\tkept-2\tT\tA\t.\tPASS\t.\tGT\t1|0\n";
+    TempFile file;
+    const VariantFile variants = load(bytes_of(text), file);
+    require(variants.variant_count() == 2U
+                && variants.row_count() == 6U
+                && variants.input_contig_count() == 1U
+                && variants.reference_genotype_count() == 0U
+                && variants.skipped_mnp_count() == 1U
+                && variants.skipped_complex_replacement_count() == 1U
+                && variants.skipped_long_indel_count() == 2U
+                && variants.skipped_unsupported_count() == 4U
+                && variants.variants(0).size() == 2U
+                && variants.variants(0)[0].id == "kept-1"
+                && variants.variants(0)[1].id == "kept-2",
+            "unsupported VCF accounting or filtering changed");
+}
+
+void test_four_base_indels_are_retained()
+{
+    const std::string text =
+        "##fileformat=VCFv4.3\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n"
+        "chr1\t1\tins-4\tA\tAACGT\t.\tPASS\t.\tGT\t0|1\n"
+        "chr1\t5\tdel-4\tACGTA\tA\t.\tPASS\t.\tGT\t1|0\n";
+    TempFile file;
+    const VariantFile variants = load(bytes_of(text), file);
+    require(variants.variant_count() == 2U
+                && variants.variants(0)[0].kind == VariantKind::insertion
+                && variants.variants(0)[0].alt_bases.size() == 4U
+                && variants.variants(0)[1].kind == VariantKind::deletion
+                && variants.variants(0)[1].ref_bases.size() == 4U,
+            "four-base VCF indel was skipped");
+    (void)ContigVariants(
+        encode("ACGTACGTACGTACGTACGT"), variants.variants(0), 0);
+}
+
 void test_file_rejections()
 {
     const std::string header =
@@ -244,8 +290,6 @@ void test_file_rejections()
         header + "chr1\t1\t.\ta\tC\t.\tPASS\t.\tGT\t0|1\n",
         header + "chr1\t1\t.\tA\tC\t.\tPASS\t.\tDP\t4\n",
         header + "chr1\t1\t.\tA\tC\t.\tPASS\t.\tGT\t0|2\n",
-        header + "chr1\t1\t.\tAC\tGT\t.\tPASS\t.\tGT\t0|1\n",
-        header + "chr1\t1\t.\tA\tACGTAC\t.\tPASS\t.\tGT\t0|1\n",
         header
             + "chr1\t2\t.\tC\tT\t.\tPASS\t.\tGT\t0|1\n"
               "chr1\t2\t.\tC\tA\t.\tPASS\t.\tGT\t0|1\n",
@@ -327,6 +371,8 @@ int main()
         test_normalization_phasing_and_reference_validation();
         test_gzip_snapshot_and_format_versions();
         test_equal_vcf_positions_are_allowed_for_distinct_normalized_events();
+        test_unsupported_variant_shapes_are_skipped();
+        test_four_base_indels_are_retained();
         test_file_rejections();
         test_typed_catalog_rejections();
         return EXIT_SUCCESS;

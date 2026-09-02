@@ -14,13 +14,16 @@ conversion while retaining variants, quality scores, and sequencing errors.
 ## Source layout
 
 `htsim/src` is intentionally flat. Each implementation domain owns one public
-header and one source file:
+header and one or more source files; most domains use one source file, while
+MethDB keeps snapshot serialization in a separate implementation file:
 
 - `core.{h,cpp}`: command-line parsing and top-level orchestration
 - `bam.{h,cpp}`: strict streaming SAM-to-BAM serialization through HTSlib
 - `variant.{h,cpp}`: variants, mutations, and haplotype projection
 - `reference.{h,cpp}`: FASTA loading and immutable contig storage
-- `methdb.{h,cpp}`: methylation sites, CGmap/bedMethyl, ASM/ASM BED, and diploid MethDB catalogs
+- `methdb.h`, `methdb.cpp`, and `methdb_snapshot.cpp`: methylation sites,
+  CGmap/bedMethyl, ASM/ASM BED, diploid catalogs, and MethDB snapshot
+  serialization
 - `fragment.{h,cpp}`: allocation, insert lengths, and fragment construction
 - `wgbs.{h,cpp}`: reference and haplotype-aware WGBS selection
 - `rrbs.{h,cpp}`: restriction-site discovery, catalog, and sampling

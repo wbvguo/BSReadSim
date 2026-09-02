@@ -15,11 +15,29 @@ fix does not resolve it.
 
 ## Commands and setup
 
-### A command or option is not recognized
+### `bsreadsim` is not found
 
-Run `--help` at the same level as the failing command:
+Confirm that the environment containing BSReadSim is active and that its
+executable is on `PATH`:
 
 ```bash
+command -v bsreadsim
+python -m pip show bsreadsim
+bsreadsim --version
+```
+
+If `pip show` succeeds but `command -v` does not, the environment's script
+directory may be absent from `PATH`, or the shell may be using a different
+environment. Activate the intended Conda or virtual environment, then retry.
+Do not mix a system `pip` with the Python executable from another environment.
+
+### A command or option is not recognized
+
+Check the installed version, then run `--help` at the same level as the
+failing command:
+
+```bash
+bsreadsim --version
 bsreadsim --help
 bsreadsim run --help
 bsreadsim run wgbs --help
@@ -33,9 +51,8 @@ run-configuration options are not accepted. See the
 
 ### Installation or a source build fails
 
-First confirm that the operating system and toolchain meet the
-[installation requirements](../getting-started/installation.md). Native
-Windows, macOS, and Linux ARM64 are not currently supported.
+First confirm that the platform, Python version, and toolchain meet the
+[installation requirements](../getting-started/installation.md).
 
 If the error reports missing HTSlib or htscodecs sources, initialize the
 pinned submodules from the repository root, then rerun the build:
@@ -52,18 +69,40 @@ HTSlib installation.
 ### A contig or coordinate does not match
 
 Use the first whitespace-delimited token in each FASTA header as the contig
-name. Names are case-sensitive: `1`, `chr1`, and `chr1 description` are not
-interchangeable.
+name. For example, the input name for `>chr1 description` is `chr1`, not the
+complete header. Names are case-sensitive, so `1` and `chr1` are different.
 
 Confirm that every coordinate-bearing input was prepared from the exact
 reference assembly used by the command. A matching contig name does not make
 coordinates from another assembly valid.
 
-### An input row is rejected
+An input may cover only a subset of FASTA contigs. Omitted contigs are not an
+error, but every present contig block must follow the relative FASTA order.
+Do not use lexical order when it would place `chr10` before `chr2`. Within a
+contig, VCF positions are nondecreasing; methylation and ASM target positions
+are strictly increasing and unique.
 
-Confirm that the option selects the file's actual serialization; a filename
+### An input file or row is rejected
+
+When supported, isolate the problem with `validate` before running a
+simulation:
+
+```bash
+bsreadsim validate \
+  -r reference.fa.gz \
+  --vcf variants.vcf.gz \
+  --strict
+```
+
+Supply the same VCF, text methylation-profile, and ASM options that need to be
+checked. `validate` does not directly accept MethDB, target-GC profiles, RRBS
+candidate BED, capture-target BED, or sequencing-model JSON; those files are
+checked by the command that consumes them. See
+[Validate inputs](../reference/cli.md#validate-inputs) for its complete scope.
+
+Confirm that each option selects the file's actual serialization; a filename
 suffix does not select the parser. Then compare the first rejected row with
-the relevant contract in [Input file formats](../reference/formats.md).
+the relevant contract in [File formats](../reference/formats.md).
 
 Check these points first:
 
@@ -76,6 +115,17 @@ Check these points first:
 
 BSReadSim rejects malformed or ambiguous rows rather than inferring their
 intended meaning.
+
+### VCF records are reported as skipped
+
+Normal validation accepts but skips MNPs, complex replacements, and indels
+longer than four bases after normalization. The validation summary reports
+their counts, and they do not appear in saved variant truth. Use `--strict`
+when any skipped VCF record should make validation fail.
+
+Malformed rows, unknown contigs, invalid genotypes, retained REF mismatches,
+and overlapping retained events are errors in both modes; `--strict` does not
+change those checks.
 
 ### Input options conflict
 
@@ -127,11 +177,15 @@ behavior.
 
 Whole-genome sampling requires `--sampling gc` and `--gc-profile PATH`
 together. With variable fragment lengths, GC-profile sampling does not support
-VCF, ASM, or de novo variants. Either remove those variant sources and use
-mutation rate zero, or select a fixed fragment length with `--insert-sd 0`.
+VCF, ASM, nonzero de novo mutation, or a MethDB containing embedded variants.
+Use a variant-free input world, or select a fixed fragment length with
+`--insert-sd 0`.
 
-If the error mentions a positive-probability GC bin with no eligible fragment,
-adjust the profile or fragment geometry. See the
+With a fixed insert length, every positive-probability bin must have an
+eligible fragment. A reference-only variable-insert run drops unreachable
+positive mass and renormalizes the remaining bins, but still fails when no
+positive-probability bin is reachable. Adjust the profile or fragment
+geometry when either condition fails. See the
 [target-GC profile contract](../reference/formats.md#target-gc-profile).
 
 ### An RRBS candidate file is rejected
@@ -170,7 +224,7 @@ JSON structure against the
 
 ## Outputs
 
-### Destination files already exist
+### Output cannot be created
 
 For `run`, the output directory may already exist, but none of the selected
 prefix's destination artifacts may exist. Choose another directory, change
@@ -178,7 +232,8 @@ prefix's destination artifacts may exist. Choose another directory, change
 
 For a standalone `build` command, the parent directory must already exist and
 the destination file must be new. BSReadSim never replaces an existing
-artifact.
+artifact. Also confirm that the destination is writable and has enough free
+space for the selected read and truth outputs.
 
 ### The manifest is missing
 
@@ -206,9 +261,9 @@ See [Annotated BAM](../outputs/index.md#annotated-bam) for the BAM contract and
 
 ### A run is slow or uses too much memory
 
-Start with `--threads 1`, then increase the thread budget while measuring CPU,
-memory, and disk throughput. BSReadSim distributes this single budget across
-the pipeline.
+Compare `-t 1`, `-t 2`, and `-t 4` while measuring CPU, memory, and disk
+throughput. `-t` sets the number of threads used by the pipeline; increasing
+it may also increase memory use.
 
 Omit `--fragment-realization` when complete-fragment BAM truth is unnecessary.
 For compressed FASTQ, a lower `--gzip-level` reduces CPU work at the cost of

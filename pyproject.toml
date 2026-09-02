@@ -57,15 +57,7 @@ where = ["src"]
 namespaces = false
 
 [tool.setuptools.package-data]
-bsreadsim = [
-  "run-config.schema.json",
-  "_licenses/*.txt",
-  "data/registry.json",
-  "data/example/*",
-  "data/models/**/*",
-  "data/profiles/**/*",
-  "data/licenses/**/*",
-]
+bsreadsim = ["run-config.schema.json"]
 
 [tool.setuptools.exclude-package-data]
 bsreadsim = ["cext/*.c", "cext/*.h"]

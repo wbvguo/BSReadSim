@@ -150,6 +150,13 @@ void generate_variant_catalog_vcf(
     const CoreConfig &config,
     std::ostream &sink);
 
+// Validate the reference and any VCF, methylation-profile, and ASM inputs
+// against the same native boundaries used by generation, then emit one JSON
+// summary. Input files may cover any non-empty subset of reference contigs.
+void validate_inputs(
+    const CoreConfig &config,
+    std::ostream &sink);
+
 } // namespace htsim::core
 
 #endif // HTSIM_CORE_H

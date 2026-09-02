@@ -1460,6 +1460,185 @@ void generate_variant_catalog_vcf(
     }
 }
 
+void validate_inputs(
+    const CoreConfig &config,
+    std::ostream &sink)
+{
+    try {
+        require_generation_environment(config);
+        if (config.methdb_path || config.methdb_output_path) {
+            throw CoreGeneratorError(
+                "input validation accepts text inputs, not MethDB snapshots");
+        }
+        if (config.mutation_rate != 0.0) {
+            throw CoreGeneratorError(
+                "input validation does not generate de novo mutations");
+        }
+
+        reference::ReferenceSnapshot snapshot(config.reference_path);
+        const auto &catalog = snapshot.catalog();
+        std::uint64_t reference_bases = 0U;
+        for (const reference::ContigMetadata &contig : catalog) {
+            if (contig.length > std::numeric_limits<std::uint32_t>::max()) {
+                throw CoreGeneratorError(
+                    "input validation requires every contig length <= UINT32_MAX");
+            }
+            reference_bases = checked_add(
+                reference_bases, contig.length, "reference");
+        }
+
+        std::unique_ptr<variant::VariantFile> variant_file;
+        if (config.vcf_path) {
+            variant_file = std::make_unique<variant::VariantFile>(
+                *config.vcf_path, catalog, config.phasing_seed);
+        }
+
+        std::unique_ptr<methdb::CgmapProfile> methylation_profile;
+        const std::string *profile_path = nullptr;
+        const char *profile_name = nullptr;
+        auto profile_format = methdb::MethylationProfileFormat::cgmap;
+        if (config.cgmap_path) {
+            profile_path = &*config.cgmap_path;
+            profile_name = "cgmap";
+        } else if (config.bed_methyl_path) {
+            profile_path = &*config.bed_methyl_path;
+            profile_name = "bedmethyl";
+            profile_format = methdb::MethylationProfileFormat::bed_methyl;
+        } else if (config.methbg_path) {
+            profile_path = &*config.methbg_path;
+            profile_name = "methbg";
+            profile_format = methdb::MethylationProfileFormat::methbg;
+        } else if (config.methbed_path) {
+            profile_path = &*config.methbed_path;
+            profile_name = "methbed";
+            profile_format = methdb::MethylationProfileFormat::methbed;
+        }
+        if (profile_path != nullptr) {
+            methylation_profile = std::make_unique<methdb::CgmapProfile>(
+                *profile_path, catalog, profile_format);
+            if (config.cgmap_pool
+                && methylation_profile->defined_probability_count() == 0U) {
+                throw CoreGeneratorError(
+                    "methylation-profile pooling requires at least one defined probability");
+            }
+        }
+
+        std::unique_ptr<methdb::AsmProfile> asm_profile;
+        const char *asm_name = nullptr;
+        if (config.asm_path || config.asm_bed_path) {
+            const bool asm_bed = config.asm_bed_path.has_value();
+            asm_name = asm_bed ? "asm-bed" : "ass";
+            asm_profile = std::make_unique<methdb::AsmProfile>(
+                asm_bed ? *config.asm_bed_path : *config.asm_path,
+                catalog,
+                asm_bed
+                    ? methdb::AsmProfileFormat::bed
+                    : methdb::AsmProfileFormat::cgmaptools_ass);
+        }
+
+        std::uint64_t methylation_contigs = 0U;
+        std::uint64_t asm_contigs = 0U;
+        snapshot.visit_contigs([&](const reference::Contig &contig) {
+            std::vector<methdb::CgmapRecord> methylation_records;
+            if (methylation_profile) {
+                methylation_records = methylation_profile->records(contig);
+                if (!methylation_records.empty()) {++methylation_contigs;}
+            }
+
+            std::vector<methdb::AsmRecord> asm_records;
+            if (asm_profile) {
+                asm_records = asm_profile->records(contig);
+                if (!asm_records.empty()) {++asm_contigs;}
+            }
+
+            std::vector<variant::Variant> inferred_variants;
+            const std::vector<variant::Variant> *variant_records = nullptr;
+            if (variant_file) {
+                variant_records = &variant_file->variants(contig.index);
+            } else if (asm_profile) {
+                inferred_variants = methdb::variants_from_asm(
+                    contig, asm_records, config.phasing_seed);
+                variant_records = &inferred_variants;
+            }
+            if (variant_records != nullptr) {
+                const variant::ContigVariants checked(
+                    contig.bases, *variant_records, contig.index);
+                if (!asm_records.empty()) {
+                    methdb::validate_asm_targets(
+                        contig,
+                        checked,
+                        config.collect_non_cpg,
+                        asm_records);
+                }
+            }
+        });
+
+        const auto write_digest = [&](const crypto::Sha256Digest &digest) {
+            static constexpr char digits[] = "0123456789abcdef";
+            for (const std::uint8_t byte : digest) {
+                sink.put(digits[byte >> 4U]);
+                sink.put(digits[byte & UINT8_C(0x0f)]);
+            }
+        };
+
+        sink << "{\"status\":\"valid\",\"reference\":{\"contigs\":"
+             << catalog.size() << ",\"bases\":" << reference_bases
+             << ",\"sha256\":\"";
+        write_digest(snapshot.file_sha256());
+        sink << "\"},\"vcf\":";
+        if (variant_file) {
+            sink << "{\"rows\":" << variant_file->row_count()
+                 << ",\"contigs\":" << variant_file->input_contig_count()
+                 << ",\"retained\":" << variant_file->variant_count()
+                 << ",\"reference_genotypes\":"
+                 << variant_file->reference_genotype_count()
+                 << ",\"skipped\":{\"total\":"
+                 << variant_file->skipped_unsupported_count()
+                 << ",\"mnp\":" << variant_file->skipped_mnp_count()
+                 << ",\"complex_replacement\":"
+                 << variant_file->skipped_complex_replacement_count()
+                 << ",\"long_indel\":"
+                 << variant_file->skipped_long_indel_count()
+                 << "},\"sha256\":\"";
+            write_digest(variant_file->file_sha256());
+            sink << "\"}";
+        } else {
+            sink << "null";
+        }
+
+        sink << ",\"methylation\":";
+        if (methylation_profile) {
+            sink << "{\"format\":\"" << profile_name
+                 << "\",\"rows\":" << methylation_profile->row_count()
+                 << ",\"contigs\":" << methylation_contigs
+                 << ",\"defined_probabilities\":"
+                 << methylation_profile->defined_probability_count()
+                 << ",\"sha256\":\"";
+            write_digest(methylation_profile->file_sha256());
+            sink << "\"}";
+        } else {
+            sink << "null";
+        }
+
+        sink << ",\"asm\":";
+        if (asm_profile) {
+            sink << "{\"format\":\"" << asm_name
+                 << "\",\"rows\":" << asm_profile->row_count()
+                 << ",\"contigs\":" << asm_contigs
+                 << ",\"sha256\":\"";
+            write_digest(asm_profile->file_sha256());
+            sink << "\"}";
+        } else {
+            sink << "null";
+        }
+        sink << "}\n";
+    } catch (const CoreGeneratorError &) {
+        throw;
+    } catch (const std::exception &error) {
+        throw CoreGeneratorError(error.what());
+    }
+}
+
 protocol::Trailer generate_core_stream(
     const CoreConfig &config,
     std::ostream &sink)
@@ -1593,6 +1772,10 @@ protocol::Trailer generate_core_stream(
             && (variant_file || asm_profile || generate_mutations
                 || (fixed_methdb
                     && fixed_methdb->has_diploid_contigs()));
+        if (variable_wgbs_insert && haplotype_gc_profile) {
+            throw CoreGeneratorError(
+                "variable-insert target GC does not yet support variants");
+        }
         std::vector<std::uint32_t> candidate_weights(catalog.size(), 0);
         std::vector<double> rrbs_profile_weights(catalog.size(), 0.0);
         std::vector<std::vector<std::uint32_t>> target_bin_counts(
@@ -1669,7 +1852,8 @@ protocol::Trailer generate_core_stream(
                     if (variable_wgbs_insert) {
                         if (planned_variants) {
                             throw CoreGeneratorError(
-                                "variable target GC escaped its variant gate");
+                                "variable-insert target GC does not yet "
+                                "support variants");
                         }
                         const wgbs::WgbsGcSampler target_domain(
                             contig.bases,
@@ -2135,7 +2319,8 @@ protocol::Trailer generate_core_stream(
                     if (variable_wgbs_insert) {
                         if (contig_variants) {
                             throw CoreGeneratorError(
-                                "variable target GC escaped its variant gate");
+                                "variable-insert target GC does not yet "
+                                "support variants");
                         }
                         profiled_variable_starts = std::make_unique<
                             wgbs::VariableWgbsGcSampler>(

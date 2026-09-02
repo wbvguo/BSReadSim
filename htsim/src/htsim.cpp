@@ -15,6 +15,7 @@ void print_help(std::ostream &output)
         << "       htsim-core rrbs-catalog [core contract options]\n"
         << "       htsim-core methdb-build [core contract options]\n"
         << "       htsim-core variant-catalog [core contract options]\n"
+        << "       htsim-core validate-inputs [core contract options]\n"
         << "       htsim-core methdb-export INPUT.methdb\n"
         << "       htsim-core --sam-to-bam LEVEL THREADS\n"
         << "Run bsreadsim --help for the supported public interface.\n"
@@ -117,6 +118,18 @@ int main(int argc, char *argv[])
             if (!std::cout) {
                 throw htsim::core::CoreGeneratorError(
                     "failed while flushing the variant VCF");
+            }
+            return 0;
+        }
+        if (argc >= 2 && argv != nullptr && argv[1] != nullptr
+            && std::string_view(argv[1]) == "validate-inputs") {
+            const htsim::core::CoreConfig config =
+                htsim::core::parse_core_config(argc - 1, argv + 1);
+            htsim::core::validate_inputs(config, std::cout);
+            std::cout.flush();
+            if (!std::cout) {
+                throw htsim::core::CoreGeneratorError(
+                    "failed while flushing the validation summary");
             }
             return 0;
         }

@@ -301,12 +301,24 @@ model::HaplotypeMask resolve_alt_haplotypes(
         : model::HaplotypeMask::haplotype_2;
 }
 
-Variant normalize_event(
+enum class NormalizationDisposition {
+    retained,
+    skipped_mnp,
+    skipped_complex_replacement,
+    skipped_long_indel,
+};
+
+struct NormalizationResult {
+    std::optional<Variant> event;
+    NormalizationDisposition disposition =
+        NormalizationDisposition::retained;
+};
+
+NormalizationResult normalize_event(
     std::uint32_t contig_index,
     std::uint32_t one_based_position,
     model::Bases reference,
     model::Bases alternate,
-    model::HaplotypeMask alt_haplotypes,
     std::uint64_t contig_length)
 {
     if (reference == alternate) {
@@ -352,17 +364,23 @@ Variant normalize_event(
     model::VariantKind kind = model::VariantKind::snv;
     if (normalized_ref.empty()) {
         if (normalized_alt.size() > maximum_indel_bases) {
-            throw VariantCatalogError("VCF insertion exceeds four bases");
+            return {std::nullopt,
+                    NormalizationDisposition::skipped_long_indel};
         }
         kind = model::VariantKind::insertion;
     } else if (normalized_alt.empty()) {
         if (normalized_ref.size() > maximum_indel_bases) {
-            throw VariantCatalogError("VCF deletion exceeds four bases");
+            return {std::nullopt,
+                    NormalizationDisposition::skipped_long_indel};
         }
         kind = model::VariantKind::deletion;
     } else if (normalized_ref.size() != 1U || normalized_alt.size() != 1U) {
-        throw VariantCatalogError(
-            "VCF subset rejects MNP and complex replacement variants");
+        return {
+            std::nullopt,
+            normalized_ref.size() == normalized_alt.size()
+                ? NormalizationDisposition::skipped_mnp
+                : NormalizationDisposition::skipped_complex_replacement,
+        };
     }
 
     const std::uint64_t normalized_start = original_start + prefix;
@@ -373,13 +391,16 @@ Variant normalize_event(
         throw VariantCatalogError("VCF normalized coordinates exceed uint32");
     }
     return {
-        contig_index,
-        static_cast<std::uint32_t>(normalized_start),
-        static_cast<std::uint32_t>(normalized_end),
-        kind,
-        std::move(normalized_ref),
-        std::move(normalized_alt),
-        alt_haplotypes,
+        Variant{
+            contig_index,
+            static_cast<std::uint32_t>(normalized_start),
+            static_cast<std::uint32_t>(normalized_end),
+            kind,
+            std::move(normalized_ref),
+            std::move(normalized_alt),
+            model::HaplotypeMask::both,
+        },
+        NormalizationDisposition::retained,
     };
 }
 
@@ -441,6 +462,7 @@ VariantFile::VariantFile(
         std::uint32_t previous_contig = 0;
         std::uint32_t previous_position = 0;
         bool have_previous_record = false;
+        std::vector<bool> input_contigs(reference_catalog.size(), false);
         std::unordered_set<std::string> used_variant_ids;
         snapshot.visit_hts([&](htsFile *file) {
             HtsLogGuard log_guard;
@@ -548,6 +570,14 @@ VariantFile::VariantFile(
                     previous_contig = contig_index;
                     previous_position = position;
                     have_previous_record = true;
+                    if (row_count_ == std::numeric_limits<std::uint64_t>::max()) {
+                        throw VariantCatalogError("VCF row count exceeds uint64");
+                    }
+                    ++row_count_;
+                    if (!input_contigs[contig_index]) {
+                        input_contigs[contig_index] = true;
+                        ++input_contig_count_;
+                    }
 
                     model::Bases reference = parse_allele(
                         record->d.allele[0], "REF");
@@ -556,6 +586,31 @@ VariantFile::VariantFile(
                     const Genotype genotype = parse_genotype(
                         header.get(), record.get(), genotype_buffer);
                     if (genotype.first == 0U && genotype.second == 0U) {
+                        ++reference_genotype_count_;
+                        continue;
+                    }
+
+                    NormalizationResult normalized = normalize_event(
+                        contig_index,
+                        position,
+                        std::move(reference),
+                        std::move(alternate),
+                        reference_catalog[contig_index].length);
+                    if (!normalized.event) {
+                        switch (normalized.disposition) {
+                        case NormalizationDisposition::skipped_mnp:
+                            ++skipped_mnp_count_;
+                            break;
+                        case NormalizationDisposition::skipped_complex_replacement:
+                            ++skipped_complex_replacement_count_;
+                            break;
+                        case NormalizationDisposition::skipped_long_indel:
+                            ++skipped_long_indel_count_;
+                            break;
+                        case NormalizationDisposition::retained:
+                            throw VariantCatalogError(
+                                "VCF normalization lost a retained event");
+                        }
                         continue;
                     }
 
@@ -569,15 +624,9 @@ VariantFile::VariantFile(
                         master_seed,
                         rng::Stage::haplotype,
                         static_cast<std::uint32_t>(contig_index));
-                    const auto mask = resolve_alt_haplotypes(
+                    Variant event = std::move(*normalized.event);
+                    event.alt_haplotypes = resolve_alt_haplotypes(
                         genotype, key, contig_events.size());
-                    Variant event = normalize_event(
-                        contig_index,
-                        position,
-                        std::move(reference),
-                        std::move(alternate),
-                        mask,
-                        reference_catalog[contig_index].length);
                     const std::uint64_t address = catalog_address(
                         contig_index, contig_events.size());
                     event.id = unique_variant_id(
@@ -635,6 +684,42 @@ const std::vector<Variant> &VariantFile::variants(
 std::uint64_t VariantFile::variant_count() const noexcept
 {
     return variant_count_;
+}
+
+std::uint64_t VariantFile::row_count() const noexcept
+{
+    return row_count_;
+}
+
+std::uint64_t VariantFile::input_contig_count() const noexcept
+{
+    return input_contig_count_;
+}
+
+std::uint64_t VariantFile::reference_genotype_count() const noexcept
+{
+    return reference_genotype_count_;
+}
+
+std::uint64_t VariantFile::skipped_mnp_count() const noexcept
+{
+    return skipped_mnp_count_;
+}
+
+std::uint64_t VariantFile::skipped_complex_replacement_count() const noexcept
+{
+    return skipped_complex_replacement_count_;
+}
+
+std::uint64_t VariantFile::skipped_long_indel_count() const noexcept
+{
+    return skipped_long_indel_count_;
+}
+
+std::uint64_t VariantFile::skipped_unsupported_count() const noexcept
+{
+    return skipped_mnp_count_ + skipped_complex_replacement_count_
+        + skipped_long_indel_count_;
 }
 
 const crypto::Sha256Digest &VariantFile::file_sha256() const noexcept

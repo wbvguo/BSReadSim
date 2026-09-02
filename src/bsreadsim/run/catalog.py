@@ -1,8 +1,9 @@
 """Immutable catalog orchestration through the htsim core."""
 
 from __future__ import annotations
-from contextlib import suppress
 
+from contextlib import suppress
+import json
 import os
 from pathlib import Path
 import struct
@@ -280,6 +281,63 @@ def export_variant_catalog(
     )
 
 
+def validate_inputs(
+    document: Mapping[str, object],
+    *,
+    base_directory: PathLike = ".",
+    core_executable: PathLike | None = None,
+) -> dict[str, object]:
+    """Validate text inputs through the native generation boundaries."""
+
+    loaded = normalize_run_config(document, base_directory)
+    if "methdb" in loaded.normalized["inputs"]:
+        raise CatalogError("input validation does not accept MethDB snapshots")
+    effective = loaded if loaded.master_seed is not None else loaded.with_master_seed(0)
+    prepared = prepare_run(effective)
+    try:
+        executable = resolve_core_executable(core_executable)
+    except CoreExecutableError as error:
+        raise CatalogError(str(error)) from error
+    base_argv = build_core_argv(
+        prepared,
+        str(uuid.uuid4()),
+        executable,
+        emit_details=False,
+    )
+    argv = (base_argv[0], "validate-inputs", *base_argv[1:])
+    try:
+        completed = subprocess.run(
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            text=True,
+            encoding="utf-8",
+        )
+    except OSError as error:
+        raise CatalogError("cannot run htsim input validation: {}".format(error)) from error
+    if completed.returncode != 0:
+        detail = completed.stderr.strip()
+        raise CatalogError(
+            "htsim input validation failed{}".format(
+                ": " + detail if detail else ""
+            )
+        )
+    try:
+        summary = json.loads(completed.stdout)
+    except (TypeError, ValueError) as error:
+        raise CatalogError(
+            "htsim input validation returned invalid JSON"
+        ) from error
+    if (
+        not isinstance(summary, dict)
+        or summary.get("status") != "valid"
+        or not isinstance(summary.get("reference"), dict)
+    ):
+        raise CatalogError("htsim input validation returned an invalid summary")
+    return summary
+
+
 def _export_catalog(
     prepared,
     output_path: PathLike,
@@ -386,4 +444,5 @@ __all__ = [
     "build_methdb_snapshot",
     "export_rrbs_catalog",
     "export_variant_catalog",
+    "validate_inputs",
 ]

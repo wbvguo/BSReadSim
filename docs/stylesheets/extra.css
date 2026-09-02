@@ -158,6 +158,45 @@
   width: 22%;
 }
 
+.cli-reference-page .md-typeset__scrollwrap {
+  margin-left: 0;
+  margin-right: 0;
+  overflow-x: visible;
+}
+
+.cli-reference-page .md-typeset__table {
+  padding-left: 0;
+  padding-right: 0;
+  width: 100%;
+}
+
+.cli-reference-page table:not([class]) {
+  line-height: 1.45;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.cli-reference-page table:not([class]) th:first-child:nth-last-child(4) {
+  width: 25%;
+}
+
+.cli-reference-page table:not([class]) th:nth-child(2):nth-last-child(3) {
+  width: 22%;
+}
+
+.cli-reference-page table:not([class]) th:nth-child(3):nth-last-child(2) {
+  width: 18%;
+}
+
+.cli-reference-page table:not([class]) th:nth-child(4):last-child {
+  width: 35%;
+}
+
+.cli-reference-page table:not([class]) code {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 .docs-hero {
   background: var(--md-code-bg-color);
   border: 0.05rem solid var(--md-default-fg-color--lightest);
@@ -341,6 +380,24 @@
   }
 
   .customize-page table:not([class]) th {
+    white-space: nowrap;
+  }
+
+  .cli-reference-page .md-typeset__scrollwrap {
+    overflow-x: hidden;
+  }
+
+  .cli-reference-page .md-typeset__table {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .cli-reference-page table:not([class]) {
+    display: table;
+    min-width: 40rem;
+  }
+
+  .cli-reference-page table:not([class]) th {
     white-space: nowrap;
   }
 

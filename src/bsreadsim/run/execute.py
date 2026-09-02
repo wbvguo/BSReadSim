@@ -119,7 +119,7 @@ class RunResult:
 
 @dataclass(frozen=True)
 class _ExecutionPlan:
-    """Internal stage allocation derived from one public thread budget."""
+    """Internal stage allocation derived from the requested thread count."""
 
     process_workers: int
     use_process_pool: bool
@@ -1214,7 +1214,10 @@ def _require_released_capabilities(config: Mapping[str, object]) -> None:
                 )
             fragments = _mapping(config, "fragments")
             if _uses_variable_insert(fragments) and (
-                "vcf" in inputs or mutation["rate"] != 0
+                "vcf" in inputs
+                or "asm" in inputs
+                or "asm_bed" in inputs
+                or mutation["rate"] != 0
             ):
                 raise PipelineError(
                     "variable-insert target GC does not yet support variants"

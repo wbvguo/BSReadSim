@@ -503,6 +503,27 @@ class PipelineTests(unittest.TestCase):
                 run_id=RUN_ID,
             )
 
+        (self.directory / "profile.ass").write_bytes(b"placeholder\n")
+        variable_asm = baseline_config()
+        variable_asm["inputs"] = {"asm": "profile.ass"}
+        variable_asm["fragments"].update(
+            {
+                "insert_min": 4,
+                "insert_mean": 5,
+                "insert_max": 6,
+                "insert_sd": 1,
+            }
+        )
+        variable_asm["coverage"] = document["coverage"]
+        with self.assertRaisesRegex(
+            PipelineError, "does not yet support variants"
+        ):
+            run_prepared(
+                self.prepared(variable_asm),
+                core_executable=self.directory / "missing-core",
+                run_id=RUN_ID,
+            )
+
         self.assertFalse((self.directory / "output").exists())
 
     def test_tbs_target_score_passes_only_its_technology_gate(self) -> None:

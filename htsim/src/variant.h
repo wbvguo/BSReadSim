@@ -41,8 +41,9 @@ struct Variant {
 
 // Verified text VCF snapshot projected into reference order. The supported
 // subset requires one diploid sample, biallelic A/C/G/T records, and GT alleles
-// 0 or 1. Unphased heterozygotes receive deterministic phase from the
-// haplotype RNG domain before they enter this catalog.
+// 0 or 1. MNPs, complex replacements, and indels longer than four bases are
+// validated but skipped. Unphased heterozygotes receive deterministic phase
+// from the haplotype RNG domain before they enter this catalog.
 class VariantFile {
 public:
     VariantFile(
@@ -51,13 +52,26 @@ public:
         std::uint64_t master_seed);
 
     const std::vector<Variant> &variants(std::uint32_t contig_index) const;
+    std::uint64_t row_count() const noexcept;
     std::uint64_t variant_count() const noexcept;
+    std::uint64_t input_contig_count() const noexcept;
+    std::uint64_t reference_genotype_count() const noexcept;
+    std::uint64_t skipped_mnp_count() const noexcept;
+    std::uint64_t skipped_complex_replacement_count() const noexcept;
+    std::uint64_t skipped_long_indel_count() const noexcept;
+    std::uint64_t skipped_unsupported_count() const noexcept;
     const crypto::Sha256Digest &file_sha256() const noexcept;
 
 private:
     crypto::Sha256Digest file_sha256_ = {};
     std::vector<std::vector<Variant>> variants_by_contig_;
+    std::uint64_t row_count_ = 0;
     std::uint64_t variant_count_ = 0;
+    std::uint64_t input_contig_count_ = 0;
+    std::uint64_t reference_genotype_count_ = 0;
+    std::uint64_t skipped_mnp_count_ = 0;
+    std::uint64_t skipped_complex_replacement_count_ = 0;
+    std::uint64_t skipped_long_indel_count_ = 0;
 };
 
 // Per-contig reference validation boundary. Construction verifies canonical

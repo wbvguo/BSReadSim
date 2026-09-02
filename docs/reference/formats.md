@@ -1,10 +1,12 @@
-# Input file formats
+# File formats
 
-This page defines the exact contracts for files read by BSReadSim, including
-VCF, MethDB, and reduced representation bisulfite sequencing (RRBS) candidate
-files that can be saved and reused. The command-line option selects the
-parser; the filename suffix does not. For example, a `.bed` file may be
-MethBED, bedMethyl, ASM BED, an RRBS candidate set, or a capture-target file.
+This page defines the exact contracts for structured files used by BSReadSim,
+including inputs and reusable VCF, MethDB, and reduced representation
+bisulfite sequencing (RRBS) candidate artifacts. For input files, the
+command-line option selects the parser; the input filename suffix does not.
+For example, a `.bed` file may be MethBED, bedMethyl, ASM BED, an RRBS
+candidate set, or a capture-target file. Output commands still enforce the
+suffixes documented in the [CLI reference](cli.md).
 
 For rules about combining inputs, see
 [CLI option combination rules](cli.md#option-combination-rules).
@@ -30,15 +32,27 @@ For how those inputs affect a simulation, see
   MethBG, use zero-based, half-open intervals.
 - Coordinate-bearing inputs must use the same reference build. Matching
   contig names alone do not make coordinates from different builds valid.
+- Each VCF, methylation profile, or ASM file may cover a subset of FASTA
+  contigs. Omitted contigs are valid. Depending on the input type, they
+  contribute no predefined variants, use generated methylation fallback, or
+  receive no ASM overrides. Contig blocks that are present must retain their
+  relative FASTA order.
 - Row-oriented formats use tabs between fields unless a section explicitly
   says that the file contains one value per line. Parsers reject malformed or
   ambiguous rows rather than guessing from the filename suffix.
+- VCF, methylation and ASM text profiles, target-GC profiles, capture-target
+  BED, and RRBS candidate BED use a 1 MiB decoded-line limit. LF and CRLF line
+  endings are accepted; a bare carriage return is rejected.
 
 Compression is part of the selected format contract:
 
-| Inputs | Accepted storage |
+| Format | Accepted storage |
 | --- | --- |
-| FASTA, VCF, methylation text profiles, ASM text profiles, target-GC profiles, capture-target BED | Plain text or gzip-compressed text |
+| Reference FASTA | Plain text or gzip-compressed text |
+| VCF | Plain text or gzip-compressed text |
+| MethBG, MethBED, bedMethyl, and CGmap | Plain text or gzip-compressed text |
+| ASM and ASM BED | Plain text or gzip-compressed text |
+| Target-GC profile and capture-target BED | Plain text or gzip-compressed text |
 | RRBS candidate BED | Plain text only |
 | Quality and error models | Uncompressed JSON only |
 | MethDB | Opaque, internally compressed binary; do not wrap it in gzip |
@@ -46,7 +60,15 @@ Compression is part of the selected format contract:
 Plain versus gzip text is detected from the file content, not from a `.gz`
 suffix.
 
-## Genome and variant inputs
+`bsreadsim validate` directly checks reference FASTA, VCF, the four text
+methylation profiles, ASM, and ASM BED without creating simulation output. It
+does not accept MethDB, target-GC profiles, RRBS candidate BED, capture-target
+BED, or sequencing-model JSON; those formats are checked when the applicable
+`run` or `export` command consumes them. Add `--json` for a machine-readable
+coverage and row-count summary, or `--strict` to reject VCF records that would
+otherwise be skipped.
+
+## Genome and variants { #genome-and-variant-inputs }
 
 ### Reference FASTA { #fasta }
 
@@ -64,9 +86,13 @@ TTNACCGGTA
 ```
 
 The contig names above are `chr1` and `chr2`. Names must be non-empty, valid
-UTF-8, and unique. Sequence may contain only A, C, G, T, and N, in either
-case. Every contig must contain at least one base. Wrapped sequence lines are
-accepted; empty lines and sequence before the first header are rejected.
+UTF-8, unique, and no longer than 1 MiB. Text after the first space or tab is
+an ignored description. Except for a tab separator, a header cannot contain
+ASCII control characters or DEL. Sequence may contain only A, C, G, T, and N,
+in either case. Every contig must contain at least one base. Wrapped sequence
+lines are accepted; empty lines and sequence before the first header are
+rejected. A reference used for simulation or artifact building must have each
+contig length representable as uint32.
 
 ### VCF { #vcf }
 
@@ -83,26 +109,40 @@ chr1	101	rs1	C	T	.	PASS	.	GT	0|1
 chr1	250	.	A	AG	.	PASS	.	GT	1|0
 ```
 
+The file must contain exactly one `##fileformat=VCFv4.2` or
+`##fileformat=VCFv4.3` declaration before one standard ten-column header.
+After that header, every physical line must be a data row; blank lines and
+additional header or comment lines are rejected. A header-only VCF is valid
+and represents an empty variant set.
+
 BSReadSim accepts:
 
 - exactly one named sample and ten tab-separated columns;
 - rows in FASTA contig order and nondecreasing one-based `POS`;
-- one ALT allele and a diploid `GT` containing only `0` and `1`;
+- one ALT allele and a diploid `GT` containing only `0` and `1`; `FORMAT` and
+  the sample must have matching field counts and contain exactly one `GT`;
 - uppercase A, C, G, or T in the normalized event, although a shared indel
   anchor may be `N`; and
 - an SNV or a pure insertion or deletion of at most four bases after
   normalization.
 
-For non-reference genotypes, MNPs, complex replacements, duplicate normalized
-events, and overlapping normalized events are rejected. Distinct,
-non-overlapping normalized events may share a source `POS`. Their REF bases
-and coordinates are checked against the FASTA. Missing genotypes,
-multiallelic records, and symbolic alleles are always rejected.
+MNPs, complex replacements, and pure indels longer than four bases are
+syntax-checked and participate in input-order validation, but they are skipped
+and do not appear in saved variant truth. They must use valid alleles and
+genotypes and have an in-range REF interval, but they are skipped before exact
+REF matching and retained-event conflict checks.
+
+Among retained non-reference events, duplicate or overlapping normalized
+events are rejected. Distinct, non-overlapping normalized events may share a
+source `POS`. Their exact REF bases and coordinates are checked against the
+FASTA. Missing genotypes, multiallelic records, and symbolic alleles are always
+rejected.
 
 A `0/0` row is syntax-checked and participates in input-order validation, but
 creates no variant. It is discarded before event normalization and REF-allele
 matching against the FASTA. FILTER and INFO values do not silently remove
-rows. A header-only VCF is valid and represents an empty variant set.
+rows. Empty or `.` IDs receive deterministic generated IDs; repeated IDs are
+disambiguated in saved variant truth.
 
 Phased `0|1` and `1|0` assignments are preserved, while `1|1` applies ALT
 to both haplotypes. `--seed-phase` assigns unphased heterozygous variants.
@@ -110,11 +150,11 @@ Saved variant truth is a normalized, phased, BGZF-compressed VCF. Reuse it
 with `--vcf`; see [Outputs](../outputs/index.md#saved-truth-artifacts) for the
 saved artifact.
 
-## Methylation profile inputs
+## Methylation profiles { #methylation-profile-inputs }
 
 Choose the parser that matches the actual input:
 
-| Input | Select with | Purpose |
+| Profile source | Select with | Purpose |
 | --- | --- | --- |
 | Site-level methylation values | `--cgmap`, `--bedmethyl`, `--methbed`, or `--methbg` | Use values at listed sites, or use them as context pools with `--pool-meth`; otherwise unlisted sites use fallback generation |
 | Prepared snapshot | `--methdb` | Reuse a complete prepared methylation profile and its embedded prepared variant set |
@@ -125,10 +165,10 @@ fallback and pooling behavior.
 
 All four text-profile parsers accept plain or gzip-compressed input and ignore
 empty lines and lines beginning with `#`. MethBG, MethBED, and bedMethyl also
-ignore UCSC directives beginning with `track ` or `browser `; CGmap does not
-have a header-row exception. Imported probabilities are stored as uint16
-UNORM values, using `round(probability * 65535)`. Each file must contain at
-least one data row.
+ignore UCSC directives beginning with `track ` or `browser `. A CGmap header
+is ignored only when it begins with `#`; an unprefixed header is rejected.
+Imported probabilities are stored as uint16 UNORM values, using
+`round(probability * 65535)`. Each file must contain at least one data row.
 
 ### MethBG { #methbg }
 
@@ -141,12 +181,12 @@ chr1	100	101	0.8234
 chr1	205	206	0.14
 ```
 
-| Column | Requirement |
-| --- | --- |
-| `chrom` | Exact FASTA contig name |
-| `chromStart` | Zero-based target position |
-| `chromEnd` | Exactly `chromStart + 1` |
-| `probability` | Methylation level in `[0,1]`, used as the site's methylation probability |
+| Column | Name | Requirement |
+| ---: | --- | --- |
+| 1 | `chrom` | Exact FASTA contig name |
+| 2 | `chromStart` | Zero-based target position |
+| 3 | `chromEnd` | Exactly `chromStart + 1` |
+| 4 | `probability` | Methylation level in `[0,1]`, used as the site's methylation probability |
 
 Rows follow FASTA contig order and strictly increasing positions within each
 contig. Every interval must resolve to an eligible cytosine context; base,
@@ -198,18 +238,20 @@ chr1	100	101	m6C	82	+	100	101	0	100	82
 | 2 | `chromStart` | Zero-based target position |
 | 3 | `chromEnd` | Exactly `chromStart + 1` |
 | 4 | `name` | Non-empty label |
-| 5 | `score` | Unsigned 32-bit decimal integer |
+| 5 | `score` | uint32 |
 | 6 | `strand` | `+`, `-`, or `.` |
 | 7 | `thickStart` | Exactly `chromStart` |
 | 8 | `thickEnd` | Exactly `chromEnd` |
 | 9 | `itemRgb` | `0` or an `R,G,B` triple with components in `[0,255]` |
-| 10 | `validCoverage` | Unsigned 32-bit decimal integer |
+| 10 | `validCoverage` | uint32 |
 | 11 | `percentModified` | Finite decimal in `[0,100]`; probability is `percentModified / 100` |
-| 12–18 | BED9+9 counts | Seven unsigned 32-bit decimal integers: `N_mod`, `N_canonical`, `N_other_mod`, `N_delete`, `N_fail`, `N_diff`, and `N_nocall` |
+| 12–18 | BED9+9 counts | Seven uint32 values: `N_mod`, `N_canonical`, `N_other_mod`, `N_delete`, `N_fail`, `N_diff`, and `N_nocall` |
 
 For BED9+9, modified, canonical, and other-modification counts must sum to
-`validCoverage`. Rows follow FASTA order and strictly increasing positions;
-coordinates, strand, and cytosine context are checked against the reference.
+`validCoverage`. Only `percentModified` determines the imported methylation
+probability; `score`, coverage, and count fields are validated metadata. Rows
+follow FASTA order and strictly increasing positions; coordinates, strand,
+and cytosine context are checked against the reference.
 
 ### CGmap { #cgmap }
 
@@ -224,19 +266,21 @@ chr1	C	101	CG	CG	0.82	82	100
 chr1	G	102	CG	CG	na	0	0
 ```
 
-| Column | Requirement |
-| --- | --- |
-| `CHR` | Exact FASTA contig name |
-| `NUC` | `C` or `G` |
-| `POS` | Positive one-based coordinate |
-| `CONTEXT` | `CG`, `CHG`, or `CHH` |
-| `DINUC` | `CA`, `CC`, `CG`, or `CT` in cytosine orientation |
-| `METH` | Methylation level in `[0,1]`, or lowercase `na` for fallback generation |
-| `MC` | Methylated count from `0` through `4,294,967,295` |
-| `NC` | Total count in the same range, satisfying `MC <= NC` |
+| Column | Name | Requirement |
+| ---: | --- | --- |
+| 1 | `CHR` | Exact FASTA contig name |
+| 2 | `NUC` | `C` or `G` |
+| 3 | `POS` | Positive one-based coordinate |
+| 4 | `CONTEXT` | `CG`, `CHG`, or `CHH` |
+| 5 | `DINUC` | `CA`, `CC`, `CG`, or `CT` in cytosine orientation |
+| 6 | `METH` | Methylation level in `[0,1]`, or lowercase `na` for fallback generation |
+| 7 | `MC` | uint32 methylated count |
+| 8 | `NC` | uint32 total count satisfying `MC <= NC` |
 
 Rows follow FASTA contig order and strictly increasing positions. Coordinates,
 strand, context, and dinucleotide are checked against the complete reference.
+`METH` is the authoritative imported probability; `MC` and `NC` are validated
+metadata, and their ratio is not compared with `METH`.
 
 ### MethDB { #methdb }
 
@@ -257,8 +301,9 @@ requirements. See
 [CLI option combination rules](cli.md#option-combination-rules).
 
 **Inspect:** Use `bsreadsim export methdb` for a human-readable extended BED
-projection. The export is for inspection and cannot replace the original
-snapshot.
+projection. Its `methdb-bed-v2` layout is not the `--methbed` input format. The
+export is for inspection and cannot replace the original snapshot or be loaded
+with `--methbed`.
 
 MethDB is an opaque binary artifact and must not be edited or concatenated.
 The file begins with the `methdb` magic and version byte `2`; version 2 is
@@ -283,7 +328,7 @@ the only accepted representation.
     `round(probability * 65535)`, with maximum quantization error
     `1/131070`. At runtime only the active contig is materialized.
 
-## Allele-specific methylation inputs { #allele-specific-methylation-inputs }
+## Allele-specific methylation { #allele-specific-methylation-inputs }
 
 Choose either ASM or ASM BED. Each retained row links one
 methylation site to one heterozygous SNV and provides allele-specific
@@ -326,8 +371,9 @@ Each support field must contain at least one read in total. Only `TRUE` rows
 become overrides; a file with no `TRUE` rows is rejected. `FALSE` rows still
 undergo field, range, coordinate-boundary, and contig-order checks, but they
 are discarded before reference/context and haplotype-link validation.
-`Allele1` is not assumed to be REF; BSReadSim maps both values to REF and ALT.
-Evidence counts, p-value, and FDR do not alter the supplied probabilities.
+Exactly one of `Allele1` and `Allele2` must equal `Ref`; `Allele1` is not
+assumed to be REF. BSReadSim maps both values to REF and ALT. Evidence counts,
+p-value, and FDR do not alter the supplied probabilities.
 
 ### ASM BED { #asm-bed }
 
@@ -351,17 +397,18 @@ data row is required.
 | 10 | `ALT` | One different uppercase A/C/G/T base |
 | 11 | `REF_METH` | REF-allele methylation probability in `[0,1]` |
 | 12 | `ALT_METH` | ALT-allele methylation probability in `[0,1]` |
-| 13 | `REF_SUPPORT` | Optional `methylated-unmethylated` uint32 counts with positive total |
-| 14 | `ALT_SUPPORT` | Optional `methylated-unmethylated` uint32 counts with positive total |
-| 15 | `P_VALUE` | Optional finite probability in `[0,1]` |
-| 16 | `Q_VALUE` | Optional finite probability in `[0,1]` |
+| 13 | `REF_SUPPORT` | BED6+10 only: `methylated-unmethylated` uint32 counts with positive total |
+| 14 | `ALT_SUPPORT` | BED6+10 only: `methylated-unmethylated` uint32 counts with positive total |
+| 15 | `P_VALUE` | BED6+10 only: finite probability in `[0,1]` |
+| 16 | `Q_VALUE` | BED6+10 only: finite probability in `[0,1]` |
 
 ```text { .no-copy }
 chr1	100	101	asm-1	600	+	149	150	A	T	0.2	0.8	2-8	8-2	0.001	0.005
 ```
 
-Evidence fields appear as a complete group and do not override `REF_METH` or
-`ALT_METH`. For consistent browser display, producers may set `score` to
+BED6+10 includes all four evidence fields as a complete group; none accepts
+`.` or `na`. They do not override `REF_METH` or `ALT_METH`. For consistent
+browser display, producers may set `score` to
 `round(abs(REF_METH - ALT_METH) * 1000)`; BSReadSim does not use it in the
 simulation.
 
@@ -377,7 +424,7 @@ positions must be unique and remain the same CG, CHG, or CHH site on both
 haplotypes. Duplicate targets, inserted or deleted targets, and
 context-divergent targets are rejected. Contig blocks follow FASTA order.
 
-## Fragment generation and sampling inputs { #fragment-sampling-inputs }
+## Fragment generation and sampling { #fragment-sampling-inputs }
 
 ### Target-GC profile { #target-gc-profile }
 
@@ -428,17 +475,17 @@ chrR	1	5	chrR:1-5~0	1	.	1	4	2	2
 chrR	1	5	chrR:1-5~1	1	.	2	4	2	2
 ```
 
-| Column | Requirement |
-| --- | --- |
-| `chrom` | Exact FASTA contig name |
-| `start`, `end` | uint32 zero-based, half-open reference envelope satisfying `start <= end <= contig length` |
-| `candidate_id` | Non-empty deterministic fragment identity without whitespace or control bytes |
-| `score` | `.` or a finite non-negative relative weight |
-| `strand` | `.` |
-| `haplotype_mask` | `1`, `2`, or `3` |
-| `template_length` | Positive uint32 physical haplotype fragment length |
-| `gc_count` | uint32 number of C and G bases, no greater than `template_length` |
-| `restriction_site_count` | uint32 count of recognized endpoint and internal cut sites |
+| Column | Name | Requirement |
+| ---: | --- | --- |
+| 1 | `chrom` | Exact FASTA contig name |
+| 2–3 | `start`, `end` | uint32 zero-based, half-open reference envelope satisfying `start <= end <= contig length` |
+| 4 | `candidate_id` | Non-empty deterministic fragment identity without whitespace or control bytes |
+| 5 | `score` | `.` or a finite non-negative relative weight |
+| 6 | `strand` | `.` |
+| 7 | `haplotype_mask` | `1`, `2`, or `3` |
+| 8 | `template_length` | Positive uint32 physical haplotype fragment length |
+| 9 | `gc_count` | uint32 number of C and G bases, no greater than `template_length` |
+| 10 | `restriction_site_count` | uint32 count of recognized endpoint and internal cut sites |
 
 Scores are initialized to `1`, are relative, and need not sum to one. `.` is
 accepted only outside score-weighted sampling. Input order may change, but
@@ -453,14 +500,14 @@ layout of [UCSC BED](https://genome.ucsc.edu/FAQ/FAQformat.html#format1), with
 zero-based, half-open coordinates and the BSReadSim-specific score rules
 below.
 
-| Column | Requirement |
-| --- | --- |
-| `chrom` | Exact FASTA contig name |
-| `start` | Target start satisfying `0 <= start < end` |
-| `end` | Target end no greater than the contig length |
-| `name` | Non-empty target name |
-| `score` | Finite non-negative relative weight |
-| `strand` | `+`, `-`, or `.` |
+| Column | Name | Requirement |
+| ---: | --- | --- |
+| 1 | `chrom` | Exact FASTA contig name |
+| 2 | `start` | Target start satisfying `0 <= start < end` |
+| 3 | `end` | Target end no greater than the contig length |
+| 4 | `name` | Non-empty target name without control bytes |
+| 5 | `score` | Finite non-negative relative weight |
+| 6 | `strand` | `+`, `-`, or `.` |
 
 ```text { .no-copy }
 chr1	1000	1100	target-1	1	.
@@ -468,13 +515,13 @@ chr1	2500	2550	target-2	3	+
 ```
 
 Empty lines, `#` comments, and UCSC `track` or `browser` lines are
-ignored, but at least one target row is required. Duplicate contig, interval,
-and strand combinations are rejected. Score is metadata under uniform
-sampling. Under `--sampling score`, it must be an exact integer from `0`
-through `4,294,967,295`; see
+ignored, but at least one target row is required. Rows may appear in any order;
+BSReadSim groups them by FASTA contig and sorts them by coordinate. Duplicate
+contig, interval, and strand combinations are rejected. Score is metadata
+under uniform sampling. Under `--sampling score`, it must be uint32; see
 [target-score sampling](advanced/target-score-sampling.md).
 
-## Sequencing-model inputs { #sequencing-model-inputs }
+## Sequencing models { #sequencing-model-inputs }
 
 Use `--quality-model PATH` and `--error-model PATH` for empirically estimated
 models defined by BSReadSim's JSON schemas below. Both are uncompressed,
@@ -490,7 +537,7 @@ dimensions, and zero-total rows are rejected.
 Each document contains exactly `schema`, `quality_scores`, and `mates`.
 `quality_scores` is a non-empty, strictly increasing list of integer Phred
 values from 0 through 93. `mates` has exactly two entries in R1, R2 order,
-including for single-end runs. Every count is an unsigned 32-bit integer;
+including for single-end runs. Every count is uint32;
 every row must have positive total mass, and sampling is proportional to the
 counts.
 
@@ -509,8 +556,26 @@ previously sampled quality.
       "schema": "quality-markov",
       "quality_scores": [30],
       "mates": [
-        {"initial_counts": [[1], [1], [1], [1], [1]], "transition_counts": [[1]]},
-        {"initial_counts": [[1], [1], [1], [1], [1]], "transition_counts": [[1]]}
+        {
+          "initial_counts": [
+            [1],
+            [1],
+            [1],
+            [1],
+            [1]
+          ],
+          "transition_counts": [[1]]
+        },
+        {
+          "initial_counts": [
+            [1],
+            [1],
+            [1],
+            [1],
+            [1]
+          ],
+          "transition_counts": [[1]]
+        }
       ]
     }
     ```
@@ -529,8 +594,26 @@ every quality value emitted by the selected quality policy.
       "schema": "quality-confusion",
       "quality_scores": [30],
       "mates": [
-        {"base_transition_counts": [[[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]]},
-        {"base_transition_counts": [[[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]]}
+        {
+          "base_transition_counts": [
+            [
+              [1, 0, 0, 0],
+              [0, 1, 0, 0],
+              [0, 0, 1, 0],
+              [0, 0, 0, 1]
+            ]
+          ]
+        },
+        {
+          "base_transition_counts": [
+            [
+              [1, 0, 0, 0],
+              [0, 1, 0, 0],
+              [0, 0, 1, 0],
+              [0, 0, 0, 1]
+            ]
+          ]
+        }
       ]
     }
     ```
