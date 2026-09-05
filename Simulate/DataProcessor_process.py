@@ -10,7 +10,7 @@ from StreamReads import StreamReads
 from StreamMethDB import StreamMethDB
 
 class DataProcessor:
-    def __init__(self, contig_id: str = None, read_gen=None, n_workers=4,
+    def __init__(self, contig_id: str = None, read_gen, n_workers=4, 
                  processor: ReadProcessor = None, fastq_out: StreamReads = None, 
                  meth_db: StreamMethDB = None, arr_max_size: List = None):
         
