@@ -1,0 +1,16 @@
+include CMakeLists.txt
+include LICENSE
+include mkdocs.yml
+include .gitmodules
+graft docs
+graft data
+recursive-include htsim/src *.cpp *.h
+graft htslib
+prune htslib/.github
+prune htslib/ref_cache
+prune htslib/samples
+prune htslib/test
+prune htslib/htscodecs/.github
+prune htslib/htscodecs/javascript
+prune htslib/htscodecs/tests
+prune tests
