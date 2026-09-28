@@ -1,0 +1,16 @@
+{
+  "fixtures": [
+    {
+      "file": "mock-reference.fa",
+      "format": "fasta",
+      "valid": true,
+      "purpose": "Small reference containing RRBS cut sites and TBS target loci."
+    },
+    {
+      "file": "mock-targets.bed",
+      "format": "bed6",
+      "valid": true,
+      "purpose": "Small forward, reverse, and unknown-strand TBS target set."
+    }
+  ]
+}

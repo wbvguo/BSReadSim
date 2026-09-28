@@ -1,0 +1,3 @@
+chrMock	14	18	forward-target	3	+
+chrMock	30	34	reverse-target	1	-
+chrMock	44	48	zero-weight-control	0	.

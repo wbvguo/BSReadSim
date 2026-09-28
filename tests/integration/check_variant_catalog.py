@@ -1,0 +1,334 @@
+"""Exercise deterministic VCF.gz export and core round-trip loading."""
+
+from __future__ import annotations
+
+import gzip
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+from bsreadsim.cli import build_parser, from_arguments
+from bsreadsim.htsim import HtsimCore
+
+
+def _export(root: Path, core: Path, output: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "bsreadsim",
+            "build",
+            "variants",
+            "--reference",
+            "reference.fa",
+            "--output",
+            output,
+            "--mutation-rate",
+            "0.2",
+            "--seed-mut",
+            "71",
+            "--core",
+            str(core),
+        ],
+        cwd=root,
+        env=os.environ.copy(),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _run_with_saved_vcf(root: Path, core: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "bsreadsim",
+            "run",
+            "wgbs",
+            "--reference",
+            "reference.fa",
+            "--output",
+            "saved-run",
+            "--reads",
+            "1",
+            "--single-end",
+            "--read-length",
+            "25",
+            "--insert-mean",
+            "25",
+            "--insert-sd",
+            "0",
+            "--max-ambiguous-fraction",
+            "0",
+            "--mutation-rate",
+            "0.2",
+            "--seed-mut",
+            "71",
+            "--seed",
+            "5",
+            "--save-vcf",
+            "--core",
+            str(core),
+        ],
+        cwd=root,
+        env=os.environ.copy(),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _build_empty_vcf(root: Path, core: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "bsreadsim",
+            "build",
+            "variants",
+            "--reference",
+            "reference.fa",
+            "--output",
+            "empty.vcf.gz",
+            "--mutation-rate",
+            "0",
+            "--core",
+            str(core),
+        ],
+        cwd=root,
+        env=os.environ.copy(),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _build_from_vcf(root: Path, core: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "bsreadsim",
+            "build",
+            "variants",
+            "--reference",
+            "reference.fa",
+            "--output",
+            "normalized.vcf.gz",
+            "--vcf",
+            "input.vcf",
+            "--seed-phase",
+            "13",
+            "--core",
+            str(core),
+        ],
+        cwd=root,
+        env=os.environ.copy(),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _run_with_input_vcf_truth(
+    root: Path, core: Path
+) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "bsreadsim",
+            "run",
+            "wgbs",
+            "--reference",
+            "reference.fa",
+            "--output",
+            "input-vcf-run",
+            "--reads",
+            "1",
+            "--single-end",
+            "--read-length",
+            "25",
+            "--insert-mean",
+            "25",
+            "--insert-sd",
+            "0",
+            "--max-ambiguous-fraction",
+            "0",
+            "--vcf",
+            "input.vcf",
+            "--seed-phase",
+            "13",
+            "--seed",
+            "5",
+            "--save-vcf",
+            "--core",
+            str(core),
+        ],
+        cwd=root,
+        env=os.environ.copy(),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        raise SystemExit("usage: check_variant_catalog.py CORE_EXECUTABLE")
+    core = Path(sys.argv[1]).resolve(strict=True)
+    with tempfile.TemporaryDirectory(prefix="bsreadsim-variant-catalog-") as temporary:
+        root = Path(temporary).resolve()
+        (root / "reference.fa").write_text(
+            ">chr1\n" + "ACGT" * 300 + "\n",
+            encoding="ascii",
+        )
+
+        first = _export(root, core, "first.vcf.gz")
+        second = _export(root, core, "second.vcf.gz")
+        if first.returncode != 0 or second.returncode != 0:
+            raise SystemExit(
+                "variant export failed: first={!r} second={!r}".format(
+                    first.stderr, second.stderr
+                )
+            )
+        first_path = root / "first.vcf.gz"
+        second_path = root / "second.vcf.gz"
+        first_bytes = first_path.read_bytes()
+        if first_bytes != second_path.read_bytes():
+            raise SystemExit("fixed-input variant VCF.gz export is not byte-stable")
+        bgzf_eof = bytes.fromhex(
+            "1f8b08040000000000ff0600424302001b0003000000000000000000"
+        )
+        if first_bytes[12:14] != b"BC" or not first_bytes.endswith(bgzf_eof):
+            raise SystemExit("variant export is gzip but not canonical BGZF")
+        with gzip.open(first_path, "rt", encoding="ascii", newline="") as input_file:
+            text = input_file.read()
+        if not text.startswith("##fileformat=VCFv4.3\n"):
+            raise SystemExit("variant export omitted its VCF header")
+        rows = [line for line in text.splitlines() if line and line[0] != "#"]
+        if not rows or any(
+            row.split("\t")[9] not in {"1|0", "0|1", "1|1"}
+            for row in rows
+        ):
+            raise SystemExit("variant export omitted records or phased genotypes")
+
+        empty = _build_empty_vcf(root, core)
+        if empty.returncode != 0:
+            raise SystemExit(
+                "zero-rate variant export failed: {!r}".format(empty.stderr)
+            )
+        with gzip.open(
+            root / "empty.vcf.gz", "rt", encoding="ascii", newline=""
+        ) as input_file:
+            empty_text = input_file.read()
+        if not empty_text.startswith("##fileformat=VCFv4.3\n") or any(
+            line and line[0] != "#" for line in empty_text.splitlines()
+        ):
+            raise SystemExit("zero-rate export is not a header-only VCF.gz")
+
+        (root / "input.vcf").write_text(
+            "##fileformat=VCFv4.3\n"
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tsample\n"
+            "chr1\t2\t.\tC\tT\t.\tPASS\t.\tGT\t0/1\n"
+            "chr1\t5\t.\tA\tAACGTA\t.\tPASS\t.\tGT\t0/1\n"
+            "chr1\t9\t.\tACGTAC\tA\t.\tPASS\t.\tGT\t1/1\n"
+            "chr1\t20\t.\tT\tACGA\t.\tPASS\t.\tGT\t0/1\n"
+            "chr1\t25\t.\tACG\tTTA\t.\tPASS\t.\tGT\t1/1\n",
+            encoding="ascii",
+        )
+        normalized = _build_from_vcf(root, core)
+        if normalized.returncode != 0:
+            raise SystemExit(
+                "input VCF normalization failed: {!r}".format(normalized.stderr)
+            )
+        normalized_path = root / "normalized.vcf.gz"
+        with gzip.open(
+            normalized_path, "rt", encoding="ascii", newline=""
+        ) as input_file:
+            normalized_text = input_file.read()
+        normalized_rows = [
+            line
+            for line in normalized_text.splitlines()
+            if line and line[0] != "#"
+        ]
+        if len(normalized_rows) != 1 or normalized_rows[0].split("\t")[9] not in {
+            "0|1",
+            "1|0",
+        }:
+            raise SystemExit("build variants did not phase the input VCF")
+
+        input_truth_run = _run_with_input_vcf_truth(root, core)
+        if input_truth_run.returncode != 0:
+            raise SystemExit(
+                "run --vcf --save-vcf failed: {!r}".format(
+                    input_truth_run.stderr
+                )
+            )
+        input_truth_path = (
+            root / "input-vcf-run" / "truth" / "sim.variants.vcf.gz"
+        )
+        if input_truth_path.read_bytes() != normalized_path.read_bytes():
+            raise SystemExit(
+                "run --vcf --save-vcf diverged from build variants --vcf"
+            )
+
+        saved_run = _run_with_saved_vcf(root, core)
+        if saved_run.returncode != 0:
+            raise SystemExit(
+                "run --save-vcf failed: {!r}".format(saved_run.stderr)
+            )
+        saved_vcf = root / "saved-run" / "truth" / "sim.variants.vcf.gz"
+        if saved_vcf.read_bytes() != first_bytes:
+            raise SystemExit("run --save-vcf diverged from build variants")
+
+        arguments = build_parser().parse_args(
+            [
+                "run",
+                "wgbs",
+                "--reference",
+                str(root / "reference.fa"),
+                "--output",
+                str(root / "roundtrip-run"),
+                "--reads",
+                "1",
+                "--single-end",
+                "--read-length",
+                "25",
+                "--insert-mean",
+                "25",
+                "--insert-sd",
+                "0",
+                "--max-ambiguous-fraction",
+                "0",
+                "--vcf",
+                str(root / "first.vcf.gz"),
+                "--seed-phase",
+                "71",
+            ]
+        )
+        argv = HtsimCore(core).argv(from_arguments(arguments))
+        roundtrip = subprocess.run(
+            argv,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if roundtrip.returncode != 0:
+            raise SystemExit(
+                "exported VCF.gz was not accepted as input: {!r}".format(
+                    roundtrip.stderr.decode("utf-8", errors="replace")
+                )
+            )
+
+        collision = _export(root, core, "first.vcf.gz")
+        if collision.returncode == 0 or "already exists" not in collision.stderr:
+            raise SystemExit("variant export overwrote an existing destination")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
